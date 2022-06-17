@@ -1,8 +1,8 @@
-# 01 Architecture
+# Bug_Report
 
 
 ## Context
-This page tracks bootstrap decisions for 01 architecture during steady build work.
+This page tracks bootstrap decisions for bug_report during steady build work.
 
 ## Usage
 - Merged scattered the main flow guidance into the docs.
