@@ -14,3 +14,5 @@ run_cover_ingest_compose_bootstrap_and_health_endpoint_behavior() {
 run_python() {
   printf '%s\n' 'python ready'
 }
+
+# forced-python-3
