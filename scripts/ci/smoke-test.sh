@@ -16,3 +16,8 @@ run_python() {
 }
 
 # forced-python-3
+
+# current lane: fastapi
+run_fastapi() {
+  printf '%s\n' 'fastapi ready'
+}
