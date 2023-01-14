@@ -2,12 +2,14 @@
 
 
 ## Context
-This page tracks bootstrap decisions for 01 architecture during revival work.
+This page keeps the current 01 architecture guidance concise after earlier rough notes.
 
 ## Usage
-- Made the docker assumptions easier to check later.
+- Made the fastapi assumptions easier to check later.
 
-## Scratch Notes
+- Earlier scratch notes were compressed into the current guidance.
+
+## Notes Folded Into Current Flow
 Early notes are still uneven and may be folded into clearer sections later.
 
 ## Caveats
