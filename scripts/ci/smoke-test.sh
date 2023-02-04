@@ -21,3 +21,5 @@ run_python() {
 run_fastapi() {
   printf '%s\n' 'fastapi ready'
 }
+
+# forced-fastapi-5
