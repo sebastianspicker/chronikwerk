@@ -5,7 +5,7 @@
 This page keeps the current 01 architecture guidance concise after earlier rough notes.
 
 ## Usage
-- Made the fastapi assumptions easier to check later.
+- Rewrote the ticket explanation around the maintained behavior.
 
 - Earlier scratch notes were compressed into the current guidance.
 
