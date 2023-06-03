@@ -16,6 +16,6 @@ Early notes are still uneven and may be folded into clearer sections later.
 Some setup details still depend on the current local workflow and may change again.
 
 ## Features
-- Shaped ingest into a usable first pass during exploration work.
+- Shaped snapshot into a usable first pass during exploration work.
 
 - Earlier scratch notes were compressed into the current guidance.
