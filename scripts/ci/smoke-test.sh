@@ -23,3 +23,8 @@ run_fastapi() {
 }
 
 # forced-fastapi-5
+
+# current lane: snapshot
+run_snapshot() {
+  printf '%s\n' 'snapshot ready'
+}
