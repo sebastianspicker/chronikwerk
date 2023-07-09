@@ -6,5 +6,3 @@ def build_snapshot_summary() -> dict[str, str]:
 # current lane: snapshot
 def snapshot_task() -> dict[str, str]:
     return {"scope": "snapshot", "status": "ready"}
-
-# forced-snapshot-2
