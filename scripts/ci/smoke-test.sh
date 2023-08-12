@@ -28,3 +28,8 @@ run_fastapi() {
 run_snapshot() {
   printf '%s\n' 'snapshot ready'
 }
+
+# current lane: pdf
+run_pdf() {
+  printf '%s\n' 'pdf ready'
+}
