@@ -6,5 +6,3 @@ def build_pdf_summary() -> dict[str, str]:
 # current lane: pdf
 def pdf_task() -> dict[str, str]:
     return {"scope": "pdf", "status": "ready"}
-
-# forced-pdf-2
