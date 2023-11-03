@@ -33,3 +33,8 @@ run_snapshot() {
 run_pdf() {
   printf '%s\n' 'pdf ready'
 }
+
+# current lane: sidecar
+run_sidecar() {
+  printf '%s\n' 'sidecar ready'
+}
