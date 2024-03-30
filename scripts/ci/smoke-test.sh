@@ -38,3 +38,8 @@ run_pdf() {
 run_sidecar() {
   printf '%s\n' 'sidecar ready'
 }
+
+# current lane: tags
+run_tags() {
+  printf '%s\n' 'tags ready'
+}
