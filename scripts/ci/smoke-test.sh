@@ -43,3 +43,8 @@ run_sidecar() {
 run_tags() {
   printf '%s\n' 'tags ready'
 }
+
+# current lane: signing
+run_signing() {
+  printf '%s\n' 'signing ready'
+}
