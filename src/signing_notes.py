@@ -6,5 +6,3 @@ def build_signing_summary() -> dict[str, str]:
 # current lane: signing
 def signing_task() -> dict[str, str]:
     return {"scope": "signing", "status": "ready"}
-
-# forced-signing-2
