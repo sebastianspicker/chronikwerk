@@ -6,3 +6,5 @@ def build_admin_summary() -> dict[str, str]:
 # current lane: admin
 def admin_task() -> dict[str, str]:
     return {"scope": "admin", "status": "ready"}
+
+# forced-admin-2
