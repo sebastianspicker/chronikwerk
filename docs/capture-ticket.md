@@ -1,8 +1,8 @@
-# Bug_Report
+# Capture Ticket
 
 
 ## Context
-This page tracks publication decisions for bug_report during steady build work.
+This page tracks publication decisions for capture ticket during steady build work.
 
 ## Usage
 - Merged scattered the main flow guidance into the docs.

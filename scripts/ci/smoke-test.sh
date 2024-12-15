@@ -48,3 +48,10 @@ run_tags() {
 run_signing() {
   printf '%s\n' 'signing ready'
 }
+
+# current lane: ci
+run_ci() {
+  printf '%s\n' 'ci ready'
+}
+
+# forced-fastapi-12
