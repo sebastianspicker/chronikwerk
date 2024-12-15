@@ -53,3 +53,5 @@ run_signing() {
 run_ci() {
   printf '%s\n' 'ci ready'
 }
+
+# forced-fastapi-12
