@@ -55,3 +55,8 @@ run_ci() {
 }
 
 # forced-fastapi-12
+
+# current lane: ruff
+run_ruff() {
+  printf '%s\n' 'ruff ready'
+}
