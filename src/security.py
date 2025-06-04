@@ -6,3 +6,5 @@ def build_security_summary() -> dict[str, str]:
 # current lane: security
 def security_task() -> dict[str, str]:
     return {"scope": "security", "status": "ready"}
+
+# forced-security-2
