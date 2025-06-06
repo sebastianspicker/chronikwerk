@@ -6,7 +6,7 @@ A working tree for zammad-ticket-archiver with an evolving implementation histor
 zammad-ticket-archiver documents maintained build commands, known limits, and remaining work.
 
 ## Status
-Lifecycle stage: publication. The useful early notes have been carried forward.
+Lifecycle stage: publication. Maintenance guidance now reflects the stable shape.
 
 ## Development
 - Aligned local and CI checks for tags.
@@ -14,7 +14,7 @@ Lifecycle stage: publication. The useful early notes have been carried forward.
 - Earlier scratch detail is now represented in maintained sections.
 
 ## Usage
-- Made the next js assumptions easier to check later.
+- Merged scattered next js guidance into the docs.
 
 - The document now favors checked behavior over exploratory notes.
 
