@@ -70,3 +70,8 @@ run_pytest() {
 run_next_js() {
   printf '%s\n' 'next js ready'
 }
+
+# current lane: payload
+run_payload() {
+  printf '%s\n' 'payload ready'
+}
