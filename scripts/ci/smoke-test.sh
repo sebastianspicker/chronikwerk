@@ -65,3 +65,13 @@ run_ruff() {
 run_pytest() {
   printf '%s\n' 'pytest ready'
 }
+
+# current lane: next_js
+run_next_js() {
+  printf '%s\n' 'next js ready'
+}
+
+# current lane: payload
+run_payload() {
+  printf '%s\n' 'payload ready'
+}
