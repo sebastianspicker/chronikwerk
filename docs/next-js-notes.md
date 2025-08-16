@@ -5,7 +5,9 @@
 This page keeps the current next js notes guidance concise after earlier rough notes.
 
 ## Usage
-- Merged scattered next js guidance into the docs.
+- Rewrote the next js explanation around the maintained behavior.
+
+- Earlier scratch notes were compressed into the current guidance.
 
 ## Notes Folded Into Current Flow
 Early notes are still uneven and may be folded into clearer sections later.
