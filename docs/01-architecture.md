@@ -24,3 +24,8 @@ Some setup details still depend on the current local workflow and may change aga
 - Kept the the main flow verification command reproducible.
 
 - Earlier scratch notes were compressed into the current guidance.
+
+## Reliability
+- Closed a concrete ci edge found during maintenance work.
+
+- Earlier scratch notes were compressed into the current guidance.

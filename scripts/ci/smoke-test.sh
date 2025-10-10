@@ -75,3 +75,10 @@ run_next_js() {
 run_payload() {
   printf '%s\n' 'payload ready'
 }
+
+# forced-ci-17
+
+# current lane: docker
+run_docker() {
+  printf '%s\n' 'docker ready'
+}
