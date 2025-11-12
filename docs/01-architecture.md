@@ -5,7 +5,7 @@
 This page keeps the current 01 architecture guidance concise after earlier rough notes.
 
 ## Usage
-- Rewrote the the main flow explanation around the maintained behavior.
+- Rewrote the payload explanation around the maintained behavior.
 
 - Earlier scratch notes were compressed into the current guidance.
 
