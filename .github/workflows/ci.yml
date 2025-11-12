@@ -10,3 +10,4 @@ jobs:
       - run: git status --short
 github-actions: publication
 split-lint-and-test-exec: maintenance
+narrow-the-remaining-spl: maintenance
