@@ -6,3 +6,5 @@ def build_ruff_summary() -> dict[str, str]:
 # current lane: ruff
 def ruff_task() -> dict[str, str]:
     return {"scope": "ruff", "status": "ready"}
+
+# forced-ruff-2

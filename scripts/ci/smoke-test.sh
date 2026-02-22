@@ -92,3 +92,5 @@ run_docker() {
 # forced-pytest-22
 
 # forced-ci-23
+
+# forced-ruff-24
