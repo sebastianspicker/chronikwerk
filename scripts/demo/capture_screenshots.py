@@ -108,7 +108,7 @@ def _wait_for_admin_payload(page: Any, selector: str, *, timeout_ms: int = 10_00
         "(sel) => { const el = document.querySelector(sel);"
         " if (!el) return false;"
         " const txt = (el.textContent || '').trim();"
-        " return txt !== '-' && txt.length > 2; }",
+        " return txt.includes('\"status\"') || txt.includes('\"error\"'); }",
         arg=selector,
         timeout=timeout_ms,
     )
@@ -134,16 +134,16 @@ def _capture(args: argparse.Namespace) -> int:
             _write_shot(page, out_dir / SHOT_FILENAMES[0])
 
             page.fill("#token", args.token)
-            page.click("button:has-text('Refresh')")
+            page.click("#btn-refresh")
             _wait_for_admin_payload(page, "#queue")
             _write_shot(page, out_dir / SHOT_FILENAMES[1])
 
-            page.click("button:has-text('Load History')")
+            page.click("#btn-history")
             _wait_for_admin_payload(page, "#history")
             _write_shot(page, out_dir / SHOT_FILENAMES[2])
 
             page.fill("#historyTicket", str(args.filter_ticket_id))
-            page.click("button:has-text('Load History')")
+            page.click("#btn-history")
             page.wait_for_function(
                 "(tid) => (document.querySelector('#history')?.textContent || '')"
                 ".includes(String(tid))",
@@ -153,18 +153,18 @@ def _capture(args: argparse.Namespace) -> int:
             _write_shot(page, out_dir / SHOT_FILENAMES[3])
 
             page.fill("#retryTicket", str(args.retry_ticket_id))
-            page.click("button:has-text('Retry Ticket')")
+            page.click("#btn-retry")
             _wait_for_admin_payload(page, "#actions")
             _write_shot(page, out_dir / SHOT_FILENAMES[4])
 
             # Capture DLQ state before drain.
             page.fill("#historyTicket", "")
-            page.click("button:has-text('Refresh')")
+            page.click("#btn-refresh")
             _wait_for_admin_payload(page, "#queue")
             _write_shot(page, out_dir / SHOT_FILENAMES[5])
 
             page.fill("#drainLimit", "100")
-            page.click("button:has-text('Drain DLQ')")
+            page.click("#btn-drain")
             _wait_for_admin_payload(page, "#actions")
             _write_shot(page, out_dir / SHOT_FILENAMES[6])
 
@@ -181,7 +181,7 @@ def _capture(args: argparse.Namespace) -> int:
                 raise RuntimeError(f"unable to stop redis-demo: {stop.stderr.strip()}")
             redis_was_stopped = True
 
-            page.click("button:has-text('Refresh')")
+            page.click("#btn-refresh")
             page.wait_for_function(
                 "() => (document.querySelector('#queue')?.textContent || '').includes('503')",
                 timeout=10_000,
@@ -198,7 +198,7 @@ def _capture(args: argparse.Namespace) -> int:
             mobile_page = mobile.new_page()
             mobile_page.goto(f"{args.base_url}/admin", wait_until="networkidle")
             mobile_page.fill("#token", args.token)
-            mobile_page.click("button:has-text('Refresh')")
+            mobile_page.click("#btn-refresh")
             _wait_for_admin_payload(mobile_page, "#queue")
             _write_shot(mobile_page, out_dir / SHOT_FILENAMES[9])
             mobile.close()
