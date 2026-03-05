@@ -6,18 +6,11 @@ from typing import Any
 
 import structlog
 
+from zammad_pdf_archiver.adapters.redis_pool import get_redis, import_redis_class
 from zammad_pdf_archiver.config.redact import scrub_secrets_in_text
 from zammad_pdf_archiver.config.settings import Settings
 
 log = structlog.get_logger(__name__)
-
-
-def _import_redis() -> Any:
-    try:
-        from redis.asyncio import Redis
-    except ImportError:
-        return None
-    return Redis
 
 
 def _history_enabled(settings: Settings) -> bool:
@@ -29,15 +22,12 @@ def _history_enabled(settings: Settings) -> bool:
 async def _redis_client(settings: Settings) -> Any | None:
     if not _history_enabled(settings):
         return None
-    Redis = _import_redis()
-    if Redis is None:
+    if import_redis_class() is None:
         return None
-    return Redis.from_url(
-        settings.workflow.redis_url,
-        decode_responses=True,
-        socket_timeout=5.0,
-        socket_connect_timeout=5.0,
-    )
+    redis_url = settings.workflow.redis_url
+    if not redis_url:
+        return None
+    return await get_redis(redis_url)
 
 
 def _bounded_message(message: str) -> str:
@@ -79,11 +69,6 @@ async def record_history_event(
     except Exception:
         log.warning("history.record_failed", status=status, ticket_id=ticket_id)
         return False
-    finally:
-        try:
-            await redis.aclose()
-        except Exception:
-            pass
 
 
 def _to_int(value: str | None, default: int | None = None) -> int | None:
@@ -149,11 +134,6 @@ async def read_history(
     except Exception:
         log.warning("history.read_failed")
         return []
-    finally:
-        try:
-            await redis.aclose()
-        except Exception:
-            pass
 
     out: list[dict[str, Any]] = []
     for message_id, raw_fields in entries:

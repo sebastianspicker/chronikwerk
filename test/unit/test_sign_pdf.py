@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 
 from zammad_pdf_archiver.adapters.signing.sign_pdf import sign_pdf
+from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError
 
 
@@ -79,36 +80,24 @@ def _write_test_pfx(path: Path, password: str) -> None:
     path.write_bytes(pfx)
 
 
-@dataclass(frozen=True)
-class _DummyPades:
-    reason: str = "Unit test"
-    location: str = "CI"
-
-
-@dataclass(frozen=True)
-class _DummySigning:
-    pfx_path: Path | None
-    pfx_password: str | None
-    pades: _DummyPades = _DummyPades()
-
-
-@dataclass(frozen=True)
-class _DummySettings:
-    signing: _DummySigning
+def _make_settings(*, pfx_path: Path | None, pfx_password: str | None) -> SigningSettings:
+    return SigningSettings(
+        enabled=True,
+        pfx_path=pfx_path,
+        pfx_password=SecretStr(pfx_password) if pfx_password else None,
+    )
 
 
 def test_sign_pdf_returns_pdf_bytes(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
     _write_test_pfx(pfx_path, password="secret")
 
-    settings = _DummySettings(
-        signing=_DummySigning(pfx_path=pfx_path, pfx_password="secret"),
-    )
-    signed = sign_pdf(_minimal_pdf_bytes(), settings)
+    signing = _make_settings(pfx_path=pfx_path, pfx_password="secret")
+    signed = sign_pdf(_minimal_pdf_bytes(), signing)
     assert signed.startswith(b"%PDF-")
 
 
 def test_sign_pdf_missing_pfx_path_raises() -> None:
-    settings = _DummySettings(signing=_DummySigning(pfx_path=None, pfx_password=None))
+    signing = SigningSettings(enabled=False, pfx_path=None, pfx_password=None)
     with pytest.raises(PermanentError, match="pfx_path"):
-        sign_pdf(_minimal_pdf_bytes(), settings)
+        sign_pdf(_minimal_pdf_bytes(), signing)

@@ -11,6 +11,7 @@ from pyhanko.sign.timestamps.api import TimeStamper
 from pyhanko.sign.timestamps.common_utils import set_tsp_headers
 
 from zammad_pdf_archiver.adapters.http_util import timeouts_for
+from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 
@@ -23,43 +24,20 @@ class _TsaConfig:
     trust_env: bool
 
 
-def _resolve_tsa_settings(settings: Any) -> Any:
-    signing = getattr(settings, "signing", None)
-    if signing is None:
-        raise ValueError("settings must have a .signing attribute")
+def _load_tsa_config(signing: SigningSettings, *, trust_env: bool = False) -> _TsaConfig:
+    rfc3161 = signing.timestamp.rfc3161
 
-    # Prefer the canonical config path used in this repo:
-    # settings.signing.timestamp.enabled / settings.signing.timestamp.rfc3161
-    timestamp = getattr(signing, "timestamp", None)
-    if timestamp is not None:
-        return getattr(timestamp, "rfc3161", None)
-
-    # Backwards/alternate naming: settings.signing.tsa.enabled / settings.signing.tsa.rfc3161
-    tsa = getattr(signing, "tsa", None)
-    if tsa is not None:
-        return getattr(tsa, "rfc3161", None)
-
-    return None
-
-
-def _load_tsa_config(settings: Any) -> _TsaConfig:
-    tsa_settings = _resolve_tsa_settings(settings)
-    if tsa_settings is None:
-        raise PermanentError("Timestamping is enabled but TSA settings are missing")
-
-    tsa_url = getattr(tsa_settings, "tsa_url", None)
+    tsa_url = rfc3161.tsa_url
     if tsa_url is None:
         raise PermanentError("Timestamping is enabled but TSA URL is missing")
 
-    timeout_seconds = float(getattr(tsa_settings, "timeout_seconds", 10.0))
-    ca_bundle_path = getattr(tsa_settings, "ca_bundle_path", None)
-    if isinstance(ca_bundle_path, str):
-        ca_bundle_path = Path(ca_bundle_path)
+    timeout_seconds = float(rfc3161.timeout_seconds)
+    ca_bundle_path = rfc3161.ca_bundle_path
 
-    user = getattr(tsa_settings, "user", None)
-    password_secret = getattr(tsa_settings, "password", None)
+    user = rfc3161.user
+    password_secret = rfc3161.password
     if isinstance(password_secret, SecretStr):
-        password = password_secret.get_secret_value()
+        password: str | None = password_secret.get_secret_value()
     elif isinstance(password_secret, str):
         password = password_secret
     else:
@@ -72,10 +50,6 @@ def _load_tsa_config(settings: Any) -> _TsaConfig:
         auth = (user, password)
     else:
         auth = None
-
-    hardening = getattr(settings, "hardening", None)
-    transport = getattr(hardening, "transport", None) if hardening is not None else None
-    trust_env = bool(getattr(transport, "trust_env", False))
 
     return _TsaConfig(
         url=str(tsa_url),
@@ -135,7 +109,7 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
             raise PermanentError("RFC3161 TSA response is not a valid TimeStampResp") from exc
 
 
-def build_timestamper(settings: Any) -> TimeStamper:
+def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> TimeStamper:
     """
     Build a pyHanko-compatible RFC3161 timestamper.
 
@@ -145,6 +119,5 @@ def build_timestamper(settings: Any) -> TimeStamper:
       - PermanentError for misconfiguration or non-retryable TSA responses.
       - TransientError for network issues and HTTP 5xx responses.
     """
-    config = _load_tsa_config(settings)
+    config = _load_tsa_config(signing, trust_env=trust_env)
     return _HttpxRFC3161TimeStamper(config)
-

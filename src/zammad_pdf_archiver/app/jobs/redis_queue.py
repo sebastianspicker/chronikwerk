@@ -10,6 +10,7 @@ from typing import Any
 
 import structlog
 
+from zammad_pdf_archiver.adapters.redis_pool import get_redis, import_redis
 from zammad_pdf_archiver.app.jobs.history import record_history_event
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
@@ -23,12 +24,78 @@ from zammad_pdf_archiver.observability.metrics import (
 
 log = structlog.get_logger(__name__)
 
-_REDIS_CLIENTS: dict[str, Any] = {}
-_REDIS_LOCK = asyncio.Lock()
-
-_WORKER_TASKS: dict[str, asyncio.Task[None]] = {}
-_WORKER_STOPS: dict[str, asyncio.Event] = {}
 _CLAIM_IDLE_MS = 30_000
+
+
+class RedisQueueManager:
+    """Encapsulates worker lifecycle state for Redis-backed queue workers."""
+
+    def __init__(self) -> None:
+        self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._stops: dict[str, asyncio.Event] = {}
+
+    async def start_worker(self, settings: Settings) -> asyncio.Task[None] | None:
+        if _backend(settings) != "redis_queue":
+            return None
+
+        key = _worker_key(settings)
+        existing = self._tasks.get(key)
+        if existing is not None and not existing.done():
+            return existing
+
+        stop_event = asyncio.Event()
+        task = asyncio.create_task(
+            _worker_loop(settings, stop_event),
+            name=f"redis-queue-worker:{key}",
+        )
+        self._stops[key] = stop_event
+        self._tasks[key] = task
+        return task
+
+    async def stop_worker(
+        self, settings: Settings, *, timeout: float = 3.0
+    ) -> None:
+        key = _worker_key(settings)
+        stop_event = self._stops.get(key)
+        task = self._tasks.get(key)
+        if stop_event is None or task is None:
+            return
+
+        stop_event.set()
+        try:
+            await asyncio.wait_for(task, timeout=timeout)
+        except TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except Exception:
+                pass
+        finally:
+            self._stops.pop(key, None)
+            self._tasks.pop(key, None)
+
+    async def stop_all(self, *, timeout: float = 3.0) -> None:
+        keys = list(self._tasks.keys())
+        for key in keys:
+            stop_event = self._stops.get(key)
+            if stop_event is not None:
+                stop_event.set()
+
+        tasks = [t for t in self._tasks.values() if not t.done()]
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=timeout)
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except Exception:
+                    pass
+
+        self._tasks.clear()
+        self._stops.clear()
+
+
+_manager = RedisQueueManager()
 
 
 def _backend(settings: Settings) -> str:
@@ -72,37 +139,11 @@ def _parse_int(value: Any, *, default: int = 0) -> int:
         return default
 
 
-def _import_redis() -> tuple[Any, Any]:
-    try:
-        from redis.asyncio import Redis
-        from redis.exceptions import ResponseError
-    except ImportError as exc:
-        raise RuntimeError(
-            "Redis queue backend requires the redis package. "
-            "Install with: pip install zammad-pdf-archiver[redis]"
-        ) from exc
-    return Redis, ResponseError
-
-
 async def _get_redis(settings: Settings) -> Any:
     redis_url = settings.workflow.redis_url
     if not redis_url or not redis_url.strip():
         raise RuntimeError("workflow.redis_url is required for redis queue backend")
-
-    async with _REDIS_LOCK:
-        cached = _REDIS_CLIENTS.get(redis_url)
-        if cached is not None:
-            return cached
-
-        Redis, _ = _import_redis()
-        client = Redis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_timeout=5.0,
-            socket_connect_timeout=5.0,
-        )
-        _REDIS_CLIENTS[redis_url] = client
-        return client
+    return await get_redis(redis_url)
 
 
 @dataclass(frozen=True)
@@ -193,7 +234,7 @@ async def _push_dlq(
 
 
 async def _ensure_group(redis: Any, *, stream: str, group: str) -> None:
-    _, ResponseError = _import_redis()
+    _, ResponseError = import_redis()
     try:
         # Start at 0 so backlog existing before group creation is visible to consumers.
         await redis.xgroup_create(stream, group, id="0", mkstream=True)
@@ -490,40 +531,11 @@ async def _worker_loop(settings: Settings, stop_event: asyncio.Event) -> None:
 
 
 async def start_queue_worker(settings: Settings) -> asyncio.Task[None] | None:
-    if _backend(settings) != "redis_queue":
-        return None
-
-    key = _worker_key(settings)
-    existing = _WORKER_TASKS.get(key)
-    if existing is not None and not existing.done():
-        return existing
-
-    stop_event = asyncio.Event()
-    task = asyncio.create_task(_worker_loop(settings, stop_event), name=f"redis-queue-worker:{key}")
-    _WORKER_STOPS[key] = stop_event
-    _WORKER_TASKS[key] = task
-    return task
+    return await _manager.start_worker(settings)
 
 
 async def stop_queue_worker(settings: Settings, *, timeout: float = 3.0) -> None:
-    key = _worker_key(settings)
-    stop_event = _WORKER_STOPS.get(key)
-    task = _WORKER_TASKS.get(key)
-    if stop_event is None or task is None:
-        return
-
-    stop_event.set()
-    try:
-        await asyncio.wait_for(task, timeout=timeout)
-    except TimeoutError:
-        task.cancel()
-        try:
-            await task
-        except Exception:
-            pass
-    finally:
-        _WORKER_STOPS.pop(key, None)
-        _WORKER_TASKS.pop(key, None)
+    await _manager.stop_worker(settings, timeout=timeout)
 
 
 def _pending_count(raw: Any) -> int:
@@ -592,13 +604,45 @@ async def drain_dlq(settings: Settings, *, limit: int = 100) -> int:
     return len(ids)
 
 
-async def aclose_queue_clients() -> None:
-    async with _REDIS_LOCK:
-        clients = list(_REDIS_CLIENTS.values())
-        _REDIS_CLIENTS.clear()
+async def replay_dlq(settings: Settings, *, limit: int = 10) -> int:
+    """Re-enqueue DLQ entries as fresh jobs with reset attempt counter."""
+    if limit < 1:
+        return 0
+    bounded_limit = min(int(limit), 1000)
 
-    for client in clients:
+    redis = await _get_redis(settings)
+    dlq_stream = settings.workflow.queue_dlq_stream
+    entries = await redis.xrange(
+        dlq_stream, min="-", max="+", count=bounded_limit,
+    )
+    if not entries:
+        return 0
+
+    replayed = 0
+    for entry_id, raw_fields in entries:
+        fields = {_as_str(k): v for k, v in raw_fields.items()}
+        payload_raw = _as_str(fields.get("payload_json", "{}"))
         try:
-            await client.aclose()
+            payload = json.loads(payload_raw)
+            if not isinstance(payload, dict):
+                continue
         except Exception:
-            log.warning("queue.redis_close_failed")
+            continue
+
+        delivery_id_raw = _as_str(fields.get("delivery_id", "")).strip()
+        await enqueue_ticket_job(
+            delivery_id=delivery_id_raw or None,
+            payload=payload,
+            settings=settings,
+            attempt=0,
+        )
+        await redis.xdel(dlq_stream, _as_str(entry_id))
+        replayed += 1
+
+    return replayed
+
+
+async def aclose_queue_clients() -> None:
+    from zammad_pdf_archiver.adapters.redis_pool import close_all
+
+    await close_all()

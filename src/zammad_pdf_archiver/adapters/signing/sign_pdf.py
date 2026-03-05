@@ -4,8 +4,10 @@ import io
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
+import httpx
+
+from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 
@@ -16,31 +18,17 @@ class _PfxMaterial:
     password: bytes | None
 
 
-def _secret_to_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    get_secret = getattr(value, "get_secret_value", None)
-    if callable(get_secret):
-        return get_secret()
-    if isinstance(value, str):
-        return value
-    return str(value)
-
-
-def _load_pfx(settings: Any) -> _PfxMaterial:
-    signing = getattr(settings, "signing", None)
-    if signing is None:
-        raise ValueError("settings must have a .signing attribute")
-
-    pfx_path = getattr(signing, "pfx_path", None)
+def _load_pfx(signing: SigningSettings) -> _PfxMaterial:
+    pfx_path = signing.pfx_path
     if pfx_path is None:
-        raise PermanentError("Missing signing material: settings.signing.pfx_path")
+        raise PermanentError("Missing signing material: signing.pfx_path")
 
     path = Path(pfx_path)
     if not path.exists() or not path.is_file():
         raise PermanentError(f"PFX file not found: {path}")
 
-    password_str = _secret_to_str(getattr(signing, "pfx_password", None))
+    password_secret = signing.pfx_password
+    password_str = password_secret.get_secret_value() if password_secret is not None else None
     password = password_str.encode("utf-8") if password_str else None
     return _PfxMaterial(path=path, pfx_bytes=path.read_bytes(), password=password)
 
@@ -76,7 +64,7 @@ def _validate_cert_not_expired(pfx_bytes: bytes, password: bytes | None) -> None
         raise PermanentError(f"Signing certificate expired on {not_after.isoformat()}")
 
 
-def sign_pdf(pdf_bytes: bytes, settings: Any) -> bytes:
+def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = False) -> bytes:
     """
     Sign a PDF with an (invisible) PAdES signature using a locally provided PKCS#12/PFX bundle.
 
@@ -85,7 +73,7 @@ def sign_pdf(pdf_bytes: bytes, settings: Any) -> bytes:
     if not isinstance(pdf_bytes, (bytes, bytearray)) or not pdf_bytes:
         raise ValueError("pdf_bytes must be non-empty bytes")
 
-    pfx = _load_pfx(settings)
+    pfx = _load_pfx(signing)
     _validate_cert_not_expired(pfx.pfx_bytes, pfx.password)
 
     # Import lazily so the rest of the service stays importable even if pyHanko isn't installed.
@@ -94,13 +82,8 @@ def sign_pdf(pdf_bytes: bytes, settings: Any) -> bytes:
     from pyhanko.sign.fields import SigFieldSpec
     from pyhanko.sign.signers.pdf_signer import PdfSignatureMetadata, PdfSigner
 
-    reason = None
-    location = None
-    signing = getattr(settings, "signing", None)
-    pades = getattr(signing, "pades", None) if signing is not None else None
-    if pades is not None:
-        reason = getattr(pades, "reason", None)
-        location = getattr(pades, "location", None)
+    reason = signing.pades.reason
+    location = signing.pades.location
 
     try:
         signer = signers.SimpleSigner.load_pkcs12(pfx.path, passphrase=pfx.password)
@@ -111,15 +94,10 @@ def sign_pdf(pdf_bytes: bytes, settings: Any) -> bytes:
     meta = PdfSignatureMetadata(field_name=field_name, reason=reason, location=location)
 
     timestamper = None
-    timestamp_settings = getattr(signing, "timestamp", None) if signing is not None else None
-    tsa_settings = getattr(signing, "tsa", None) if signing is not None else None
-    tsa_enabled = bool(
-        getattr(timestamp_settings, "enabled", False) or getattr(tsa_settings, "enabled", False)
-    )
-    if tsa_enabled:
+    if signing.timestamp.enabled:
         from zammad_pdf_archiver.adapters.signing.tsa_rfc3161 import build_timestamper
 
-        timestamper = build_timestamper(settings)
+        timestamper = build_timestamper(signing, trust_env=trust_env)
 
     pdf_signer = PdfSigner(
         signature_meta=meta,
@@ -138,12 +116,14 @@ def sign_pdf(pdf_bytes: bytes, settings: Any) -> bytes:
     except (TransientError, PermanentError):
         raise
     except Exception as exc:
-        # P2-3: Refine error classification.
-        # If it looks like a network/timeout error (likely from TSA), treat as transient.
-        msg = str(exc).lower()
-        if any(term in msg for term in ("timeout", "connection", "network", "unreachable")):
+        # P2-3: Classify by exception type instead of string matching.
+        # Network/timeout errors (likely from TSA) are transient; everything else permanent.
+        if isinstance(
+            exc,
+            (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
+        ):
             raise TransientError("Failed to sign PDF due to temporary (TSA) network issue") from exc
-        
+
         # Mapping remaining pyHanko errors to PermanentError for callers.
         raise PermanentError("Failed to sign PDF") from exc
     return out.getvalue()

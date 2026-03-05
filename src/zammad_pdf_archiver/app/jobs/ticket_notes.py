@@ -15,6 +15,14 @@ from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 log = structlog.get_logger(__name__)
 
 
+def _html_field_list(heading: str, fields: list[tuple[str, str]]) -> str:
+    """Build an HTML note with a heading and escaped key/value list."""
+    items = "".join(
+        f"<li>{label}: <code>{escape(str(value))}</code></li>" for label, value in fields
+    )
+    return f"<p><strong>{escape(heading)}</strong></p><ul>{items}</ul>"
+
+
 def success_note_html(
     *,
     storage_dir: str,
@@ -26,25 +34,18 @@ def success_note_html(
     delivery_id: str | None,
     timestamp_utc: str,
 ) -> str:
-    storage = escape(storage_dir)
-    fname = escape(filename)
-    sidecar = escape(sidecar_path)
-    sha256 = escape(sha256_hex)
-    rid = escape(request_id or "unknown")
-    did = escape(delivery_id or "none")
-    time_utc = escape(timestamp_utc)
-    return (
-        f"<p><strong>PDF archived ({VERSION})</strong></p>"
-        "<ul>"
-        f"<li>path: <code>{storage}</code></li>"
-        f"<li>filename: <code>{fname}</code></li>"
-        f"<li>audit_sidecar: <code>{sidecar}</code></li>"
-        f"<li>size_bytes: <code>{size_bytes}</code></li>"
-        f"<li>sha256: <code>{sha256}</code></li>"
-        f"<li>request_id: <code>{rid}</code></li>"
-        f"<li>delivery_id: <code>{did}</code></li>"
-        f"<li>time_utc: <code>{time_utc}</code></li>"
-        "</ul>"
+    return _html_field_list(
+        f"PDF archived ({VERSION})",
+        [
+            ("path", storage_dir),
+            ("filename", filename),
+            ("audit_sidecar", sidecar_path),
+            ("size_bytes", str(size_bytes)),
+            ("sha256", sha256_hex),
+            ("request_id", request_id or "unknown"),
+            ("delivery_id", delivery_id or "none"),
+            ("time_utc", timestamp_utc),
+        ],
     )
 
 
@@ -89,35 +90,23 @@ def error_note_html(
     code: str = "",
     hint: str = "",
 ) -> str:
-    rid = escape(request_id or "unknown")
-    did = escape(delivery_id or "none")
-    cls = escape(classification)
-    msg = escape(message)
-    act = escape(action)
-    code_esc = escape(code) if code else ""
-    hint_esc = escape(hint) if hint else ""
-    items = [
-        f"<li>classification: <code>{cls}</code></li>",
-        f"<li>error: <code>{msg}</code></li>",
-        f"<li>action: <code>{act}</code></li>",
+    fields: list[tuple[str, str]] = [
+        ("classification", classification),
+        ("error", message),
+        ("action", action),
     ]
-    if code_esc:
-        items.append(f"<li>code: <code>{code_esc}</code></li>")
-    if hint_esc:
-        items.append(f"<li>hint: <code>{hint_esc}</code></li>")
-    items.extend(
+    if code:
+        fields.append(("code", code))
+    if hint:
+        fields.append(("hint", hint))
+    fields.extend(
         [
-            f"<li>request_id: <code>{rid}</code></li>",
-            f"<li>delivery_id: <code>{did}</code></li>",
-            f"<li>time_utc: <code>{timestamp_utc}</code></li>",
+            ("request_id", request_id or "unknown"),
+            ("delivery_id", delivery_id or "none"),
+            ("time_utc", timestamp_utc),
         ]
     )
-    return (
-        f"<p><strong>PDF archiver error ({VERSION})</strong></p>"
-        "<ul>"
-        + "".join(items)
-        + "</ul>"
-    )
+    return _html_field_list(f"PDF archiver error ({VERSION})", fields)
 
 
 def concise_exc_message(exc: BaseException) -> str:

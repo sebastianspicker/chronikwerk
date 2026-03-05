@@ -1,5 +1,5 @@
 :root {
-  --fg: #0f172a;
+  --text: #0f172a;
   --muted: #475569;
   --border: #dbe1ea;
   --accent: #0b57d0;
@@ -12,7 +12,7 @@
 
 body {
   font-family: "IBM Plex Sans", "Segoe UI", Roboto, Arial, sans-serif;
-  color: var(--fg);
+  color: var(--text);
   background: #fff;
   line-height: 1.45;
 }
@@ -33,7 +33,7 @@ body {
 }
 
 .subject {
-  color: var(--fg);
+  color: var(--text);
 }
 
 .ticket-meta {

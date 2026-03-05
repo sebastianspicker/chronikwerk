@@ -30,15 +30,21 @@ def _fsync_dir_best_effort(dir_path: Path) -> None:
         os.close(fd)
 
 
-def write_bytes(
-    target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True
-) -> None:
+def _validate_and_prepare(target_path: Path, storage_root: Path) -> tuple[Path, Path]:
+    """Validate path safety and ensure parent directory exists. Returns (target, parent)."""
     target = Path(target_path)
     parent = target.parent
     # Bug #13/#20: validate path and symlinks before any directory creation.
     ensure_within_root(storage_root, target)
     _reject_symlinks_under_root(storage_root, parent)
     ensure_dir(parent)
+    return target, parent
+
+
+def write_bytes(
+    target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True
+) -> None:
+    target, parent = _validate_and_prepare(target_path, storage_root)
 
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -83,12 +89,7 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
 def write_atomic_bytes(
     target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True
 ) -> None:
-    target = Path(target_path)
-    parent = target.parent
-    # Bug #13/#20: validate path and symlinks before any directory creation.
-    ensure_within_root(storage_root, target)
-    _reject_symlinks_under_root(storage_root, parent)
-    ensure_dir(parent)
+    target, parent = _validate_and_prepare(target_path, storage_root)
 
     tmp_path: Path | None = None
     fd: int | None = None

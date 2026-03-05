@@ -42,14 +42,18 @@ def test_process_ticket_with_client_cancellation_does_not_run_error_flow(
     monkeypatch.setattr(process_ticket_module, "_run_ticket_pipeline", _cancelled_pipeline)
     monkeypatch.setattr(process_ticket_module, "_handle_ticket_pipeline_exception", _error_handler)
 
+    ctx = process_ticket_module._TicketJobContext(  # noqa: SLF001
+        settings=settings,
+        ticket_id=1,
+        delivery_id="delivery-1",
+        request_id="req-1",
+    )
+
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
             process_ticket_module._process_ticket_with_client(  # noqa: SLF001
-                settings=settings,
+                ctx,
                 payload={"ticket_id": 1},
-                ticket_id=1,
-                delivery_id="delivery-1",
-                request_id="req-1",
             )
         )
 

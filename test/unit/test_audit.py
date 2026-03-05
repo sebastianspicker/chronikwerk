@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
 
+from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.audit import build_audit_record, compute_sha256
 
 
@@ -81,18 +81,11 @@ def _cert_fingerprint_from_pfx(path: Path, password: str) -> str:
     return cert.fingerprint(hashes.SHA256()).hex()
 
 
-@dataclass(frozen=True)
-class _DummySigning:
-    enabled: bool
-    pfx_path: Path | None
-    pfx_password: SecretStr | None
-
-
 def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
     _write_test_pfx(pfx_path, password="secret")
 
-    signing = _DummySigning(enabled=True, pfx_path=pfx_path, pfx_password=SecretStr("secret"))
+    signing = SigningSettings(enabled=True, pfx_path=pfx_path, pfx_password=SecretStr("secret"))
     audit = build_audit_record(
         ticket_id=1,
         ticket_number="T1",

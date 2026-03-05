@@ -12,6 +12,10 @@ from zammad_pdf_archiver.config.settings import Settings
 
 _METRICS_PATH = "/metrics"
 
+# Eviction tuning for the in-memory token-bucket store (Bug #P2-1).
+_EVICTION_HEADROOM = 200   # extra entries to evict below max_entries
+_EVICTION_BATCH_CAP = 2000  # max entries to evict in one pass
+
 
 @dataclass
 class _Bucket:
@@ -41,8 +45,8 @@ class _InMemoryTokenBucketLimiter:
             if len(self._buckets) > self._max_entries:
                 # Bug #P2-1: Optimized eviction: avoid sorted() which is O(N log N).
                 # Pop the first few entries (oldest inserted) until we are slightly below limit.
-                to_evict_count = len(self._buckets) - self._max_entries + 200
-                to_evict_count = min(to_evict_count, 2000)
+                to_evict_count = len(self._buckets) - self._max_entries + _EVICTION_HEADROOM
+                to_evict_count = min(to_evict_count, _EVICTION_BATCH_CAP)
 
                 # Collect keys first to avoid "dictionary changed size during iteration"
                 it = iter(self._buckets)

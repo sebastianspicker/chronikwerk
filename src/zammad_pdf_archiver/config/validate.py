@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.config.settings import Settings, TransportHardeningSettings
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ def _validate_log_level(settings: Settings, issues: list[ConfigValidationIssue])
 def _validate_primary_transport(
     settings: Settings,
     *,
-    transport,
+    transport: TransportHardeningSettings,
     issues: list[ConfigValidationIssue],
 ) -> None:
     if (
@@ -180,7 +180,7 @@ def _validate_delivery_id_requirement(
 def _validate_tsa_transport(
     settings: Settings,
     *,
-    transport,
+    transport: TransportHardeningSettings,
     issues: list[ConfigValidationIssue],
 ) -> None:
     # If timestamping is enabled, enforce secure transport for the TSA as well.

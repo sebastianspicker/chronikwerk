@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import respx
 
+from zammad_pdf_archiver.config.settings import (
+    SigningSettings,
+    SigningTimestampRfc3161Settings,
+    SigningTimestampSettings,
+)
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 pytest.importorskip("pyhanko", reason="TSA adapter requires pyHanko")
@@ -32,49 +35,21 @@ def _tsa_req() -> Any:
     )
 
 
-@dataclass(frozen=True)
-class _DummyRfc3161:
-    tsa_url: str
-    timeout_seconds: float = 10.0
-    ca_bundle_path: Path | None = None
-
-
-@dataclass(frozen=True)
-class _DummyTimestamp:
-    enabled: bool
-    rfc3161: _DummyRfc3161
-
-
-@dataclass(frozen=True)
-class _DummySigning:
-    timestamp: _DummyTimestamp
-
-
-@dataclass(frozen=True)
-class _DummyTransport:
-    trust_env: bool = False
-
-
-@dataclass(frozen=True)
-class _DummyHardening:
-    transport: _DummyTransport = _DummyTransport()
-
-
-@dataclass(frozen=True)
-class _DummySettings:
-    signing: _DummySigning
-    hardening: _DummyHardening | None = None
+def _make_signing(tsa_url: str) -> SigningSettings:
+    return SigningSettings(
+        enabled=False,
+        timestamp=SigningTimestampSettings(
+            enabled=True,
+            rfc3161=SigningTimestampRfc3161Settings(tsa_url=tsa_url),  # type: ignore[arg-type]
+        ),
+    )
 
 
 @pytest.mark.parametrize("status", [500, 503, 599])
 def test_tsa_http_5xx_is_transient(status: int) -> None:
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _DummySettings(
-        signing=_DummySigning(
-            timestamp=_DummyTimestamp(enabled=True, rfc3161=_DummyRfc3161(tsa_url=tsa_url))
-        )
-    )
-    timestamper = build_timestamper(settings)
+    signing = _make_signing(tsa_url)
+    timestamper = build_timestamper(signing)
 
     with respx.mock:
         respx.post(tsa_url).mock(return_value=httpx.Response(status))
@@ -85,12 +60,8 @@ def test_tsa_http_5xx_is_transient(status: int) -> None:
 @pytest.mark.parametrize("status", [400, 401, 404])
 def test_tsa_http_4xx_is_permanent(status: int) -> None:
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _DummySettings(
-        signing=_DummySigning(
-            timestamp=_DummyTimestamp(enabled=True, rfc3161=_DummyRfc3161(tsa_url=tsa_url))
-        )
-    )
-    timestamper = build_timestamper(settings)
+    signing = _make_signing(tsa_url)
+    timestamper = build_timestamper(signing)
 
     with respx.mock:
         respx.post(tsa_url).mock(return_value=httpx.Response(status))
@@ -100,12 +71,8 @@ def test_tsa_http_4xx_is_permanent(status: int) -> None:
 
 def test_tsa_wrong_content_type_is_permanent() -> None:
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _DummySettings(
-        signing=_DummySigning(
-            timestamp=_DummyTimestamp(enabled=True, rfc3161=_DummyRfc3161(tsa_url=tsa_url))
-        )
-    )
-    timestamper = build_timestamper(settings)
+    signing = _make_signing(tsa_url)
+    timestamper = build_timestamper(signing)
 
     with respx.mock:
         respx.post(tsa_url).mock(
@@ -124,13 +91,8 @@ def test_tsa_http_client_respects_transport_trust_env(
     monkeypatch: pytest.MonkeyPatch, trust_env: bool
 ) -> None:
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _DummySettings(
-        signing=_DummySigning(
-            timestamp=_DummyTimestamp(enabled=True, rfc3161=_DummyRfc3161(tsa_url=tsa_url))
-        ),
-        hardening=_DummyHardening(transport=_DummyTransport(trust_env=trust_env)),
-    )
-    timestamper = build_timestamper(settings)
+    signing = _make_signing(tsa_url)
+    timestamper = build_timestamper(signing, trust_env=trust_env)
 
     captured: dict[str, Any] = {}
 

@@ -202,4 +202,9 @@ body.compact .body pre {
     break-inside: avoid-page;
     page-break-inside: avoid;
   }
+
+  .body pre {
+    overflow: visible;
+    max-height: none;
+  }
 }

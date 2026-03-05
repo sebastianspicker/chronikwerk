@@ -60,6 +60,16 @@ log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
+class _TicketJobContext:
+    """Common context threaded through the ticket processing pipeline."""
+
+    settings: Settings
+    ticket_id: int
+    delivery_id: str | None
+    request_id: str | None
+
+
+@dataclass(frozen=True)
 class ProcessTicketResult:
     status: str
     ticket_id: int | None
@@ -76,27 +86,24 @@ def _format_timestamp_utc(dt: datetime) -> str:
 
 
 async def _record_history(
-    settings: Settings,
+    ctx: _TicketJobContext,
     *,
     status: str,
-    ticket_id: int | None,
     classification: str | None = None,
     message: str = "",
-    delivery_id: str | None = None,
-    request_id: str | None = None,
 ) -> None:
     try:
         await record_history_event(
-            settings,
+            ctx.settings,
             status=status,
-            ticket_id=ticket_id,
+            ticket_id=ctx.ticket_id,
             classification=classification,
             message=message,
-            delivery_id=delivery_id,
-            request_id=request_id,
+            delivery_id=ctx.delivery_id,
+            request_id=ctx.request_id,
         )
     except Exception:
-        log.debug("process_ticket.history_record_failed", status=status, ticket_id=ticket_id)
+        log.debug("process_ticket.history_record_failed", status=status, ticket_id=ctx.ticket_id)
 
 
 async def _apply_done_with_backoff(
@@ -145,152 +152,95 @@ async def process_ticket(
     payload: dict[str, Any],
     settings: Settings,
 ) -> ProcessTicketResult:
-    request_id = payload.get(REQUEST_ID_KEY)
+    raw_request_id = payload.get(REQUEST_ID_KEY)
     ticket_id = extract_ticket_id(payload)
     if ticket_id is None:
-        return await _skip_no_ticket_id(settings, request_id=request_id)
-
-    if not isinstance(request_id, str) or not request_id.strip():
-        request_id = None
-
-    bound = _bound_context(ticket_id=ticket_id, delivery_id=delivery_id, request_id=request_id)
-    with structlog.contextvars.bound_contextvars(**bound):
-        return await _process_with_ticket_lock(
-            settings=settings,
-            payload=payload,
-            ticket_id=ticket_id,
-            delivery_id=delivery_id,
-            request_id=request_id,
+        request_id = raw_request_id if isinstance(raw_request_id, str) else None
+        log.info("process_ticket.skip_no_ticket_id", request_id=request_id)
+        skipped_total.labels(reason="no_ticket_id").inc()
+        stub_ctx = _TicketJobContext(
+            settings=settings, ticket_id=0, delivery_id=delivery_id, request_id=request_id,
         )
+        await _record_history(stub_ctx, status="skipped_no_ticket_id")
+        return ProcessTicketResult(status="skipped_no_ticket_id", ticket_id=None)
 
-
-async def _skip_no_ticket_id(settings: Settings, *, request_id: Any) -> ProcessTicketResult:
-    log.info("process_ticket.skip_no_ticket_id", request_id=request_id)
-    skipped_total.labels(reason="no_ticket_id").inc()
-    await _record_history(
-        settings,
-        status="skipped_no_ticket_id",
-        ticket_id=None,
-        request_id=request_id if isinstance(request_id, str) else None,
+    request_id = (
+        raw_request_id
+        if isinstance(raw_request_id, str) and raw_request_id.strip()
+        else None
     )
-    return ProcessTicketResult(status="skipped_no_ticket_id", ticket_id=None)
+    ctx = _TicketJobContext(
+        settings=settings,
+        ticket_id=ticket_id,
+        delivery_id=delivery_id,
+        request_id=request_id,
+    )
+
+    bound = _bound_context(ctx)
+    with structlog.contextvars.bound_contextvars(**bound):
+        return await _process_with_ticket_lock(ctx, payload=payload)
 
 
-def _bound_context(
-    *,
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
-) -> dict[str, object]:
-    bound: dict[str, object] = {"ticket_id": ticket_id}
-    if delivery_id:
-        bound["delivery_id"] = delivery_id
-    if request_id:
-        bound["request_id"] = request_id
+def _bound_context(ctx: _TicketJobContext) -> dict[str, object]:
+    bound: dict[str, object] = {"ticket_id": ctx.ticket_id}
+    if ctx.delivery_id:
+        bound["delivery_id"] = ctx.delivery_id
+    if ctx.request_id:
+        bound["request_id"] = ctx.request_id
     return bound
 
 
 async def _process_with_ticket_lock(
+    ctx: _TicketJobContext,
     *,
-    settings: Settings,
     payload: dict[str, Any],
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
 ) -> ProcessTicketResult:
-    acquired = await try_acquire_ticket(settings, ticket_id)
+    acquired = await try_acquire_ticket(ctx.settings, ctx.ticket_id)
     if not acquired:
-        return await _skip_in_flight(
-            settings,
-            ticket_id=ticket_id,
-            delivery_id=delivery_id,
-            request_id=request_id,
-        )
+        return await _skip_in_flight(ctx)
 
     try:
-        claimed = await _claim_delivery_or_skip(
-            settings=settings,
-            ticket_id=ticket_id,
-            delivery_id=delivery_id,
-            request_id=request_id,
-        )
+        claimed = await _claim_delivery_or_skip(ctx)
         if claimed is not None:
             return claimed
-        return await _process_ticket_with_client(
-            settings=settings,
-            payload=payload,
-            ticket_id=ticket_id,
-            delivery_id=delivery_id,
-            request_id=request_id,
-        )
+        return await _process_ticket_with_client(ctx, payload=payload)
     finally:
-        await _release_ticket_lock(
-            settings,
-            ticket_id=ticket_id,
-            delivery_id=delivery_id,
-            request_id=request_id,
-        )
+        await _release_ticket_lock(ctx)
 
 
-async def _skip_in_flight(
-    settings: Settings,
-    *,
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
-) -> ProcessTicketResult:
+async def _skip_in_flight(ctx: _TicketJobContext) -> ProcessTicketResult:
     log.info(
         "process_ticket.skip_ticket_in_flight",
-        ticket_id=ticket_id,
-        delivery_id=delivery_id,
+        ticket_id=ctx.ticket_id,
+        delivery_id=ctx.delivery_id,
     )
     skipped_total.labels(reason="in_flight").inc()
-    await _record_history(
-        settings,
-        status="skipped_in_flight",
-        ticket_id=ticket_id,
-        delivery_id=delivery_id,
-        request_id=request_id,
-    )
-    return ProcessTicketResult(status="skipped_in_flight", ticket_id=ticket_id)
+    await _record_history(ctx, status="skipped_in_flight")
+    return ProcessTicketResult(status="skipped_in_flight", ticket_id=ctx.ticket_id)
 
 
-async def _claim_delivery_or_skip(
-    *,
-    settings: Settings,
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
-) -> ProcessTicketResult | None:
-    if not delivery_id:
+async def _claim_delivery_or_skip(ctx: _TicketJobContext) -> ProcessTicketResult | None:
+    if not ctx.delivery_id:
         return None
-    if await try_claim_delivery_id(settings, delivery_id):
+    if await try_claim_delivery_id(ctx.settings, ctx.delivery_id):
         return None
 
     log.info(
         "process_ticket.skip_delivery_id_seen",
-        ticket_id=ticket_id,
-        delivery_id=delivery_id,
+        ticket_id=ctx.ticket_id,
+        delivery_id=ctx.delivery_id,
     )
     skipped_total.labels(reason="idempotency").inc()
-    await _record_history(
-        settings,
-        status="skipped_idempotency",
-        ticket_id=ticket_id,
-        delivery_id=delivery_id,
-        request_id=request_id,
-    )
-    return ProcessTicketResult(status="skipped_idempotency", ticket_id=ticket_id)
+    await _record_history(ctx, status="skipped_idempotency")
+    return ProcessTicketResult(status="skipped_idempotency", ticket_id=ctx.ticket_id)
 
 
 async def _process_ticket_with_client(
+    ctx: _TicketJobContext,
     *,
-    settings: Settings,
     payload: dict[str, Any],
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
 ) -> ProcessTicketResult:
+    settings = ctx.settings
     trigger_tag = str(settings.workflow.trigger_tag).strip() or TRIGGER_TAG
     require_trigger_tag = bool(settings.workflow.require_tag)
 
@@ -306,11 +256,8 @@ async def _process_ticket_with_client(
         try:
             result, observe_total = await _run_ticket_pipeline(
                 client=client,
-                settings=settings,
+                ctx=ctx,
                 payload=payload,
-                ticket_id=ticket_id,
-                delivery_id=delivery_id,
-                request_id=request_id,
                 trigger_tag=trigger_tag,
                 require_trigger_tag=require_trigger_tag,
             )
@@ -321,10 +268,7 @@ async def _process_ticket_with_client(
         except Exception as exc:
             return await _handle_ticket_pipeline_exception(
                 client=client,
-                settings=settings,
-                ticket_id=ticket_id,
-                delivery_id=delivery_id,
-                request_id=request_id,
+                ctx=ctx,
                 trigger_tag=trigger_tag,
                 exc=exc,
             )
@@ -336,32 +280,24 @@ async def _process_ticket_with_client(
 async def _run_ticket_pipeline(
     *,
     client: AsyncZammadClient,
-    settings: Settings,
+    ctx: _TicketJobContext,
     payload: dict[str, Any],
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
     trigger_tag: str,
     require_trigger_tag: bool,
 ) -> tuple[ProcessTicketResult, bool]:
-    ticket_data = await fetch_ticket_data(client, ticket_id)
+    settings = ctx.settings
+    ticket_data = await fetch_ticket_data(client, ctx.ticket_id)
     if not should_process(
         ticket_data.tags.root,
         trigger_tag=trigger_tag,
         require_trigger_tag=require_trigger_tag,
     ):
         return (
-            await _skip_not_triggered(
-                settings,
-                ticket_id=ticket_id,
-                delivery_id=delivery_id,
-                request_id=request_id,
-                tags=ticket_data.tags.root,
-            ),
+            await _skip_not_triggered(ctx, tags=ticket_data.tags.root),
             False,
         )
 
-    await apply_processing(client, ticket_id, trigger_tag=trigger_tag)
+    await apply_processing(client, ctx.ticket_id, trigger_tag=trigger_tag)
 
     custom_fields = ticket_custom_fields(ticket_data.ticket)
     username = determine_username(
@@ -388,7 +324,7 @@ async def _run_ticket_pipeline(
         client,
         ticket_data.ticket,
         ticket_data.tags,
-        ticket_id,
+        ctx.ticket_id,
         settings,
     )
     storage_result = store_ticket_files(
@@ -401,10 +337,7 @@ async def _run_ticket_pipeline(
     )
     await _acknowledge_success_if_enabled(
         client=client,
-        settings=settings,
-        ticket_id=ticket_id,
-        request_id=request_id,
-        delivery_id=delivery_id,
+        ctx=ctx,
         now=now,
         storage_dir=str(storage_result.target_path.parent),
         filename=storage_result.target_path.name,
@@ -412,60 +345,42 @@ async def _run_ticket_pipeline(
         size_bytes=storage_result.size_bytes,
         sha256_hex=storage_result.sha256_hex,
     )
-    await _apply_done_best_effort(client, ticket_id=ticket_id, trigger_tag=trigger_tag)
+    await _apply_done_best_effort(client, ticket_id=ctx.ticket_id, trigger_tag=trigger_tag)
 
     processed_total.inc()
-    await _record_history(
-        settings,
-        status="processed",
-        ticket_id=ticket_id,
-        delivery_id=delivery_id,
-        request_id=request_id,
-    )
+    await _record_history(ctx, status="processed")
     log.info(
         "process_ticket.done",
-        ticket_id=ticket_id,
+        ticket_id=ctx.ticket_id,
         storage_path=str(storage_result.target_path),
-        request_id=request_id,
-        delivery_id=delivery_id,
+        request_id=ctx.request_id,
+        delivery_id=ctx.delivery_id,
     )
-    return ProcessTicketResult(status="processed", ticket_id=ticket_id), True
+    return ProcessTicketResult(status="processed", ticket_id=ctx.ticket_id), True
 
 
 async def _skip_not_triggered(
-    settings: Settings,
+    ctx: _TicketJobContext,
     *,
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
     tags: list[str],
 ) -> ProcessTicketResult:
     log.info(
         "process_ticket.skip_should_not_process",
-        ticket_id=ticket_id,
+        ticket_id=ctx.ticket_id,
         tags=tags,
     )
     skipped_total.labels(reason="not_triggered").inc()
-    await _record_history(
-        settings,
-        status="skipped_not_triggered",
-        ticket_id=ticket_id,
-        delivery_id=delivery_id,
-        request_id=request_id,
-    )
+    await _record_history(ctx, status="skipped_not_triggered")
     return ProcessTicketResult(
         status="skipped_not_triggered",
-        ticket_id=ticket_id,
+        ticket_id=ctx.ticket_id,
     )
 
 
 async def _acknowledge_success_if_enabled(
     *,
     client: AsyncZammadClient,
-    settings: Settings,
-    ticket_id: int,
-    request_id: str | None,
-    delivery_id: str | None,
+    ctx: _TicketJobContext,
     now: datetime,
     storage_dir: str,
     filename: str,
@@ -473,10 +388,10 @@ async def _acknowledge_success_if_enabled(
     size_bytes: int,
     sha256_hex: str,
 ) -> None:
-    if not settings.workflow.acknowledge_on_success:
+    if not ctx.settings.workflow.acknowledge_on_success:
         return
     await client.create_internal_article(
-        ticket_id,
+        ctx.ticket_id,
         f"PDF archived ({VERSION})",
         success_note_html(
             storage_dir=storage_dir,
@@ -484,8 +399,8 @@ async def _acknowledge_success_if_enabled(
             sidecar_path=sidecar_path,
             size_bytes=size_bytes,
             sha256_hex=sha256_hex,
-            request_id=request_id,
-            delivery_id=delivery_id,
+            request_id=ctx.request_id,
+            delivery_id=ctx.delivery_id,
             timestamp_utc=_format_timestamp_utc(now),
         ),
     )
@@ -503,10 +418,7 @@ async def _apply_done_best_effort(
 async def _handle_ticket_pipeline_exception(
     *,
     client: AsyncZammadClient,
-    settings: Settings,
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
+    ctx: _TicketJobContext,
     trigger_tag: str,
     exc: Exception,
 ) -> ProcessTicketResult:
@@ -519,9 +431,9 @@ async def _handle_ticket_pipeline_exception(
 
     log.exception(
         "process_ticket.error",
-        ticket_id=ticket_id,
-        request_id=request_id,
-        delivery_id=delivery_id,
+        ticket_id=ctx.ticket_id,
+        request_id=ctx.request_id,
+        delivery_id=ctx.delivery_id,
         classification=classification_label,
         code=code or None,
         hint=hint or None,
@@ -529,9 +441,7 @@ async def _handle_ticket_pipeline_exception(
 
     await _post_error_note(
         client=client,
-        ticket_id=ticket_id,
-        request_id=request_id,
-        delivery_id=delivery_id,
+        ctx=ctx,
         classification_label=classification_label,
         msg=msg,
         action=action,
@@ -540,9 +450,7 @@ async def _handle_ticket_pipeline_exception(
     )
     await _apply_error_and_cleanup_processing_tag(
         client=client,
-        ticket_id=ticket_id,
-        request_id=request_id,
-        delivery_id=delivery_id,
+        ctx=ctx,
         classification_label=classification_label,
         classified=classified,
         trigger_tag=trigger_tag,
@@ -554,17 +462,14 @@ async def _handle_ticket_pipeline_exception(
         else "failed_permanent"
     )
     await _record_history(
-        settings,
+        ctx,
         status=status,
-        ticket_id=ticket_id,
         classification=classification_label,
         message=msg,
-        delivery_id=delivery_id,
-        request_id=request_id,
     )
     return ProcessTicketResult(
         status=status,
-        ticket_id=ticket_id,
+        ticket_id=ctx.ticket_id,
         classification=classification_label,
         message=msg,
     )
@@ -586,9 +491,7 @@ def _error_code_hint(
 async def _post_error_note(
     *,
     client: AsyncZammadClient,
-    ticket_id: int,
-    request_id: str | None,
-    delivery_id: str | None,
+    ctx: _TicketJobContext,
     classification_label: str,
     msg: str,
     action: str,
@@ -598,14 +501,14 @@ async def _post_error_note(
     now = _now_utc()
     try:
         await client.create_internal_article(
-            ticket_id,
+            ctx.ticket_id,
             f"PDF archiver error ({VERSION})",
             error_note_html(
                 classification=classification_label,
                 message=msg,
                 action=action,
-                request_id=request_id,
-                delivery_id=delivery_id,
+                request_id=ctx.request_id,
+                delivery_id=ctx.delivery_id,
                 timestamp_utc=_format_timestamp_utc(now),
                 code=code,
                 hint=hint,
@@ -614,9 +517,9 @@ async def _post_error_note(
     except Exception:
         log.exception(
             "process_ticket.error_note_failed",
-            ticket_id=ticket_id,
-            request_id=request_id,
-            delivery_id=delivery_id,
+            ticket_id=ctx.ticket_id,
+            request_id=ctx.request_id,
+            delivery_id=ctx.delivery_id,
             classification=classification_label,
         )
 
@@ -624,9 +527,7 @@ async def _post_error_note(
 async def _apply_error_and_cleanup_processing_tag(
     *,
     client: AsyncZammadClient,
-    ticket_id: int,
-    request_id: str | None,
-    delivery_id: str | None,
+    ctx: _TicketJobContext,
     classification_label: str,
     classified: TransientError | PermanentError | None,
     trigger_tag: str,
@@ -635,46 +536,40 @@ async def _apply_error_and_cleanup_processing_tag(
         keep_trigger = classified is not None and isinstance(classified, TransientError)
         await _apply_error_with_retry(
             client,
-            ticket_id=ticket_id,
+            ticket_id=ctx.ticket_id,
             keep_trigger=keep_trigger,
             trigger_tag=trigger_tag,
         )
     except Exception:
         log.exception(
             "process_ticket.apply_error_failed",
-            ticket_id=ticket_id,
-            request_id=request_id,
-            delivery_id=delivery_id,
+            ticket_id=ctx.ticket_id,
+            request_id=ctx.request_id,
+            delivery_id=ctx.delivery_id,
             classification=classification_label,
         )
 
     try:
-        await client.remove_tag(ticket_id, PROCESSING_TAG)
+        await client.remove_tag(ctx.ticket_id, PROCESSING_TAG)
     except Exception:
         log.exception(
             "process_ticket.processing_tag_cleanup_failed",
-            ticket_id=ticket_id,
-            request_id=request_id,
-            delivery_id=delivery_id,
+            ticket_id=ctx.ticket_id,
+            request_id=ctx.request_id,
+            delivery_id=ctx.delivery_id,
             classification=classification_label,
         )
 
 
-async def _release_ticket_lock(
-    settings: Settings,
-    *,
-    ticket_id: int,
-    delivery_id: str | None,
-    request_id: str | None,
-) -> None:
+async def _release_ticket_lock(ctx: _TicketJobContext) -> None:
     try:
-        await asyncio.shield(release_ticket(settings, ticket_id))
+        await asyncio.shield(release_ticket(ctx.settings, ctx.ticket_id))
     except Exception:
         log.exception(
             "process_ticket.release_ticket_failed",
-            ticket_id=ticket_id,
-            request_id=request_id,
-            delivery_id=delivery_id,
+            ticket_id=ctx.ticket_id,
+            request_id=ctx.request_id,
+            delivery_id=ctx.delivery_id,
         )
 
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from zammad_pdf_archiver.adapters.zammad.models import Ticket
 
-def ticket_custom_fields(ticket: Any) -> dict[str, Any]:
+
+def ticket_custom_fields(ticket: Ticket) -> dict[str, Any]:
     """Extract custom_fields from ticket.preferences, or return empty dict."""
-    prefs = getattr(ticket, "preferences", None)
-    if prefs is None:
+    if ticket.preferences is None:
         return {}
-    fields = getattr(prefs, "custom_fields", None)
+    fields = ticket.preferences.custom_fields
     if isinstance(fields, dict):
         return fields
     return {}

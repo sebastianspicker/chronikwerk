@@ -114,7 +114,10 @@ async def build_and_render_pdf(
         # pyHanko's synchronous signing helper uses asyncio.run() internally.
         # Offload to a worker thread to avoid:
         # "asyncio.run() cannot be called from a running event loop".
-        pdf_bytes = await asyncio.to_thread(sign_pdf, pdf_bytes, settings)
+        trust_env = settings.hardening.transport.trust_env
+        pdf_bytes = await asyncio.to_thread(
+            sign_pdf, pdf_bytes, settings.signing, trust_env=trust_env
+        )
         sign_seconds.observe(perf_counter() - sign_start)
     
     return RenderResult(pdf_bytes=pdf_bytes, snapshot=snapshot)

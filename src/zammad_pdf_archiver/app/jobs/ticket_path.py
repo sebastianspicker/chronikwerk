@@ -1,5 +1,7 @@
 from typing import Any
 
+from zammad_pdf_archiver.adapters.zammad.models import Ticket
+
 
 def require_nonempty(value: Any, *, field: str) -> str:
     if not isinstance(value, str):
@@ -12,7 +14,7 @@ def require_nonempty(value: Any, *, field: str) -> str:
 
 def determine_username(
     *,
-    ticket: Any,
+    ticket: Ticket,
     payload: dict[str, Any],
     custom_fields: dict[str, Any],
     mode_field_name: str,
@@ -22,8 +24,8 @@ def determine_username(
     mode = str(raw_mode).strip() if raw_mode is not None else "owner"
 
     if mode == "owner":
-        owner = getattr(ticket, "owner", None)
-        return require_nonempty(getattr(owner, "login", None), field="ticket.owner.login")
+        login = ticket.owner.login if ticket.owner is not None else None
+        return require_nonempty(login, field="ticket.owner.login")
 
     if mode == "current_agent":
         user = payload.get("user")
@@ -32,11 +34,8 @@ def determine_username(
             if isinstance(login, str) and login.strip():
                 return login.strip()
 
-        updated_by = getattr(ticket, "updated_by", None)
-        return require_nonempty(
-            getattr(updated_by, "login", None),
-            field="ticket.updated_by.login",
-        )
+        login = ticket.updated_by.login if ticket.updated_by is not None else None
+        return require_nonempty(login, field="ticket.updated_by.login")
 
     if mode == "fixed":
         return require_nonempty(

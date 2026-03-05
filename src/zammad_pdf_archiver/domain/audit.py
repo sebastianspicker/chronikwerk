@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
+from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.time_utils import format_timestamp_utc
 
 
@@ -25,7 +26,7 @@ def _safe_get_service_version(dist_name: str) -> str | None:
         return None
 
 
-def _extract_cert_fingerprint(settings: Any) -> str | None:
+def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
     """
     Best-effort extraction of a signing certificate fingerprint (SHA-256 hex).
     """
@@ -34,9 +35,8 @@ def _extract_cert_fingerprint(settings: Any) -> str | None:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.serialization import pkcs12
 
-        pfx_path = getattr(settings, "pfx_path", None)
-        if pfx_path is not None:
-            password_secret = getattr(settings, "pfx_password", None)
+        if signing_settings.pfx_path is not None:
+            password_secret = signing_settings.pfx_password
             if isinstance(password_secret, SecretStr):
                 password_str: str | None = password_secret.get_secret_value()
             elif isinstance(password_secret, str):
@@ -47,14 +47,13 @@ def _extract_cert_fingerprint(settings: Any) -> str | None:
                 password_str = str(password_secret)
             password = password_str.encode("utf-8") if password_str else None
 
-            pfx_bytes = Path(pfx_path).read_bytes()
+            pfx_bytes = Path(signing_settings.pfx_path).read_bytes()
             _key, cert, _extra = pkcs12.load_key_and_certificates(pfx_bytes, password)
             if cert is None:
                 return None
             return cert.fingerprint(hashes.SHA256()).hex()
 
-        pades = getattr(settings, "pades", None)
-        cert_path = getattr(pades, "cert_path", None) if pades is not None else None
+        cert_path = signing_settings.pades.cert_path
         if cert_path is not None:
             raw = Path(cert_path).read_bytes()
             if raw.lstrip().startswith(b"-----BEGIN"):
@@ -67,8 +66,8 @@ def _extract_cert_fingerprint(settings: Any) -> str | None:
     return None
 
 
-def _get_fingerprint(signing_settings: Any) -> str | None:
-    if not signing_settings or not getattr(signing_settings, "enabled", False):
+def _get_fingerprint(signing_settings: SigningSettings) -> str | None:
+    if not signing_settings.enabled:
         return None
     return _extract_cert_fingerprint(signing_settings)
 
@@ -81,16 +80,17 @@ def build_audit_record(
     created_at: datetime,
     storage_path: str,
     sha256: str,
-    signing_settings: Any | None = None,
+    signing_settings: SigningSettings | None = None,
     service_name: str = "zammad-pdf-archiver",
     service_dist_name: str = "zammad-pdf-archiver",
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     signing_enabled = (
-        bool(getattr(signing_settings, "enabled", False)) if signing_settings else False
+        signing_settings.enabled if signing_settings else False
     )
-    timestamp = getattr(signing_settings, "timestamp", None) if signing_settings else None
-    tsa_used = bool(getattr(timestamp, "enabled", False)) if timestamp is not None else False
+    tsa_used = (
+        signing_settings.timestamp.enabled if signing_settings else False
+    )
     cert_fingerprint = (
         _get_fingerprint(signing_settings) if signing_settings else None
     )

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
+from pydantic import SecretStr
 
 from zammad_pdf_archiver.adapters.signing.sign_pdf import sign_pdf
+from zammad_pdf_archiver.config.settings import (
+    SigningPadesSettings,
+    SigningSettings,
+    SigningTimestampRfc3161Settings,
+    SigningTimestampSettings,
+)
 from zammad_pdf_archiver.domain.errors import TransientError
 
 
@@ -117,36 +123,22 @@ def _tsa_response_for_request(req_bytes: bytes) -> bytes:
     return resp.dump()
 
 
-@dataclass(frozen=True)
-class _DummyPades:
-    reason: str = "Unit test"
-    location: str = "CI"
-
-
-@dataclass(frozen=True)
-class _DummyRfc3161:
-    tsa_url: str
-    timeout_seconds: float = 10.0
-    ca_bundle_path: Path | None = None
-
-
-@dataclass(frozen=True)
-class _DummyTimestamp:
-    enabled: bool
-    rfc3161: _DummyRfc3161
-
-
-@dataclass(frozen=True)
-class _DummySigning:
-    pfx_path: Path | None
-    pfx_password: str | None
-    pades: _DummyPades = _DummyPades()
-    timestamp: _DummyTimestamp | None = None
-
-
-@dataclass(frozen=True)
-class _DummySettings:
-    signing: _DummySigning
+def _make_signing_with_tsa(
+    pfx_path: Path, password: str, tsa_url: str, timeout_seconds: float = 10.0
+) -> SigningSettings:
+    return SigningSettings(
+        enabled=True,
+        pfx_path=pfx_path,
+        pfx_password=SecretStr(password),
+        pades=SigningPadesSettings(reason="Unit test", location="CI"),
+        timestamp=SigningTimestampSettings(
+            enabled=True,
+            rfc3161=SigningTimestampRfc3161Settings(
+                tsa_url=tsa_url,  # type: ignore[arg-type]
+                timeout_seconds=timeout_seconds,
+            ),
+        ),
+    )
 
 
 def test_sign_pdf_with_tsa_enabled_calls_tsa(tmp_path: Path) -> None:
@@ -154,16 +146,7 @@ def test_sign_pdf_with_tsa_enabled_calls_tsa(tmp_path: Path) -> None:
     _write_test_pfx(pfx_path, password="secret")
 
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _DummySettings(
-        signing=_DummySigning(
-            pfx_path=pfx_path,
-            pfx_password="secret",
-            timestamp=_DummyTimestamp(
-                enabled=True,
-                rfc3161=_DummyRfc3161(tsa_url=tsa_url),
-            ),
-        )
-    )
+    signing = _make_signing_with_tsa(pfx_path, "secret", tsa_url)
 
     with respx.mock(assert_all_called=False) as router:
         route = router.post(tsa_url)
@@ -177,7 +160,7 @@ def test_sign_pdf_with_tsa_enabled_calls_tsa(tmp_path: Path) -> None:
 
         route.mock(side_effect=_handler)
 
-        signed = sign_pdf(_minimal_pdf_bytes(), settings)
+        signed = sign_pdf(_minimal_pdf_bytes(), signing)
         assert signed.startswith(b"%PDF-")
         assert route.called
 
@@ -187,18 +170,9 @@ def test_sign_pdf_with_unreachable_tsa_is_transient(tmp_path: Path) -> None:
     _write_test_pfx(pfx_path, password="secret")
 
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _DummySettings(
-        signing=_DummySigning(
-            pfx_path=pfx_path,
-            pfx_password="secret",
-            timestamp=_DummyTimestamp(
-                enabled=True,
-                rfc3161=_DummyRfc3161(tsa_url=tsa_url, timeout_seconds=0.1),
-            ),
-        )
-    )
+    signing = _make_signing_with_tsa(pfx_path, "secret", tsa_url, timeout_seconds=0.1)
 
     with respx.mock(assert_all_called=False) as router:
         router.post(tsa_url).mock(side_effect=httpx.ConnectError("boom"))
         with pytest.raises(TransientError):
-            sign_pdf(_minimal_pdf_bytes(), settings)
+            sign_pdf(_minimal_pdf_bytes(), signing)
