@@ -94,3 +94,8 @@ run_docker() {
 # forced-ci-23
 
 # forced-ruff-24
+
+# current lane: github_actions
+run_github_actions() {
+  printf '%s\n' 'github actions ready'
+}
