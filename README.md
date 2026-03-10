@@ -3,15 +3,15 @@
 A working tree for zammad-ticket-archiver with an evolving implementation history.
 
 ## Overview
-zammad-ticket-archiver documents maintained build commands, known limits, and remaining work.
+zammad-ticket-archiver records the stable project shape and the work still worth checking.
 
 ## Status
-Lifecycle stage: maintenance. The useful early notes have been carried forward.
+Lifecycle stage: maintenance. Maintenance guidance now reflects the stable shape.
 
 ## Development
-- Aligned local and CI checks for tags.
+- Aligned local and CI checks for payload.
 
-- Earlier scratch detail is now represented in maintained sections.
+- The document now favors checked behavior over exploratory notes.
 
 ## Usage
 - Made the docker assumptions easier to check later.
