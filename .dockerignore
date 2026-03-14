@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+
+# CI / IDE / Editor
+.github
+.vscode
+.idea
+.cursor
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+.eggs
+.mypy_cache
+.ruff_cache
+.pytest_cache
+htmlcov
+.coverage
+
+# Virtual environments
+.venv
+venv
+
+# Documentation (not needed in image)
+docs
+
+# Tests (not needed in production image)
+test
+tests
+
+# Development files
+Dockerfile.dev
+docker-compose.dev.yml
+Makefile
+*.md
+!README.md
+!LICENSE
+
+# Pre-commit
+.pre-commit-config.yaml
+
+# Local audit / codex
+.claude
+.codex
