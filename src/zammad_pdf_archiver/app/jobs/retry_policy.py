@@ -51,18 +51,16 @@ _PERMANENT_ERRNOS: set[int] = {
 
 
 def _classify_http_status(exc: httpx.HTTPStatusError) -> TransientError | PermanentError:
-    status = getattr(getattr(exc, "response", None), "status_code", None)
-    if isinstance(status, int) and 500 <= status <= 599:
+    status = exc.response.status_code
+    if 500 <= status <= 599:
         return TransientError(format_http_error(status))
-    if isinstance(status, int) and status in (401, 403):
+    if status in (401, 403):
         return PermanentError(format_http_error(status, is_auth=True))
-    if isinstance(status, int):
-        return PermanentError(format_http_error(status))
-    return PermanentError(ErrorMessages.HTTP_REQUEST_ERROR)
+    return PermanentError(format_http_error(status))
 
 
 def _classify_os_error(exc: OSError) -> TransientError | PermanentError:
-    err = getattr(exc, "errno", None)
+    err = exc.errno
     if isinstance(err, int) and err in _TRANSIENT_ERRNOS:
         return TransientError(format_fs_error(err, is_temporary=True))
     if isinstance(err, int) and err in _PERMANENT_ERRNOS:

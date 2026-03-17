@@ -25,14 +25,14 @@ def _secret_bytes(settings: Settings | None) -> bytes | None:
     if settings is None:
         return None
 
-    secret = getattr(settings.zammad, "webhook_hmac_secret", None)
+    secret = settings.zammad.webhook_hmac_secret
     if secret is not None:
         value = secret.get_secret_value()
         if value and value.strip():
             return value.encode("utf-8")
 
     # Backwards-compatible: allow existing shared secret config.
-    legacy = getattr(settings.server, "webhook_shared_secret", None)
+    legacy = settings.server.webhook_shared_secret
     if legacy is not None:
         value = legacy.get_secret_value()
         if value and value.strip():
@@ -79,9 +79,6 @@ def _parse_signature(value: str) -> tuple[bytes, type] | None:
     return (digest, digest_ctor)
 
 
-
-
-
 async def _read_body(
     receive: Receive, *, on_chunk: Callable[[bytes], None]
 ) -> tuple[list[bytes], bool]:
@@ -126,18 +123,15 @@ class HmacVerifyMiddleware:
     def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
         self.app = app
         self._secret = _secret_bytes(settings)
-        webhook = getattr(getattr(settings, "hardening", None), "webhook", None)
-        self._allow_unsigned = (
-            bool(getattr(webhook, "allow_unsigned", False)) if settings else False
-        )
-        self._allow_unsigned_when_no_secret = (
-            bool(getattr(webhook, "allow_unsigned_when_no_secret", False))
-            if settings
-            else False
-        )
-        self._require_delivery_id = (
-            bool(getattr(webhook, "require_delivery_id", False)) if settings else False
-        )
+        if settings is not None:
+            webhook = settings.hardening.webhook
+            self._allow_unsigned = webhook.allow_unsigned
+            self._allow_unsigned_when_no_secret = webhook.allow_unsigned_when_no_secret
+            self._require_delivery_id = webhook.require_delivery_id
+        else:
+            self._allow_unsigned = False
+            self._allow_unsigned_when_no_secret = False
+            self._require_delivery_id = False
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":

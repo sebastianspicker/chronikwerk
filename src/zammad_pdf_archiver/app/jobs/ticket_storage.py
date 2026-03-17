@@ -1,7 +1,7 @@
-"""Ticket storage operations - handles atomic file storage.
+"""Write PDFs, audit sidecars, and attachments to the archive filesystem.
 
-This module provides functions for atomically writing PDF files,
-audit sidecars, and attachments to storage.
+All writes go through a temp directory first; files are renamed into place atomically.
+The sidecar JSON is moved last so its presence reliably signals a complete archival.
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import json
 import shutil
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class StorageResult:
-    """Result of storage operation."""
     target_path: Path
     sidecar_path: Path
     sha256_hex: str
@@ -36,7 +36,6 @@ class StorageResult:
 
 @dataclass(frozen=True)
 class StoragePaths:
-    """Computed storage paths for a ticket."""
     target_dir: Path
     target_path: Path
     sidecar_path: Path
@@ -51,19 +50,7 @@ def compute_storage_paths(
     ticket_number: str,
     date_iso: str,
 ) -> StoragePaths:
-    """Compute target storage paths for a ticket.
-    
-    Args:
-        storage_root: Root storage directory
-        username: Username for first path component
-        archive_path_segments: Path segments from ticket field
-        filename_pattern: Pattern for filename
-        ticket_number: Ticket number
-        date_iso: ISO date string
-        
-    Returns:
-        StoragePaths with computed paths
-    """
+    """Resolve the final target path, sidecar path, and parent directory for a ticket."""
     from zammad_pdf_archiver.adapters.storage.layout import (
         build_filename_from_pattern,
         build_target_dir,
@@ -97,29 +84,17 @@ def store_ticket_files(
     snapshot: Snapshot,
     paths: StoragePaths,
     ticket_id: int,
-    now: Any,  # datetime
+    now: datetime,
     settings: Settings,
 ) -> StorageResult:
-    """Atomically store PDF, sidecar, and attachments.
-    
-    Uses a temporary directory for atomic writes, then moves
-    all files to their final locations.
-    
-    Args:
-        pdf_bytes: PDF content
-        snapshot: Ticket snapshot
-        paths: Computed storage paths
-        ticket_id: Ticket ID
-        now: Current datetime
-        settings: Application settings
-        
-    Returns:
-        StorageResult with paths and checksums
+    """Write PDF, audit sidecar, and any attachment binaries to their final paths.
+
+    Uses a temp directory under the target parent; all files are renamed into place.
+    The sidecar is moved last so its presence reliably indicates a complete archival.
     """
     sha256_hex = compute_sha256(pdf_bytes)
     size_bytes = len(pdf_bytes)
     
-    # Create temp directory for atomic writes
     temp_archive_root = (
         paths.target_path.parent / f".tmp-archiving-{ticket_id}-{uuid.uuid4().hex[:8]}"
     )
@@ -132,10 +107,9 @@ def store_ticket_files(
         temp_attachments_dir = temp_archive_root / "attachments"
         
         attachments_dir = paths.target_path.parent / "attachments"
-        snapshot_articles = getattr(snapshot, "articles", None)
-        
-        # Write attachments if present
-        if isinstance(snapshot_articles, list) and snapshot_articles:
+        snapshot_articles = snapshot.articles
+
+        if snapshot_articles:
             has_attachments = any(
                 att.content is not None
                 for article in snapshot_articles
@@ -167,7 +141,6 @@ def store_ticket_files(
                             }
                         )
         
-        # Build audit record
         audit_record = build_audit_record(
             ticket_id=ticket_id,
             ticket_number=snapshot.ticket.number,
@@ -183,7 +156,6 @@ def store_ticket_files(
             + "\n"
         ).encode("utf-8")
         
-        # Write PDF and sidecar into temp dir
         write_bytes(
             temp_pdf_path,
             pdf_bytes,
@@ -210,7 +182,6 @@ def store_ticket_files(
                     fsync=settings.storage.fsync,
                 )
         
-        # Move PDF
         move_file_within_root(
             temp_pdf_path,
             paths.target_path,

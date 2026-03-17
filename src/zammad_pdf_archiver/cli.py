@@ -1,15 +1,10 @@
-"""CLI commands for zammad-pdf-archiver.
-
-This module provides command-line utilities for:
-- Validating configuration
-- Dumping configuration (with secrets redacted)
-- Showing deprecated environment variables
-"""
+"""CLI entry point for zammad-archiver-cli: config validation, queue management, and diagnostics."""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import os
 import sys
 
 import structlog
@@ -21,6 +16,7 @@ from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.config.redact import redact_settings_dict
 
 log = structlog.get_logger(__name__)
+
 
 def cmd_validate_config(args: argparse.Namespace) -> int:
     """Validate configuration and exit with appropriate code.
@@ -62,8 +58,6 @@ def cmd_dump_config(args: argparse.Namespace) -> int:
 
 def cmd_show_deprecated(args: argparse.Namespace) -> int:
     """Show deprecated environment variables that are in use."""
-    import os
-    
     found = []
     for old_name, new_name in _DEPRECATED_ALIASES.items():
         if old_name in os.environ:

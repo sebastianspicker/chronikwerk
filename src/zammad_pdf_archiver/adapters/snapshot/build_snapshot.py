@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any, Protocol
@@ -256,7 +256,7 @@ def _attachment_enrichment_enabled(
 def _attachment_fetch_targets(
     snapshot: Snapshot,
     *,
-    fetch_one,
+    fetch_one: Callable[[int, AttachmentMeta], Awaitable[tuple[int, int | None, bytes | None]]],
 ) -> list[Awaitable[tuple[int, int | None, bytes | None]]]:
     targets: list[Awaitable[tuple[int, int | None, bytes | None]]] = []
     for article in snapshot.articles:

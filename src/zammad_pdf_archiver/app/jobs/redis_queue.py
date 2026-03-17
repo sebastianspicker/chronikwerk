@@ -263,8 +263,8 @@ async def _handle_envelope(
 
     try:
         result = await process_ticket(envelope.delivery_id, envelope.payload, settings)
-        status = getattr(result, "status", "processed")
-        message = getattr(result, "message", "")
+        status = result.status
+        message = result.message
     except Exception as exc:  # pragma: no cover - defensive fallback
         queue_failed_total.inc()
         status = "failed_transient"

@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import httpx
 from asn1crypto import tsp  # type: ignore[import-untyped]
-from pydantic import SecretStr
 from pyhanko.sign.timestamps.api import TimeStamper
 from pyhanko.sign.timestamps.common_utils import set_tsp_headers
 
@@ -35,13 +33,9 @@ def _load_tsa_config(signing: SigningSettings, *, trust_env: bool = False) -> _T
     ca_bundle_path = rfc3161.ca_bundle_path
 
     user = rfc3161.user
-    password_secret = rfc3161.password
-    if isinstance(password_secret, SecretStr):
-        password: str | None = password_secret.get_secret_value()
-    elif isinstance(password_secret, str):
-        password = password_secret
-    else:
-        password = None
+    password: str | None = (
+        rfc3161.password.get_secret_value() if rfc3161.password is not None else None
+    )
 
     auth: tuple[str, str] | None
     if user or password:
@@ -72,9 +66,6 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
             verify = str(self._config.ca_bundle_path)
 
         try:
-            post_kwargs: dict[str, Any] = {}
-            if self._config.auth is not None:
-                post_kwargs["auth"] = self._config.auth
             async with httpx.AsyncClient(
                 timeout=timeouts_for(self._config.timeout_seconds),
                 limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
@@ -86,7 +77,7 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
                     self._config.url,
                     content=req.dump(),
                     headers=headers,
-                    **post_kwargs,
+                    auth=self._config.auth,
                 )
         except httpx.RequestError as exc:
             raise TransientError("Error communicating with RFC3161 TSA") from exc

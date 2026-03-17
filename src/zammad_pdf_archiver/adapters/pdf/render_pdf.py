@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import warnings
+from collections.abc import Generator
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
@@ -15,7 +16,7 @@ _TEMPLATE_STYLES_MAIN = "styles.css"
 
 
 @contextmanager
-def _template_folder_path(template_name: str, templates_root: Path | None = None):
+def _template_folder_path(template_name: str, templates_root: Path | None = None) -> Generator[Path, None, None]:
     template_name = validate_template_name(template_name)
 
     if templates_root is not None:

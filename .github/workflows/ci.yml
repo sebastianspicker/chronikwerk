@@ -68,7 +68,7 @@ jobs:
 
       - name: Pytest (allow none collected)
         run: |
-          pytest -q || (test $? -eq 5 && echo "No tests collected (bootstrap stage)" && exit 0)
+          pytest -q --cov=src/zammad_pdf_archiver --cov-report=term-missing || (test $? -eq 5 && echo "No tests collected (bootstrap stage)" && exit 0)
 
       - name: Build (sdist/wheel)
         run: |

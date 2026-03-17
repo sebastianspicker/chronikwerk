@@ -52,7 +52,7 @@ def success_note_html(
 def error_code_and_hint(exc: BaseException) -> tuple[str, str]:
     """Return (stable_code, short_hint) for permanent failures (Bug #7)."""
     msg = str(exc).strip().lower()
-    if "archive_path is missing" in msg or "archive_path" in msg and "missing" in msg:
+    if "archive_path" in msg and "missing" in msg:
         return ("missing_archive_path", "Set custom_fields.archive_path on the ticket.")
     if "archive_path must not be empty" in msg or "all segments were empty" in msg:
         return ("empty_archive_path", "Set archive_path to at least one non-empty segment.")

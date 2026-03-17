@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic.networks import AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,7 +12,7 @@ from zammad_pdf_archiver.config.env_aliases import get_flat_env_settings_source
 
 
 class _BaseSection(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
 
 class ServerSettings(_BaseSection):

@@ -91,10 +91,5 @@ def ensure_within_root(root: Path, target: Path) -> None:
     root_resolved = root.resolve(strict=False)
     target_resolved = target.resolve(strict=False)
 
-    try:
-        within = target_resolved.is_relative_to(root_resolved)
-    except AttributeError:  # pragma: no cover (py<3.9)
-        within = root_resolved == target_resolved or root_resolved in target_resolved.parents
-
-    if not within:
+    if not target_resolved.is_relative_to(root_resolved):
         raise ValueError("target path escapes root")

@@ -125,9 +125,7 @@ class RateLimitMiddleware:
         self._paths = frozenset(
             set(INGEST_PROTECTED_PATHS) | ({_METRICS_PATH} if config.include_metrics else set())
         )
-        self._client_key_header: str | None = getattr(
-            config, "client_key_header", None
-        ) or None
+        self._client_key_header: str | None = config.client_key_header or None
         self._limiter = _InMemoryTokenBucketLimiter(rps=config.rps, burst=config.burst)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

@@ -145,8 +145,8 @@ def _validate_primary_transport(
 def _validate_webhook_auth(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     # Webhook auth safety: by default, /ingest must be authenticated with a configured secret.
     if not settings.hardening.webhook.allow_unsigned:
-        secret = getattr(settings.zammad, "webhook_hmac_secret", None)
-        legacy = getattr(settings.server, "webhook_shared_secret", None)
+        secret = settings.zammad.webhook_hmac_secret
+        legacy = settings.server.webhook_shared_secret
         secret_value = secret.get_secret_value().strip() if secret is not None else ""
         legacy_value = legacy.get_secret_value().strip() if legacy is not None else ""
         if not secret_value and not legacy_value:

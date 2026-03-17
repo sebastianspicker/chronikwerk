@@ -8,16 +8,10 @@ from zammad_pdf_archiver.app.jobs.history import read_history
 from zammad_pdf_archiver.app.jobs.redis_queue import drain_dlq, get_queue_stats
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down
 from zammad_pdf_archiver.app.jobs.ticket_stores import is_ticket_in_flight
+from zammad_pdf_archiver.app.responses import settings_or_503
 from zammad_pdf_archiver.config.settings import Settings
 
 router = APIRouter()
-
-
-def _settings_or_503(request: Request) -> Settings:
-    settings: Settings | None = getattr(request.app.state, "settings", None)
-    if settings is None:
-        raise HTTPException(status_code=503, detail="settings_not_configured")
-    return settings
 
 
 def _verify_ops_bearer(request: Request, settings: Settings) -> None:
@@ -58,7 +52,7 @@ async def get_job_history(
     limit: int = 100,
     ticket_id: int | None = None,
 ) -> dict[str, int | str | list[dict[str, object]]]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_ops_bearer(request, settings)
 
     bounded_limit = max(1, min(int(limit), 5000))
@@ -75,7 +69,7 @@ async def get_job_history(
 
 @router.post("/jobs/queue/dlq/drain")
 async def drain_queue_dlq(request: Request, limit: int = 100) -> dict[str, int | str]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_ops_bearer(request, settings)
     bounded_limit = max(1, min(int(limit), 1000))
     try:

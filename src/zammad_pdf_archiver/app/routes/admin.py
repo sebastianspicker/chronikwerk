@@ -14,6 +14,7 @@ from zammad_pdf_archiver.app.jobs.redis_queue import (
     get_queue_stats,
     replay_dlq,
 )
+from zammad_pdf_archiver.app.responses import settings_or_503
 from zammad_pdf_archiver.app.routes.ingest import _dispatch_ticket
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import (
@@ -27,13 +28,6 @@ log = structlog.get_logger(__name__)
 _DASHBOARD_HTML = (
     Path(__file__).resolve().parent.parent.parent / "templates" / "admin" / "dashboard.html"
 ).read_text(encoding="utf-8")
-
-
-def _settings_or_503(request: Request) -> Settings:
-    settings: Settings | None = getattr(request.app.state, "settings", None)
-    if settings is None:
-        raise HTTPException(status_code=503, detail="settings_not_configured")
-    return settings
 
 
 def _verify_admin_auth(request: Request, settings: Settings) -> None:
@@ -61,7 +55,7 @@ def admin_dashboard() -> HTMLResponse:
 
 @router.get("/admin/api/queue/stats")
 async def admin_queue_stats(request: Request) -> dict[str, object]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
     try:
         stats = await get_queue_stats(settings)
@@ -77,7 +71,7 @@ async def admin_history(
     limit: int | None = None,
     ticket_id: int | None = None,
 ) -> dict[str, object]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
     resolved_limit = limit if limit is not None else settings.admin.history_limit
@@ -92,7 +86,7 @@ async def admin_history(
 
 @router.post("/admin/api/retry/{ticket_id}")
 async def admin_retry_ticket(request: Request, ticket_id: int) -> dict[str, object]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
     payload: dict[str, object] = {
@@ -113,7 +107,7 @@ async def admin_retry_ticket(request: Request, ticket_id: int) -> dict[str, obje
 
 @router.post("/admin/api/dlq/drain")
 async def admin_drain_dlq(request: Request, limit: int = 100) -> dict[str, object]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
     bounded_limit = max(1, min(int(limit), 1000))
@@ -129,7 +123,7 @@ async def admin_drain_dlq(request: Request, limit: int = 100) -> dict[str, objec
 async def admin_replay_dlq(
     request: Request, limit: int = 10,
 ) -> dict[str, object]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
     bounded_limit = max(1, min(int(limit), 1000))
@@ -145,7 +139,7 @@ async def admin_replay_dlq(
 
 @router.get("/admin/api/config/check")
 async def admin_config_check(request: Request) -> dict[str, object]:
-    settings = _settings_or_503(request)
+    settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
     issues: list[dict[str, str]] = []

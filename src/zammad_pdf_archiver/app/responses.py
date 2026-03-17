@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
+from fastapi import HTTPException, Request
 from starlette.responses import JSONResponse
+
+from zammad_pdf_archiver.config.settings import Settings
+
+
+def settings_or_503(request: Request) -> Settings:
+    """Extract Settings from app state or raise HTTP 503."""
+    settings: Settings | None = getattr(request.app.state, "settings", None)
+    if settings is None:
+        raise HTTPException(status_code=503, detail="settings_not_configured")
+    return settings
 
 
 def api_error(

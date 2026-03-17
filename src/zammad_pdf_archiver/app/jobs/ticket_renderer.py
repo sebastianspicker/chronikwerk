@@ -1,8 +1,4 @@
-"""Ticket rendering operations - handles PDF generation and signing.
-
-This module provides functions for rendering tickets to PDF,
-including optional signing and timestamping.
-"""
+"""Build normalized snapshots from Zammad tickets and render them to PDF."""
 from __future__ import annotations
 
 import asyncio
@@ -31,7 +27,6 @@ log = structlog.get_logger(__name__)
 
 @dataclass(frozen=True)
 class RenderResult:
-    """Result of PDF rendering operation."""
     pdf_bytes: bytes
     snapshot: Snapshot
 
@@ -43,25 +38,7 @@ async def build_and_render_pdf(
     ticket_id: int,
     settings: Settings,
 ) -> RenderResult:
-    """Build snapshot and render PDF with optional signing.
-    
-    This function:
-    1. Builds a normalized snapshot from ticket data
-    2. Optionally caps articles if configured
-    3. Enriches with attachment content if configured
-    4. Renders PDF using Jinja2 + WeasyPrint
-    5. Optionally signs with PAdES and timestamps with RFC3161
-    
-    Args:
-        client: Zammad API client
-        ticket: Ticket object
-        tags: Tag list
-        ticket_id: Ticket ID
-        settings: Application settings
-        
-    Returns:
-        RenderResult with PDF bytes and snapshot
-    """
+    """Fetch ticket data, render to PDF, and optionally sign/timestamp."""
     snapshot = await build_snapshot(
         client,
         ticket_id,
@@ -69,10 +46,9 @@ async def build_and_render_pdf(
         tags=tags,
     )
     
-    # Handle article limit capping
     max_articles = settings.pdf.max_articles
     if (
-        getattr(settings.pdf, "article_limit_mode", "fail") == "cap_and_continue"
+        settings.pdf.article_limit_mode == "cap_and_continue"
         and max_articles > 0
         and len(snapshot.articles) > max_articles
     ):
@@ -87,7 +63,6 @@ async def build_and_render_pdf(
             articles=snapshot.articles[:max_articles],
         )
     
-    # Enrich with attachment binaries if configured
     snapshot = await enrich_attachment_content(
         snapshot,
         client,
@@ -96,7 +71,6 @@ async def build_and_render_pdf(
         max_total_attachment_bytes=settings.pdf.max_total_attachment_bytes,
     )
     
-    # Render PDF
     render_start = perf_counter()
     pdf_bytes = render_pdf(
         snapshot,
@@ -108,7 +82,6 @@ async def build_and_render_pdf(
     )
     render_seconds.observe(perf_counter() - render_start)
     
-    # Sign if enabled
     if settings.signing.enabled:
         sign_start = perf_counter()
         # pyHanko's synchronous signing helper uses asyncio.run() internally.

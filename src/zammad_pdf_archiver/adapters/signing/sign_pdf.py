@@ -49,12 +49,8 @@ def _validate_cert_not_expired(pfx_bytes: bytes, password: bytes | None) -> None
         raise PermanentError("PKCS#12/PFX bundle must contain a private key and certificate")
 
     now = datetime.now(UTC)
-    not_before = getattr(cert, "not_valid_before_utc", None) or cert.not_valid_before.replace(
-        tzinfo=UTC
-    )
-    not_after = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(
-        tzinfo=UTC
-    )
+    not_before = cert.not_valid_before_utc
+    not_after = cert.not_valid_after_utc
 
     if now < not_before:
         raise PermanentError(

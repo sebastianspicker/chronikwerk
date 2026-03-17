@@ -58,6 +58,7 @@ async def _global_exception_handler(request, exc):
         headers=headers,
     )
 
+
 def _wire_app(app: FastAPI, *, settings: Settings | None) -> None:
     app.state.settings = settings
 

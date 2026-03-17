@@ -7,8 +7,6 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
-from pydantic import SecretStr
-
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.time_utils import format_timestamp_utc
 
@@ -36,15 +34,8 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
         from cryptography.hazmat.primitives.serialization import pkcs12
 
         if signing_settings.pfx_path is not None:
-            password_secret = signing_settings.pfx_password
-            if isinstance(password_secret, SecretStr):
-                password_str: str | None = password_secret.get_secret_value()
-            elif isinstance(password_secret, str):
-                password_str = password_secret
-            elif password_secret is None:
-                password_str = None
-            else:
-                password_str = str(password_secret)
+            pfx_pwd = signing_settings.pfx_password
+            password_str: str | None = pfx_pwd.get_secret_value() if pfx_pwd is not None else None
             password = password_str.encode("utf-8") if password_str else None
 
             pfx_bytes = Path(signing_settings.pfx_path).read_bytes()

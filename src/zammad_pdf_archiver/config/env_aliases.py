@@ -1,8 +1,4 @@
-"""Environment variable aliases for backward compatibility.
-
-This module handles legacy environment variable names and provides
-DeprecationWarnings when they are used.
-"""
+"""Maps flat env var names to nested settings keys; deprecated names emit DeprecationWarning."""
 from __future__ import annotations
 
 import os

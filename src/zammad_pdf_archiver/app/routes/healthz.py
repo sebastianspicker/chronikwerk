@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import tempfile
 from datetime import UTC, datetime
 from importlib import metadata
-from typing import Any
 
 import structlog
 from fastapi import APIRouter, Request
+
+from zammad_pdf_archiver.config.settings import Settings
 
 router = APIRouter()
 log = structlog.get_logger(__name__)
@@ -18,8 +20,8 @@ def _service_version() -> str:
         return "0.0.0"
 
 
-async def _check_redis(settings: Any) -> dict[str, object]:
-    redis_url = getattr(settings.workflow, "redis_url", None)
+async def _check_redis(settings: Settings) -> dict[str, object]:
+    redis_url = settings.workflow.redis_url
     if not redis_url or not redis_url.strip():
         return {"available": False, "reason": "not_configured"}
     try:
@@ -32,13 +34,9 @@ async def _check_redis(settings: Any) -> dict[str, object]:
         return {"available": False, "reason": str(exc)[:200]}
 
 
-def _check_storage(settings: Any) -> dict[str, object]:
-    root = getattr(settings.storage, "root", None)
-    if root is None:
-        return {"writable": False, "reason": "not_configured"}
+def _check_storage(settings: Settings) -> dict[str, object]:
+    root = settings.storage.root
     try:
-        import tempfile
-
         with tempfile.NamedTemporaryFile(dir=root, delete=True):
             return {"writable": True, "path": str(root)}
     except Exception as exc:
@@ -52,9 +50,7 @@ async def healthz(request: Request, deep: bool = False) -> dict[str, object]:
         "time": datetime.now(UTC).isoformat(),
     }
     settings = getattr(request.app.state, "settings", None)
-    if settings is None or not getattr(
-        settings.observability, "healthz_omit_version", False,
-    ):
+    if settings is None or not settings.observability.healthz_omit_version:
         out["service"] = "zammad-pdf-archiver"
         out["version"] = _service_version()
 

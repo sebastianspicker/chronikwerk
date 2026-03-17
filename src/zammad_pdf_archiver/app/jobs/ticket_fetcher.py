@@ -1,8 +1,4 @@
-"""Ticket fetching operations - handles all Zammad data retrieval.
-
-This module provides a clean interface for fetching ticket-related data
-from Zammad, abstracting away the client details.
-"""
+"""Fetch a Zammad ticket and its tag list together as a typed bundle."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,7 +12,6 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TicketData:
-    """Container for all fetched ticket data."""
     ticket: Ticket
     tags: TagList
     ticket_id: int
@@ -26,15 +21,6 @@ async def fetch_ticket_data(
     client: AsyncZammadClient,
     ticket_id: int,
 ) -> TicketData:
-    """Fetch all required ticket data from Zammad.
-    
-    Args:
-        client: Zammad API client
-        ticket_id: Ticket ID to fetch
-        
-    Returns:
-        TicketData containing ticket, tags, and ID
-    """
     ticket = await client.get_ticket(ticket_id)
     tags = await client.list_tags(ticket_id)
     
