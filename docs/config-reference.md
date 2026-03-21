@@ -98,6 +98,7 @@ Required unless overridden by explicit unsafe/test options:
 | Key | Default | Flat env alias | Description |
 |---|---|---|---|
 | `pdf.template_variant` | `default` | `PDF_TEMPLATE_VARIANT`, `TEMPLATE_VARIANT` | template variant (`default`, `minimal`, `compact`) |
+| `pdf.templates_root` | `null` | `TEMPLATES_ROOT` | custom template directory; overrides built-in templates when set |
 | `pdf.locale` | `de_DE` | `PDF_LOCALE`, `RENDER_LOCALE` | locale setting (template-dependent) |
 | `pdf.timezone` | `Europe/Berlin` | `PDF_TIMEZONE`, `RENDER_TIMEZONE` | timezone setting (template-dependent) |
 | `pdf.max_articles` | `250` | `PDF_MAX_ARTICLES` | max article count (`0` disables limit) |
@@ -132,10 +133,8 @@ Required unless overridden by explicit unsafe/test options:
 | `signing.timestamp.rfc3161.tsa_url` | `null` | `TSA_URL` | TSA endpoint URL |
 | `signing.timestamp.rfc3161.timeout_seconds` | `10.0` | `TSA_TIMEOUT_SECONDS` | TSA timeout |
 | `signing.timestamp.rfc3161.ca_bundle_path` | `null` | `TSA_CA_BUNDLE_PATH` | custom trust bundle path |
-
-Env-only TSA auth keys:
-- `TSA_USER`
-- `TSA_PASS`
+| `signing.timestamp.rfc3161.user` | `null` | `TSA_USER` | TSA HTTP basic auth username |
+| `signing.timestamp.rfc3161.password` | `null` | `TSA_PASS` | TSA HTTP basic auth password (SecretStr) |
 
 ### `observability`
 
@@ -193,7 +192,6 @@ Env-only TSA auth keys:
 
 These are used by runtime/deployment but not part of `Settings` model:
 - `CONFIG_PATH` (YAML config path)
-- `TSA_USER`, `TSA_PASS` (TSA basic auth)
 
 ## 5. Nested Environment Examples
 

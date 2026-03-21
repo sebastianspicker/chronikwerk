@@ -104,7 +104,7 @@ class StorageSettings(_BaseSection):
 
 
 class PdfSettings(_BaseSection):
-    template_variant: str = "default"  # default|minimal
+    template_variant: str = "default"  # default|minimal|compact
     templates_root: Path | None = None
     locale: str = "de_DE"
     timezone: str = "Europe/Berlin"
