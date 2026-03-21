@@ -93,7 +93,7 @@ source = ["src/zammad_pdf_archiver"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 79
+fail_under = 85
 show_missing = true
 skip_empty = true
 exclude_lines = [

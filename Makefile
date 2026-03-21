@@ -43,7 +43,7 @@ test-all:
 	@set -e; python -m pytest -q || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
 
 test-cov:
-	python -m pytest --cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=79
+	python -m pytest --cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=85
 
 docs-check:
 	@for p in README.md docs/01-architecture.md docs/08-operations.md docs/api.md docs/config-reference.md docs/PRD.md; do \
