@@ -5,9 +5,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+import structlog
 from pydantic import ValidationError
 
 from zammad_pdf_archiver.config.settings import Settings, TransportHardeningSettings
+
+log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_tsa_transport(settings, transport=transport, issues=issues)
     _validate_redis_url(settings, issues)
     _validate_admin_settings(settings, issues)
+    _warn_metrics_without_token(settings)
 
     if issues:
         raise ConfigValidationError(issues)
@@ -238,4 +242,15 @@ def _validate_admin_settings(settings: Settings, issues: list[ConfigValidationIs
                         "(set ADMIN_BEARER_TOKEN)."
                     ),
                 )
+            )
+
+
+def _warn_metrics_without_token(settings: Settings) -> None:
+    if settings.observability.metrics_enabled:
+        token = settings.observability.metrics_bearer_token
+        token_value = token.get_secret_value().strip() if token is not None else ""
+        if not token_value:
+            log.warning(
+                "Metrics endpoint enabled without bearer token"
+                " \u2014 /metrics is accessible without authentication"
             )

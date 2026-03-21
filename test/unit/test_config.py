@@ -543,3 +543,25 @@ def test_rate_limit_burst_upper_bound() -> None:
                 },
             }
         )
+
+
+def test_metrics_without_token_warns(capsys: pytest.CaptureFixture[str]) -> None:
+    """When metrics_enabled=True but no bearer token is set, a warning is emitted."""
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": "/mnt/archive"},
+            "hardening": {
+                "webhook": {
+                    "allow_unsigned": True,
+                    "allow_unsigned_when_no_secret": True,
+                }
+            },
+            "observability": {"metrics_enabled": True},
+        }
+    )
+
+    validate_settings(settings)
+
+    captured = capsys.readouterr()
+    assert "Metrics endpoint enabled without bearer token" in captured.out
