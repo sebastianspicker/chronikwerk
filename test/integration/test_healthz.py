@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from importlib import metadata
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -164,3 +165,60 @@ def test_deep_healthz_storage_failed_reports_degraded() -> None:
     assert body["status"] == "degraded"
     assert body["checks"]["storage"]["writable"] is False
     assert "reason" in body["checks"]["storage"]
+
+
+def test_service_version_package_not_found(tmp_path) -> None:
+    """When metadata.version raises PackageNotFoundError, version falls back to '0.0.0'."""
+    app = create_app(_test_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    with patch(
+        "zammad_pdf_archiver.app.routes.healthz.metadata.version",
+        side_effect=metadata.PackageNotFoundError("zammad-pdf-archiver"),
+    ):
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version"] == "0.0.0"
+
+
+def test_check_redis_no_url_configured(tmp_path) -> None:
+    """Deep healthz with no redis_url configured reports redis as not available."""
+    settings = make_settings(str(tmp_path))
+    # Verify redis_url is not set in default settings
+    assert not settings.workflow.redis_url
+
+    app = create_app(settings)
+    client = TestClient(app)
+
+    response = client.get("/healthz", params={"deep": "true"})
+    assert response.status_code == 200
+
+    body = response.json()
+    redis_check = body["checks"]["redis"]
+    assert redis_check["available"] is False
+    assert redis_check["reason"] == "not_configured"
+
+
+def test_check_redis_connection_failure(tmp_path) -> None:
+    """Deep healthz with redis_url but connection failing: available=False."""
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"redis_url": "redis://localhost:59999/0"}},
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    with patch(
+        "zammad_pdf_archiver.adapters.redis_pool.get_redis",
+        side_effect=ConnectionError("Connection refused"),
+    ):
+        response = client.get("/healthz", params={"deep": "true"})
+
+    assert response.status_code == 200
+    body = response.json()
+    redis_check = body["checks"]["redis"]
+    assert redis_check["available"] is False
+    assert "reason" in redis_check
+    assert len(redis_check["reason"]) > 0

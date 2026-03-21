@@ -226,3 +226,78 @@ def test_admin_replay_dlq_requires_auth(tmp_path) -> None:
 
     response = client.post("/admin/api/dlq/replay")
     assert response.status_code == 401
+
+
+def test_admin_queue_stats_exception(tmp_path, monkeypatch) -> None:
+    """When get_queue_stats raises, the endpoint returns 503."""
+    app = create_app(_admin_settings(str(tmp_path)))
+
+    import zammad_pdf_archiver.app.routes.admin as admin_route
+
+    async def _boom(_settings):
+        raise RuntimeError("redis exploded")
+
+    monkeypatch.setattr(admin_route, "get_queue_stats", _boom)
+
+    client = TestClient(app)
+    response = client.get(
+        "/admin/api/queue/stats",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "queue_unavailable"
+
+
+def test_admin_history_exception(tmp_path, monkeypatch) -> None:
+    """When read_history raises, the endpoint returns 503."""
+    app = create_app(_admin_settings(str(tmp_path)))
+
+    import zammad_pdf_archiver.app.routes.admin as admin_route
+
+    async def _boom(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
+        raise RuntimeError("history backend down")
+
+    monkeypatch.setattr(admin_route, "read_history", _boom)
+
+    client = TestClient(app)
+    response = client.get(
+        "/admin/api/history",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "history_unavailable"
+
+
+def test_admin_disabled_returns_404(tmp_path) -> None:
+    """When admin.enabled=False, all admin API routes return 404."""
+    app = create_app(make_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    for path in [
+        "/admin",
+        "/admin/api/queue/stats",
+        "/admin/api/history",
+        "/admin/api/config/check",
+    ]:
+        response = client.get(path)
+        assert response.status_code == 404, f"Expected 404 for {path}"
+
+    for path in [
+        "/admin/api/retry/1",
+        "/admin/api/dlq/drain",
+        "/admin/api/dlq/replay",
+    ]:
+        response = client.post(path)
+        assert response.status_code == 404, f"Expected 404 for POST {path}"
+
+
+def test_admin_dashboard_returns_html(tmp_path) -> None:
+    """GET /admin returns 200 with HTML content-type when admin is enabled."""
+    app = create_app(_admin_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get("/admin")
+    assert response.status_code == 200
+    content_type = response.headers.get("content-type", "")
+    assert "text/html" in content_type
+    assert "<html" in response.text.lower() or "<!doctype" in response.text.lower()
