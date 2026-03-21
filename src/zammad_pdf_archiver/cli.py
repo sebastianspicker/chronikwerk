@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import os
 import sys
+from collections.abc import Callable
 
 import structlog
 
@@ -17,6 +19,34 @@ from zammad_pdf_archiver.config.redact import redact_settings_dict
 from zammad_pdf_archiver.config.validate import ConfigValidationError
 
 log = structlog.get_logger(__name__)
+
+
+def _cli_command(
+    error_prefix: str,
+    *,
+    catch: tuple[type[Exception], ...] = (Exception,),
+) -> Callable[[Callable[[argparse.Namespace], int]], Callable[[argparse.Namespace], int]]:
+    """Decorator that wraps CLI commands with consistent error handling.
+
+    Args:
+        error_prefix: Human-readable prefix for error messages.
+        catch: Exception types to catch (exit code 1).
+    """
+
+    def decorator(
+        fn: Callable[[argparse.Namespace], int],
+    ) -> Callable[[argparse.Namespace], int]:
+        @functools.wraps(fn)
+        def wrapper(args: argparse.Namespace) -> int:
+            try:
+                return fn(args)
+            except catch as e:
+                print(f"\u2717 {error_prefix}: {e}", file=sys.stderr)
+                return 1
+
+        return wrapper
+
+    return decorator
 
 
 def cmd_validate_config(args: argparse.Namespace) -> int:
@@ -43,18 +73,15 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
         return 1
 
 
+@_cli_command("Failed to load configuration", catch=(ConfigValidationError, ValueError, OSError))
 def cmd_dump_config(args: argparse.Namespace) -> int:
     """Dump current configuration as JSON (with secrets redacted)."""
-    try:
-        settings = load_settings()
-        # Convert to dict and redact
-        data = settings.model_dump(mode="json")
-        redacted = redact_settings_dict(data)
-        print(json.dumps(redacted, indent=2, default=str))
-        return 0
-    except (ConfigValidationError, ValueError, OSError) as e:
-        print(f"✗ Failed to load configuration: {e}", file=sys.stderr)
-        return 1
+    settings = load_settings()
+    # Convert to dict and redact
+    data = settings.model_dump(mode="json")
+    redacted = redact_settings_dict(data)
+    print(json.dumps(redacted, indent=2, default=str))
+    return 0
 
 
 def cmd_show_deprecated(args: argparse.Namespace) -> int:
@@ -80,61 +107,56 @@ def cmd_show_deprecated(args: argparse.Namespace) -> int:
     return 0
 
 
+@_cli_command(
+    "Failed to read queue stats", catch=(RuntimeError, ConnectionError, OSError, ValueError)
+)
 def cmd_queue_stats(args: argparse.Namespace) -> int:
     """Show queue stats as JSON for operational diagnostics."""
-    try:
-        settings = load_settings()
-        stats = asyncio.run(get_queue_stats(settings))
-        print(json.dumps(stats, indent=2, default=str))
-        return 0
-    except (RuntimeError, ConnectionError, OSError, ValueError) as e:
-        print(f"✗ Failed to read queue stats: {e}", file=sys.stderr)
-        return 1
+    settings = load_settings()
+    stats = asyncio.run(get_queue_stats(settings))
+    print(json.dumps(stats, indent=2, default=str))
+    return 0
 
 
+@_cli_command("Failed to drain DLQ", catch=(RuntimeError, ConnectionError, OSError, ValueError))
 def cmd_queue_drain_dlq(args: argparse.Namespace) -> int:
     """Drain dead-letter queue entries (bounded by --limit)."""
-    try:
-        settings = load_settings()
-        backend = (settings.workflow.execution_backend or "inprocess").strip().lower()
-        if backend != "redis_queue":
-            print(
-                "✗ queue-drain-dlq requires workflow.execution_backend=redis_queue",
-                file=sys.stderr,
-            )
-            return 1
-
-        drained = asyncio.run(drain_dlq(settings, limit=int(args.limit)))
-        print(json.dumps({"status": "ok", "drained": drained}, indent=2))
-        return 0
-    except (RuntimeError, ConnectionError, OSError, ValueError) as e:
-        print(f"✗ Failed to drain DLQ: {e}", file=sys.stderr)
+    settings = load_settings()
+    backend = (settings.workflow.execution_backend or "inprocess").strip().lower()
+    if backend != "redis_queue":
+        print(
+            "\u2717 queue-drain-dlq requires workflow.execution_backend=redis_queue",
+            file=sys.stderr,
+        )
         return 1
 
+    drained = asyncio.run(drain_dlq(settings, limit=int(args.limit)))
+    print(json.dumps({"status": "ok", "drained": drained}, indent=2))
+    return 0
 
+
+@_cli_command(
+    "Failed to read queue history", catch=(RuntimeError, ConnectionError, OSError, ValueError)
+)
 def cmd_queue_history(args: argparse.Namespace) -> int:
     """Show queue history events as JSON."""
-    try:
-        settings = load_settings()
-        backend = (settings.workflow.execution_backend or "inprocess").strip().lower()
-        if backend != "redis_queue" and not settings.workflow.redis_url:
-            payload = {"status": "ok", "count": 0, "items": []}
-            print(json.dumps(payload, indent=2))
-            return 0
-
-        items = asyncio.run(
-            read_history(
-                settings,
-                limit=int(args.limit),
-                ticket_id=getattr(args, "ticket_id", None),
-            )
-        )
-        payload = {"status": "ok", "count": len(items), "items": items}
-        print(json.dumps(payload, indent=2, default=str))
+    settings = load_settings()
+    backend = (settings.workflow.execution_backend or "inprocess").strip().lower()
+    if backend != "redis_queue" and not settings.workflow.redis_url:
+        payload = {"status": "ok", "count": 0, "items": []}
+        print(json.dumps(payload, indent=2))
         return 0
-    except (RuntimeError, ConnectionError, OSError, ValueError) as e:
-        print(f"✗ Failed to read queue history: {e}", file=sys.stderr)
-        return 1
+
+    items = asyncio.run(
+        read_history(
+            settings,
+            limit=int(args.limit),
+            ticket_id=getattr(args, "ticket_id", None),
+        )
+    )
+    payload = {"status": "ok", "count": len(items), "items": items}
+    print(json.dumps(payload, indent=2, default=str))
+    return 0
 
 
 def main() -> int:
