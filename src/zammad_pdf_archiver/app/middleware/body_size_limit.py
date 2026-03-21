@@ -56,6 +56,15 @@ def _limited_receive_factory(receive: Receive, max_bytes: int) -> Receive:
 
 
 class BodySizeLimitMiddleware:
+    """Enforce a maximum body size on ingest-path requests.
+
+    Security note on chunked transfer encoding: ASGI servers (uvicorn,
+    hypercorn) decode chunked TE before delivering ``http.request``
+    messages, so ``_limited_receive_factory`` counts the real decoded
+    bytes regardless of the wire encoding.  No additional handling is
+    needed.
+    """
+
     def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
         self.app = app
 

@@ -4,8 +4,8 @@ import asyncio
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, model_validator
+from fastapi import APIRouter, Path, Request
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import JSONResponse
 
 from zammad_pdf_archiver.app.constants import DELIVERY_ID_HEADER, REQUEST_ID_KEY
@@ -20,6 +20,10 @@ router = APIRouter()
 
 log = structlog.get_logger(__name__)
 
+# Security: explicit upper bound on batch size to prevent resource exhaustion.
+# The body-size middleware provides some protection, but this is defense-in-depth.
+MAX_BATCH_SIZE: int = 100
+
 
 class IngestPayload(BaseModel):
     """Minimal webhook payload schema: require resolvable ticket id; allow extra fields."""
@@ -27,7 +31,8 @@ class IngestPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     ticket: dict[str, Any] | None = None
-    ticket_id: int | None = None
+    # Security: reject non-positive ticket IDs at the schema level (defense-in-depth).
+    ticket_id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _require_ticket_id(self) -> IngestPayload:
@@ -147,6 +152,14 @@ async def batch_ingest(
     if error is not None:
         return error
 
+    # Security: reject oversized batches before processing any items.
+    if len(payloads) > MAX_BATCH_SIZE:
+        return api_error(
+            422,
+            f"batch too large (max {MAX_BATCH_SIZE} items)",
+            code="batch_too_large",
+        )
+
     if dry_run:
         return JSONResponse(
             status_code=202,
@@ -173,7 +186,8 @@ async def batch_ingest(
 @router.post("/retry/{ticket_id}", status_code=202)
 async def retry_ticket(
     request: Request,
-    ticket_id: int,
+    # Security: reject non-positive ticket IDs at the parameter level.
+    ticket_id: int = Path(..., ge=1),
 ) -> JSONResponse:
     settings, error = _resolve_settings_or_error(request)
     if error is not None:

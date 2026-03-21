@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hmac
-from pathlib import Path
+import pathlib
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from starlette.responses import HTMLResponse
 
 from zammad_pdf_archiver.app.constants import REQUEST_ID_KEY
@@ -26,7 +26,7 @@ router = APIRouter()
 log = structlog.get_logger(__name__)
 
 _DASHBOARD_HTML = (
-    Path(__file__).resolve().parent.parent.parent / "templates" / "admin" / "dashboard.html"
+    pathlib.Path(__file__).resolve().parent.parent.parent / "templates" / "admin" / "dashboard.html"
 ).read_text(encoding="utf-8")
 
 
@@ -69,7 +69,8 @@ async def admin_queue_stats(request: Request) -> dict[str, object]:
 async def admin_history(
     request: Request,
     limit: int | None = None,
-    ticket_id: int | None = None,
+    # Security: reject non-positive ticket IDs at the parameter level.
+    ticket_id: int | None = Query(default=None, ge=1),
 ) -> dict[str, object]:
     settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
@@ -85,7 +86,11 @@ async def admin_history(
 
 
 @router.post("/admin/api/retry/{ticket_id}")
-async def admin_retry_ticket(request: Request, ticket_id: int) -> dict[str, object]:
+async def admin_retry_ticket(
+    request: Request,
+    # Security: reject non-positive ticket IDs at the parameter level.
+    ticket_id: int = Path(..., ge=1),
+) -> dict[str, object]:
     settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 

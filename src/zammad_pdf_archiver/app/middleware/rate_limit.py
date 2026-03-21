@@ -87,6 +87,15 @@ def _client_key_from_scope(scope: Scope) -> str:
 
 
 def _client_key_from_header(scope: Scope, header_name: str) -> str:
+    """Extract rate-limit key from a request header (e.g. X-Forwarded-For).
+
+    Security note: this header is trivially spoofable by clients unless a
+    trusted reverse proxy (nginx, Caddy, cloud LB) strips/overwrites it
+    before forwarding.  Only enable ``client_key_header`` when deployed
+    behind such a proxy.  When the header is missing or empty we fall back
+    to the ASGI-level client address so an attacker cannot bypass rate
+    limiting by omitting the header.
+    """
     headers = scope.get("headers") or []
     header_lower = header_name.lower().encode("utf-8")
     for name, value in headers:
@@ -97,7 +106,9 @@ def _client_key_from_header(scope: Scope, header_name: str) -> str:
             if first:
                 return first
             break
-    return "unknown"
+    # Security: fall back to connection-level client address when header is
+    # absent or empty, so attackers cannot bypass rate limiting by omitting it.
+    return _client_key_from_scope(scope)
 
 
 def _client_key(scope: Scope, header_name: str | None) -> str:
