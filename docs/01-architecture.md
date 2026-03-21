@@ -86,11 +86,13 @@ Code:
 - `src/zammad_pdf_archiver/app/routes/ingest.py`
 - `src/zammad_pdf_archiver/app/middleware/`
 - `src/zammad_pdf_archiver/app/jobs/process_ticket.py`
+- `src/zammad_pdf_archiver/app/jobs/async_retry.py`
 
 Responsibilities:
 - expose HTTP endpoints
 - enforce ingress hardening (HMAC, body size, rate limit, request ID)
 - schedule asynchronous background processing
+- provide exponential-backoff retry helper for transient failures
 
 ### Zammad adapter
 
