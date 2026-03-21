@@ -11,6 +11,7 @@ import structlog
 from zammad_pdf_archiver._version import VERSION
 from zammad_pdf_archiver.adapters.zammad.client import AsyncZammadClient
 from zammad_pdf_archiver.app.constants import REQUEST_ID_KEY
+from zammad_pdf_archiver.app.jobs.async_retry import async_retry
 from zammad_pdf_archiver.app.jobs.history import record_history_event
 from zammad_pdf_archiver.app.jobs.retry_policy import classify
 from zammad_pdf_archiver.app.jobs.ticket_fetcher import fetch_ticket_data
@@ -113,14 +114,12 @@ async def _apply_done_with_backoff(
     trigger_tag: str,
     max_retries: int = 3,
 ) -> None:
-    for attempt in range(max_retries):
-        try:
-            await apply_done(client, ticket_id, trigger_tag=trigger_tag)
-            return
-        except Exception:
-            if attempt == max_retries - 1:
-                raise
-            await asyncio.sleep(0.5 * (2**attempt))
+    await async_retry(
+        lambda: apply_done(client, ticket_id, trigger_tag=trigger_tag),
+        max_retries=max_retries - 1,
+        backoff_base=0.5,
+        backoff_factor=2.0,
+    )
 
 
 async def _apply_error_with_retry(
@@ -130,21 +129,16 @@ async def _apply_error_with_retry(
     keep_trigger: bool,
     trigger_tag: str,
 ) -> None:
-    try:
-        await apply_error(
+    await async_retry(
+        lambda: apply_error(
             client,
             ticket_id,
             keep_trigger=keep_trigger,
             trigger_tag=trigger_tag,
-        )
-    except Exception:
-        await asyncio.sleep(0.3)
-        await apply_error(
-            client,
-            ticket_id,
-            keep_trigger=keep_trigger,
-            trigger_tag=trigger_tag,
-        )
+        ),
+        max_retries=1,
+        backoff_base=0.3,
+    )
 
 
 async def process_ticket(
