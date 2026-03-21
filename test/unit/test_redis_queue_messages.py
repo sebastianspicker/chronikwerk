@@ -228,7 +228,7 @@ class TestEnqueueTicketJob:
 
         monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
 
-        msg_id = asyncio.get_event_loop().run_until_complete(
+        msg_id = asyncio.run(
             redis_queue.enqueue_ticket_job(
                 delivery_id="d-enq",
                 payload={"ticket_id": 55},
@@ -256,7 +256,7 @@ class TestEnqueueTicketJob:
 
         monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             redis_queue.enqueue_ticket_job(
                 delivery_id="d-err",
                 payload={"ticket_id": 1},
@@ -278,7 +278,7 @@ class TestEnqueueTicketJob:
         monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
 
         future_ts = time.time() + 60.0
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             redis_queue.enqueue_ticket_job(
                 delivery_id="d-nb",
                 payload={"ticket_id": 2},
@@ -302,7 +302,7 @@ class TestEnqueueTicketJob:
         monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
 
         long_error = "x" * 1000
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             redis_queue.enqueue_ticket_job(
                 delivery_id="d-long",
                 payload={},
@@ -324,7 +324,7 @@ class TestAckAndDelete:
     def test_ack_and_delete(self) -> None:
         fake = _FakeRedis()
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             redis_queue._ack_and_delete(
                 fake,
                 stream="zammad:jobs",
@@ -352,7 +352,7 @@ class TestAckAndDelete:
         mock_redis.xack = _xack
         mock_redis.xdel = _xdel
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             redis_queue._ack_and_delete(
                 mock_redis,
                 stream="s",
@@ -373,7 +373,7 @@ class TestAckAndDelete:
         fake.xack = _failing_xack  # type: ignore[assignment]
 
         with pytest.raises(RuntimeError, match="ack failed"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 redis_queue._ack_and_delete(
                     fake,
                     stream="s",
@@ -405,7 +405,7 @@ class TestPushDlq:
             last_error="some error",
         )
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             redis_queue._push_dlq(
                 fake,
                 settings=settings,
@@ -438,7 +438,7 @@ class TestPushDlq:
             last_error=None,
         )
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             redis_queue._push_dlq(
                 fake,
                 settings=settings,
@@ -495,7 +495,7 @@ class TestReplayDlq:
         monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
         monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _tracking_enqueue)
 
-        replayed = asyncio.get_event_loop().run_until_complete(
+        replayed = asyncio.run(
             redis_queue.replay_dlq(settings, limit=10)
         )
 
@@ -517,7 +517,7 @@ class TestReplayDlq:
     def test_replay_dlq_zero_limit(self, monkeypatch, tmp_path) -> None:
         settings = _settings(tmp_path)
 
-        replayed = asyncio.get_event_loop().run_until_complete(
+        replayed = asyncio.run(
             redis_queue.replay_dlq(settings, limit=0)
         )
         assert replayed == 0
@@ -543,7 +543,7 @@ class TestReplayDlq:
         monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
         monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _tracking_enqueue)
 
-        replayed = asyncio.get_event_loop().run_until_complete(
+        replayed = asyncio.run(
             redis_queue.replay_dlq(settings, limit=10)
         )
 
