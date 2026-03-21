@@ -102,3 +102,29 @@ def test_track_task_already_done_not_tracked() -> None:
         asyncio.run(_run())
     finally:
         shutdown_module._TASKS.clear()  # noqa: SLF001
+
+
+def test_wait_for_tasks_timeout() -> None:
+    """wait_for_tasks cancels tracked tasks when the deadline expires."""
+
+    async def _run() -> None:
+        stalled = asyncio.Event()
+
+        async def _never_finish() -> None:
+            await stalled.wait()  # will never be set
+
+        task = asyncio.create_task(_never_finish())
+        shutdown_module.track_task(task)
+
+        # Use a very short timeout so the test doesn't hang.
+        await shutdown_module.wait_for_tasks(timeout=0.01)
+
+        # After timeout the task must be cancelled and removed from tracking.
+        assert task.cancelled()
+        assert task not in shutdown_module._TASKS  # noqa: SLF001
+
+    shutdown_module._TASKS.clear()  # noqa: SLF001
+    try:
+        asyncio.run(_run())
+    finally:
+        shutdown_module._TASKS.clear()  # noqa: SLF001

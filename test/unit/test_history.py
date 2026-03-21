@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import history
@@ -292,3 +293,46 @@ def test_record_history_event_redacts_sensitive_message(monkeypatch, tmp_path) -
     assert len(fake.xadd_calls) == 1
     _, fields, _, _ = fake.xadd_calls[0]
     assert fields["message"] == "Authorization: Bearer [redacted] token=[redacted]"
+
+
+# ---------------------------------------------------------------------------
+# read_history_json
+# ---------------------------------------------------------------------------
+
+
+def test_read_history_json_disabled(tmp_path) -> None:
+    """When history is disabled (no redis_url), read_history_json returns empty JSON."""
+    settings = make_settings(str(tmp_path))
+    raw = asyncio.run(history.read_history_json(settings, limit=10))
+    payload = json.loads(raw)
+    assert payload["status"] == "ok"
+    assert payload["count"] == 0
+    assert payload["items"] == []
+
+
+def test_read_history_json_success(monkeypatch, tmp_path) -> None:
+    """With history entries in Redis, read_history_json returns populated JSON."""
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
+    )
+    fake = _FakeRedis()
+    fake.entries = [
+        ("3-0", {"status": "processed", "ticket_id": "10", "created_at": "100.0"}),
+        ("2-0", {"status": "skipped", "ticket_id": "20", "created_at": "99.0"}),
+    ]
+
+    async def _stub_client(_settings):
+        return fake
+
+    monkeypatch.setattr(history, "_redis_client", _stub_client)
+
+    raw = asyncio.run(history.read_history_json(settings, limit=50))
+    payload = json.loads(raw)
+    assert payload["status"] == "ok"
+    assert payload["count"] == 2
+    assert len(payload["items"]) == 2
+    assert payload["items"][0]["ticket_id"] == 10
+    assert payload["items"][0]["status"] == "processed"
+    assert payload["items"][1]["ticket_id"] == 20
+    assert payload["items"][1]["status"] == "skipped"
