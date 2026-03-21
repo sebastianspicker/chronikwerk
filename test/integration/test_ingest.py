@@ -320,6 +320,48 @@ def test_ingest_uses_redis_queue_dispatch_when_enabled(tmp_path, monkeypatch) ->
     assert calls == []
 
 
+def test_batch_ingest_exceeds_max_size(tmp_path, monkeypatch) -> None:
+    """POST /ingest/batch with 101 items returns 422 (batch too large)."""
+    async def _stub_process_ticket(
+        delivery_id: str | None, payload: dict[str, Any], settings: Settings
+    ) -> None:
+        pass  # pragma: no cover — should never be called
+
+    app = create_app(_test_settings(str(tmp_path)))
+    import zammad_pdf_archiver.app.routes.ingest as ingest_route
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    client = TestClient(app)
+
+    payloads = [{"ticket_id": i} for i in range(1, 102)]  # 101 items
+    response = client.post("/ingest/batch", json=payloads)
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "batch_too_large"
+
+
+def test_batch_ingest_at_max_size(tmp_path, monkeypatch) -> None:
+    """POST /ingest/batch with exactly 100 items is accepted (202)."""
+    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
+
+    async def _stub_process_ticket(
+        delivery_id: str | None, payload: dict[str, Any], settings: Settings
+    ) -> None:
+        calls.append((delivery_id, payload, settings))
+
+    app = create_app(_test_settings(str(tmp_path)))
+    import zammad_pdf_archiver.app.routes.ingest as ingest_route
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    client = TestClient(app)
+
+    payloads = [{"ticket_id": i} for i in range(1, 101)]  # exactly 100 items
+    response = client.post("/ingest/batch", json=payloads)
+    assert response.status_code == 202
+    assert response.json() == {"status": "accepted", "count": 100}
+    assert len(calls) == 100
+
+
 def test_jobs_queue_stats_endpoint_available(tmp_path) -> None:
     app = create_app(_test_settings(str(tmp_path)))
     client = TestClient(app)
