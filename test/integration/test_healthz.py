@@ -47,6 +47,72 @@ def test_deep_healthz_does_not_leak_path(tmp_path) -> None:
     assert str(tmp_path) not in raw
 
 
+def test_deep_healthz_all_healthy(tmp_path) -> None:
+    """GET /healthz?deep=true with writable storage returns status=ok."""
+    app = create_app(_test_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get("/healthz", params={"deep": "true"})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "checks" in body
+    assert body["checks"]["storage"]["writable"] is True
+    datetime.fromisoformat(body["time"])
+
+
+def test_deep_healthz_storage_failure() -> None:
+    """GET /healthz?deep=true with non-existent storage root reports writable=false."""
+    settings = make_settings(
+        "/nonexistent/path/should/not/exist",
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    response = client.get("/healthz", params={"deep": "true"})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert "checks" in body
+    storage = body["checks"]["storage"]
+    assert storage["writable"] is False
+    assert "reason" in storage
+
+
+def test_deep_healthz_without_deep_param(tmp_path) -> None:
+    """GET /healthz without ?deep param returns basic response without checks."""
+    app = create_app(_test_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "checks" not in body
+    assert "time" in body
+
+
+def test_deep_healthz_omit_version(tmp_path) -> None:
+    """GET /healthz?deep=true with healthz_omit_version=true omits version."""
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"observability": {"healthz_omit_version": True}},
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    response = client.get("/healthz", params={"deep": "true"})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert "version" not in body
+    assert "service" not in body
+    assert "checks" in body
+    assert body["checks"]["storage"]["writable"] is True
+
+
 def test_healthz_omit_version(tmp_path) -> None:
     settings = make_settings(
         str(tmp_path),
