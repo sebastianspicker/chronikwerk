@@ -20,6 +20,8 @@ _EXPLICIT_SENSITIVE_KEYS = frozenset(
         "api_token",
         "webhook_shared_secret",
         "key_password",
+        # Connection URLs that may embed credentials (e.g. redis://:pass@host).
+        "redis_url",
     }
 )
 
@@ -41,15 +43,19 @@ _COMMON_QUERY_SECRET_RE = re.compile(
 # Bug #22: JSON/dict-style quoted keys and values (e.g. {"api_token": "secret"}).
 _JSON_STYLE_SECRET_RE = re.compile(
     r'(?i)"(api[_-]?token|apikey|api_key|password|secret|passwd|authorization|'
-    r'webhook[_-]?hmac[_-]?secret|pfx[_-]?password|tsa[_-]?pass)"\s*:\s*"([^"]*)"',
+    r'webhook[_-]?hmac[_-]?secret|pfx[_-]?password|tsa[_-]?pass|redis[_-]?url)"\s*:\s*"([^"]*)"',
     re.DOTALL,
 )
 # Bug #23: env-var style lines (e.g. ZAMMAD_API_TOKEN=..., SIGNING_PFX_PASSWORD=...).
 _ENV_VAR_SECRET_RE = re.compile(
-    r"(?im)^([A-Za-z_][A-Za-z0-9_]*(?:API[_-]?TOKEN|TOKEN|PASSWORD|SECRET|PASSWD|PFX_PASS|TSA_PASS)\s*=\s*)([^\s#]+)"
+    r"(?im)^([A-Za-z_][A-Za-z0-9_]*(?:API[_-]?TOKEN|TOKEN|PASSWORD|SECRET|PASSWD|PFX_PASS|TSA_PASS|REDIS[_-]?URL)\s*=\s*)([^\s#]+)"
 )
 # Bug #42: api_key/apikey in free-form key=value (explicit pattern).
 _API_KEY_KV_RE = re.compile(r"(?i)\b(api[_-]?key|apikey)\s*[:=]\s*([^\s,;]+)")
+# Connection-string URLs with embedded credentials (redis://:pass@host, rediss://user:pass@host).
+_CONN_URL_CRED_RE = re.compile(
+    r"(rediss?://)([^@/]+)@",
+)
 
 
 def scrub_secrets_in_text(text: str) -> str:
@@ -84,6 +90,9 @@ def scrub_secrets_in_text(text: str) -> str:
 
     # Query parameters.
     out = _COMMON_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}{REDACTED_VALUE}", out)
+
+    # Connection-string URLs with embedded credentials (e.g. redis://:pass@host).
+    out = _CONN_URL_CRED_RE.sub(rf"\1{REDACTED_VALUE}@", out)
 
     return out
 

@@ -82,6 +82,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_webhook_auth(settings, issues)
     _validate_delivery_id_requirement(settings, issues)
     _validate_tsa_transport(settings, transport=transport, issues=issues)
+    _validate_redis_url(settings, issues)
     _validate_admin_settings(settings, issues)
 
     if issues:
@@ -204,6 +205,24 @@ def _validate_tsa_transport(
                 allow_local_upstreams=transport.allow_local_upstreams,
                 issues=issues,
             )
+
+
+def _validate_redis_url(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    redis_url = settings.workflow.redis_url
+    if not redis_url or not redis_url.strip():
+        return
+
+    parsed = urlsplit(redis_url.strip())
+    if parsed.scheme not in {"redis", "rediss", "unix"}:
+        issues.append(
+            ConfigValidationIssue(
+                path="workflow.redis_url",
+                message=(
+                    f"Invalid Redis URL scheme {parsed.scheme!r}. "
+                    "Expected redis://, rediss://, or unix://."
+                ),
+            )
+        )
 
 
 def _validate_admin_settings(settings: Settings, issues: list[ConfigValidationIssue]) -> None:

@@ -56,3 +56,25 @@ def test_scrub_secrets_in_text_redacts_common_credential_patterns() -> None:
     assert "apisecret123" not in out
     assert "querysecret456" not in out
     assert REDACTED_VALUE in out
+
+
+def test_redact_settings_dict_redacts_redis_url_key() -> None:
+    raw = {"redis_url": "redis://:s3cret@redis.local:6379/0", "host": "example.com"}
+    out = redact_settings_dict(raw)
+    assert out["redis_url"] == REDACTED_VALUE
+    assert out["host"] == "example.com"
+
+
+def test_scrub_secrets_in_text_redacts_redis_url_credentials() -> None:
+    text = "Connecting to redis://:s3cret@redis.local:6379/0 failed"
+    out = scrub_secrets_in_text(text)
+    assert "s3cret" not in out
+    assert "redis://" in out
+    assert "redis.local" in out
+
+    text2 = "Using rediss://admin:p4ssw0rd@redis.local:6380/1"
+    out2 = scrub_secrets_in_text(text2)
+    assert "p4ssw0rd" not in out2
+    assert "admin" not in out2
+    assert "rediss://" in out2
+    assert "redis.local" in out2

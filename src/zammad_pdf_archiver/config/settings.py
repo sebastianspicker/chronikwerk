@@ -191,8 +191,8 @@ class ObservabilitySettings(_BaseSection):
 
 class RateLimitSettings(_BaseSection):
     enabled: bool = True
-    rps: float = Field(default=5.0, ge=0)
-    burst: int = Field(default=10, ge=1)
+    rps: float = Field(default=5.0, ge=0, le=10_000)
+    burst: int = Field(default=10, ge=1, le=10_000)
     include_metrics: bool = False
     # When set (e.g. "X-Forwarded-For"), rate limit key is taken from this header (first value).
     # Trust proxy to set it; use with care.

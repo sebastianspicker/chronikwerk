@@ -447,3 +447,99 @@ def test_load_settings_accepts_signing_enabled_with_pfx_path(
     settings = load_settings(config_path=config_path)
     assert settings.signing.enabled is True
     assert str(settings.signing.pfx_path) == "/run/secrets/signing.pfx"
+
+
+def test_validate_settings_rejects_invalid_redis_url_scheme() -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": "/mnt/archive"},
+            "hardening": {
+                "webhook": {
+                    "allow_unsigned": True,
+                    "allow_unsigned_when_no_secret": True,
+                }
+            },
+            "workflow": {
+                "execution_backend": "redis_queue",
+                "redis_url": "http://redis.local:6379",
+            },
+        }
+    )
+
+    with pytest.raises(ConfigValidationError) as exc:
+        validate_settings(settings)
+
+    msg = str(exc.value)
+    assert "workflow.redis_url" in msg
+    assert "Invalid Redis URL scheme" in msg
+
+
+def test_validate_settings_accepts_valid_redis_url() -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": "/mnt/archive"},
+            "hardening": {
+                "webhook": {
+                    "allow_unsigned": True,
+                    "allow_unsigned_when_no_secret": True,
+                }
+            },
+            "workflow": {
+                "execution_backend": "redis_queue",
+                "redis_url": "redis://redis.local:6379/0",
+            },
+        }
+    )
+
+    validate_settings(settings)
+
+
+def test_validate_settings_accepts_rediss_url() -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": "/mnt/archive"},
+            "hardening": {
+                "webhook": {
+                    "allow_unsigned": True,
+                    "allow_unsigned_when_no_secret": True,
+                }
+            },
+            "workflow": {
+                "execution_backend": "redis_queue",
+                "redis_url": "rediss://redis.local:6380/0",
+            },
+        }
+    )
+
+    validate_settings(settings)
+
+
+def test_rate_limit_rps_upper_bound() -> None:
+    with pytest.raises(ValidationError):
+        Settings.from_mapping(
+            {
+                "zammad": {"base_url": "https://z.example", "api_token": "t"},
+                "storage": {"root": "/mnt"},
+                "hardening": {
+                    "webhook": {"allow_unsigned": True, "allow_unsigned_when_no_secret": True},
+                    "rate_limit": {"rps": 99999},
+                },
+            }
+        )
+
+
+def test_rate_limit_burst_upper_bound() -> None:
+    with pytest.raises(ValidationError):
+        Settings.from_mapping(
+            {
+                "zammad": {"base_url": "https://z.example", "api_token": "t"},
+                "storage": {"root": "/mnt"},
+                "hardening": {
+                    "webhook": {"allow_unsigned": True, "allow_unsigned_when_no_secret": True},
+                    "rate_limit": {"burst": 99999},
+                },
+            }
+        )
