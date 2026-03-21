@@ -59,11 +59,12 @@ async def healthz(request: Request, deep: bool = False) -> dict[str, object]:
         checks["redis"] = await _check_redis(settings)
         checks["storage"] = _check_storage(settings)
         out["checks"] = checks
-        all_ok = all(
+        healthy_checks = [
             v.get("available", v.get("writable", False))
             for v in checks.values()
             if isinstance(v, dict) and "reason" not in v
-        )
+        ]
+        all_ok = bool(healthy_checks) and all(healthy_checks)
         if not all_ok:
             out["status"] = "degraded"
 

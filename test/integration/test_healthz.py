@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -128,3 +129,38 @@ def test_healthz_omit_version(tmp_path) -> None:
     assert "version" not in body
     assert "service" not in body
     assert "time" in body
+
+
+def test_deep_healthz_all_subsystems_failed() -> None:
+    """When both storage and redis fail (all checks have 'reason'), status must be 'degraded'."""
+    settings = make_settings("/nonexistent/path/should/not/exist")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    mock_redis = AsyncMock(return_value={"available": False, "reason": "connection refused"})
+    with patch("zammad_pdf_archiver.app.routes.healthz._check_redis", mock_redis):
+        response = client.get("/healthz", params={"deep": "true"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert "checks" in body
+    assert body["checks"]["redis"]["available"] is False
+    assert "reason" in body["checks"]["redis"]
+    assert body["checks"]["storage"]["writable"] is False
+    assert "reason" in body["checks"]["storage"]
+
+
+def test_deep_healthz_storage_failed_reports_degraded() -> None:
+    """When storage fails, overall status must be 'degraded' (not 'ok')."""
+    settings = make_settings("/nonexistent/path/should/not/exist")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    response = client.get("/healthz", params={"deep": "true"})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["storage"]["writable"] is False
+    assert "reason" in body["checks"]["storage"]
