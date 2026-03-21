@@ -66,18 +66,20 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
             verify = str(self._config.ca_bundle_path)
 
         try:
+            auth: tuple[str | bytes, str | bytes] | None = self._config.auth
+
             async with httpx.AsyncClient(
                 timeout=timeouts_for(self._config.timeout_seconds),
                 limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
                 verify=verify,
                 trust_env=self._config.trust_env,
                 follow_redirects=False,
+                auth=auth,
             ) as client:
                 response = await client.post(
                     self._config.url,
                     content=req.dump(),
                     headers=headers,
-                    auth=self._config.auth,
                 )
         except httpx.RequestError as exc:
             raise TransientError("Error communicating with RFC3161 TSA") from exc
