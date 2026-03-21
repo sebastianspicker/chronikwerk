@@ -8,6 +8,10 @@ This document defines the HTTP contract for `zammad-pdf-archiver`.
 
 Webhook ingestion endpoint.
 
+#### Query parameters
+
+- `dry_run` (bool, optional, default `false`) -- when `true`, validates the payload and returns `202` with `{"status":"dry_run_accepted","ticket_id":<int>}` without dispatching any background work. Useful for integration testing.
+
 #### Request headers
 
 - `Content-Type: application/json` (recommended)
@@ -45,9 +49,13 @@ Example payload:
 
 Batch webhook ingestion endpoint.
 
+#### Query parameters
+
+- `dry_run` (bool, optional, default `false`) -- when `true`, validates the payload and returns `202` with `{"status":"dry_run_accepted","count":<int>}` without dispatching any background work. Useful for integration testing.
+
 #### Request body
 
-JSON array of ingest payload objects. Each item must contain either:
+JSON array of ingest payload objects (maximum **100** items per request). Each item must contain either:
 - `ticket.id`
 - `ticket_id`
 
@@ -60,7 +68,7 @@ JSON array of ingest payload objects. Each item must contain either:
 #### Error responses
 
 - `403` `{"detail":"forbidden"}`
-- `422` invalid body (e.g. missing or invalid ticket id in an item)
+- `422` invalid body (e.g. missing or invalid ticket id in an item), or batch exceeds 100 items (`{"detail":"batch_too_large"}`)
 - `413` `{"detail":"request_too_large"}`
 - `429` `{"detail":"rate_limited"}`
 - `503` `{"detail":"webhook_auth_not_configured"}` or `{"detail":"shutting_down"}`
@@ -192,7 +200,11 @@ Response:
 
 Always available.
 
-Example response:
+#### Query parameters
+
+- `deep` (bool, optional, default `false`) -- when `true`, performs deep health checks (Redis ping, storage write test) and includes a `checks` object in the response. The top-level `status` field may return `"degraded"` if any deep check fails.
+
+#### Example response (shallow)
 
 ```json
 {
@@ -203,9 +215,40 @@ Example response:
 }
 ```
 
+#### Example response (deep)
+
+```json
+{
+  "status": "ok",
+  "service": "zammad-pdf-archiver",
+  "version": "0.1.0",
+  "time": "2026-02-07T12:00:00+00:00",
+  "checks": {
+    "redis": { "available": true },
+    "storage": { "writable": true, "path": "/data/archive" }
+  }
+}
+```
+
+When a deep check fails, the response may look like:
+
+```json
+{
+  "status": "degraded",
+  "service": "zammad-pdf-archiver",
+  "version": "0.1.0",
+  "time": "2026-02-07T12:00:00+00:00",
+  "checks": {
+    "redis": { "available": false, "reason": "not_configured" },
+    "storage": { "writable": true, "path": "/data/archive" }
+  }
+}
+```
+
 Notes:
 - `version` comes from installed package metadata; fallback may be `0.0.0` in some non-packaged contexts.
 - When `HEALTHZ_OMIT_VERSION=true`, the response contains only `status` and `time` (no `service` or `version`).
+- The `checks` object is only present when `deep=true`.
 
 ### `GET /metrics`
 
@@ -229,6 +272,79 @@ Endpoints:
 - `GET /admin/api/history`
 - `POST /admin/api/retry/{ticket_id}`
 - `POST /admin/api/dlq/drain`
+- `POST /admin/api/dlq/replay`
+- `GET /admin/api/config/check`
+
+### `POST /admin/api/dlq/replay`
+
+Replays dead-letter queue entries back to the main processing queue.
+
+#### Query parameters
+
+- `limit` (int, optional, default `10`, max `1000`)
+
+#### Success response
+
+- status: `200`
+- body:
+
+```json
+{
+  "status": "ok",
+  "replayed": 5
+}
+```
+
+#### Error responses
+
+- `401` missing/invalid bearer token
+- `404` admin disabled
+- `503` admin token not configured or DLQ backend unavailable
+
+### `GET /admin/api/config/check`
+
+Returns configuration validation status, including whether the current settings pass all validation checks and the state of key runtime dependencies.
+
+#### Success response
+
+- status: `200`
+- body:
+
+```json
+{
+  "valid": true,
+  "issues": [],
+  "checks": {
+    "storage_root_exists": true,
+    "signing_enabled": true,
+    "pfx_file_exists": true
+  }
+}
+```
+
+When validation issues are found:
+
+```json
+{
+  "valid": false,
+  "issues": [
+    { "path": "storage.root", "message": "directory does not exist" }
+  ],
+  "checks": {
+    "storage_root_exists": false,
+    "signing_enabled": false
+  }
+}
+```
+
+Notes:
+- `checks.pfx_file_exists` is only present when signing is enabled and a PFX path is configured.
+
+#### Error responses
+
+- `401` missing/invalid bearer token
+- `404` admin disabled
+- `503` admin token not configured
 
 ## 2. Webhook Security Contract
 
