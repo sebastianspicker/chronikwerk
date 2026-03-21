@@ -157,3 +157,72 @@ def test_admin_drain_dlq_returns_503_when_backend_unavailable(tmp_path, monkeypa
     )
     assert response.status_code == 503
     assert response.json()["detail"] == "dlq_unavailable"
+
+
+def test_admin_config_check_returns_results_with_valid_auth(tmp_path, monkeypatch) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+
+    import zammad_pdf_archiver.app.routes.admin as admin_route
+
+    monkeypatch.setattr(admin_route, "validate_settings", lambda _settings: None)
+
+    client = TestClient(app)
+    response = client.get(
+        "/admin/api/config/check",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is True
+    assert body["issues"] == []
+    assert "storage_root_exists" in body["checks"]
+    assert "signing_enabled" in body["checks"]
+
+
+def test_admin_config_check_requires_auth(tmp_path) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get("/admin/api/config/check")
+    assert response.status_code == 401
+
+
+def test_admin_retry_rejects_invalid_ticket_id(tmp_path) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    for invalid_id in [0, -1, -999]:
+        response = client.post(
+            f"/admin/api/retry/{invalid_id}",
+            headers={"Authorization": "Bearer admin-token"},
+        )
+        assert response.status_code == 422, f"Expected 422 for ticket_id={invalid_id}"
+
+
+def test_admin_replay_dlq_returns_response_with_valid_auth(tmp_path, monkeypatch) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+
+    import zammad_pdf_archiver.app.routes.admin as admin_route
+
+    async def _stub_replay(_settings, *, limit: int):
+        return 3
+
+    monkeypatch.setattr(admin_route, "replay_dlq", _stub_replay)
+
+    client = TestClient(app)
+    response = client.post(
+        "/admin/api/dlq/replay",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["replayed"] == 3
+
+
+def test_admin_replay_dlq_requires_auth(tmp_path) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.post("/admin/api/dlq/replay")
+    assert response.status_code == 401
