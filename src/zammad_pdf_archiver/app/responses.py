@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import HTTPException, Request
 from starlette.responses import JSONResponse
 
@@ -14,6 +16,26 @@ def settings_or_503(request: Request) -> Settings:
     if settings is None:
         raise HTTPException(status_code=503, detail="settings_not_configured")
     return settings
+
+
+def verify_bearer_auth(request: Request, settings: Settings) -> None:
+    """Verify ``Authorization: Bearer <token>`` against the admin bearer token.
+
+    Raises :class:`~fastapi.HTTPException` (401) when the token is missing or
+    invalid, or (503) when no token has been configured.
+    """
+    token = settings.admin.bearer_token
+    expected = token.get_secret_value().encode("utf-8") if token is not None else b""
+    if not expected:
+        raise HTTPException(status_code=503, detail="admin_token_not_configured")
+
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer ") or len(auth) < 8:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    provided = auth[7:].strip().encode("utf-8")
+    if not hmac.compare_digest(expected, provided):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def api_error(

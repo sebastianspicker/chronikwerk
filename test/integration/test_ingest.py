@@ -179,6 +179,19 @@ def test_ingest_batch_accepts_multiple_payloads(tmp_path, monkeypatch) -> None:
     assert calls[1][1]["ticket_id"] == 222
 
 
+def _test_settings_with_admin(storage_root: str, **extra_overrides: Any) -> Settings:
+    overrides: dict[str, Any] = {
+        "admin": {
+            "enabled": True,
+            "bearer_token": "test-admin-token",
+        }
+    }
+    if extra_overrides:
+        for key, val in extra_overrides.items():
+            overrides[key] = val
+    return make_settings(storage_root, overrides=overrides)
+
+
 def test_retry_endpoint_accepts_ticket_id(tmp_path, monkeypatch) -> None:
     calls: list[tuple[str | None, dict[str, Any], Settings]] = []
 
@@ -187,18 +200,68 @@ def test_retry_endpoint_accepts_ticket_id(tmp_path, monkeypatch) -> None:
     ) -> None:
         calls.append((delivery_id, payload, settings))
 
-    app = create_app(_test_settings(str(tmp_path)))
+    app = create_app(_test_settings_with_admin(str(tmp_path)))
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
 
     monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
     client = TestClient(app)
 
-    response = client.post("/retry/987")
+    response = client.post(
+        "/retry/987",
+        headers={"Authorization": "Bearer test-admin-token"},
+    )
     assert response.status_code == 202
     assert response.json() == {"status": "accepted", "ticket_id": 987}
     assert len(calls) == 1
     assert calls[0][0] is None
     assert calls[0][1]["ticket_id"] == 987
+
+
+def test_retry_requires_auth(tmp_path) -> None:
+    """POST /retry/{ticket_id} without Authorization header returns 401."""
+    app = create_app(_test_settings_with_admin(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.post("/retry/123")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "unauthorized"
+
+
+def test_retry_with_valid_token(tmp_path, monkeypatch) -> None:
+    """POST /retry/{ticket_id} with valid bearer token returns 202."""
+    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
+
+    async def _stub_process_ticket(
+        delivery_id: str | None, payload: dict[str, Any], settings: Settings
+    ) -> None:
+        calls.append((delivery_id, payload, settings))
+
+    app = create_app(_test_settings_with_admin(str(tmp_path)))
+    import zammad_pdf_archiver.app.routes.ingest as ingest_route
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    client = TestClient(app)
+
+    response = client.post(
+        "/retry/123",
+        headers={"Authorization": "Bearer test-admin-token"},
+    )
+    assert response.status_code == 202
+    assert response.json() == {"status": "accepted", "ticket_id": 123}
+    assert len(calls) == 1
+
+
+def test_retry_with_invalid_token(tmp_path) -> None:
+    """POST /retry/{ticket_id} with wrong bearer token returns 401."""
+    app = create_app(_test_settings_with_admin(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.post(
+        "/retry/123",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "unauthorized"
 
 
 def test_jobs_endpoint_reports_in_flight_status(tmp_path) -> None:

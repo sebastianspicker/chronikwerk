@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import pathlib
 
 import structlog
@@ -14,7 +13,7 @@ from zammad_pdf_archiver.app.jobs.redis_queue import (
     get_queue_stats,
     replay_dlq,
 )
-from zammad_pdf_archiver.app.responses import settings_or_503
+from zammad_pdf_archiver.app.responses import settings_or_503, verify_bearer_auth
 from zammad_pdf_archiver.app.routes.ingest import _dispatch_ticket
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import (
@@ -33,19 +32,7 @@ _DASHBOARD_HTML = (
 def _verify_admin_auth(request: Request, settings: Settings) -> None:
     if not settings.admin.enabled:
         raise HTTPException(status_code=404, detail="admin_disabled")
-
-    token = settings.admin.bearer_token
-    expected = token.get_secret_value().encode("utf-8") if token is not None else b""
-    if not expected:
-        raise HTTPException(status_code=503, detail="admin_token_not_configured")
-
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or len(auth) < 8:
-        raise HTTPException(status_code=401, detail="unauthorized")
-
-    provided = auth[7:].strip().encode("utf-8")
-    if not hmac.compare_digest(expected, provided):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    verify_bearer_auth(request, settings)
 
 
 @router.get("/admin", response_class=HTMLResponse)

@@ -76,6 +76,11 @@ JSON array of ingest payload objects (maximum **100** items per request). Each i
 ### `POST /retry/{ticket_id}`
 
 Schedules one retry run for a specific ticket ID.
+Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
+
+#### Request headers
+
+- `Authorization: Bearer <ADMIN_BEARER_TOKEN>` (required)
 
 #### Path parameters
 
@@ -88,7 +93,8 @@ Schedules one retry run for a specific ticket ID.
 
 #### Error responses
 
-- `503` `{"detail":"settings_not_configured"}` or `{"detail":"shutting_down"}`
+- `401` missing/invalid bearer token
+- `503` `{"detail":"admin_token_not_configured"}` or `{"detail":"settings_not_configured"}`
 
 ### `GET /jobs/{ticket_id}`
 

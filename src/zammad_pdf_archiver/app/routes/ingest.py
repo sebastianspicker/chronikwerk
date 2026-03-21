@@ -12,7 +12,7 @@ from zammad_pdf_archiver.app.constants import DELIVERY_ID_HEADER, REQUEST_ID_KEY
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.app.jobs.redis_queue import enqueue_ticket_job
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down, track_task
-from zammad_pdf_archiver.app.responses import api_error
+from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_auth
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.ticket_id import extract_ticket_id
 
@@ -189,13 +189,11 @@ async def retry_ticket(
     # Security: reject non-positive ticket IDs at the parameter level.
     ticket_id: int = Path(..., ge=1),
 ) -> JSONResponse:
-    settings, error = _resolve_settings_or_error(request)
-    if error is not None:
-        return error
+    settings = settings_or_503(request)
+    verify_bearer_auth(request, settings)
 
     payload_for_job: dict[str, Any] = {"ticket_id": ticket_id}
     payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
-    assert settings is not None
     await _dispatch_ticket(
         delivery_id=None,  # Retry does not need deduplication
         payload_for_job=payload_for_job,
