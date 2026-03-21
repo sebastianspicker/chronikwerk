@@ -76,6 +76,7 @@ def build_audit_record(
     service_dist_name: str = "zammad-pdf-archiver",
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Build a JSON-serialisable audit record for a successfully archived ticket."""
     signing_enabled = (
         signing_settings.enabled if signing_settings else False
     )

@@ -20,6 +20,7 @@ def should_process(
     trigger_tag: str = TRIGGER_TAG,
     require_trigger_tag: bool = True,
 ) -> bool:
+    """Return True if the ticket's tags indicate it should be processed."""
     tag_set = set(tags or [])
     if DONE_TAG in tag_set:
         return False
@@ -31,7 +32,7 @@ def should_process(
 async def apply_processing(
     client: TicketTagger, ticket_id: int, *, trigger_tag: str = TRIGGER_TAG
 ) -> None:
-    # Deterministic, idempotent transition: any state -> processing
+    """Idempotent tag transition: any state -> processing."""
     await client.remove_tag(ticket_id, DONE_TAG)
     await client.remove_tag(ticket_id, ERROR_TAG)
     await client.remove_tag(ticket_id, trigger_tag)
@@ -41,7 +42,7 @@ async def apply_processing(
 async def apply_done(
     client: TicketTagger, ticket_id: int, *, trigger_tag: str = TRIGGER_TAG
 ) -> None:
-    # Deterministic, idempotent transition: any state -> done
+    """Idempotent tag transition: any state -> done."""
     await client.remove_tag(ticket_id, PROCESSING_TAG)
     await client.remove_tag(ticket_id, ERROR_TAG)
     await client.remove_tag(ticket_id, trigger_tag)
@@ -55,7 +56,7 @@ async def apply_error(
     keep_trigger: bool = True,
     trigger_tag: str = TRIGGER_TAG,
 ) -> None:
-    # Deterministic, idempotent transition: any state -> error
+    """Idempotent tag transition: any state -> error."""
     await client.remove_tag(ticket_id, PROCESSING_TAG)
     await client.remove_tag(ticket_id, DONE_TAG)
     if keep_trigger:

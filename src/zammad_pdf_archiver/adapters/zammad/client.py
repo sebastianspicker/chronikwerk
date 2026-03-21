@@ -33,6 +33,8 @@ class _RetryPolicy:
 
 
 class AsyncZammadClient:
+    """Async HTTP client for the Zammad REST API with retry and error mapping."""
+
     def __init__(
         self,
         *,
@@ -90,10 +92,12 @@ class AsyncZammadClient:
         await self.aclose()
 
     async def get_ticket(self, ticket_id: int) -> Ticket:
+        """Fetch a single ticket by ID."""
         resp = await self._request_json("GET", f"api/v1/tickets/{ticket_id}")
         return Ticket.model_validate(resp)
 
     async def list_tags(self, ticket_id: int) -> TagList:
+        """Fetch all tags for a ticket."""
         resp = await self._request_json(
             "GET",
             "api/v1/tags",
@@ -115,6 +119,7 @@ class AsyncZammadClient:
         return TagList(tags)
 
     async def add_tag(self, ticket_id: int, tag: str) -> None:
+        """Add a tag to a ticket (idempotent)."""
         await self._request_json(
             "POST",
             "api/v1/tags/add",
@@ -122,7 +127,7 @@ class AsyncZammadClient:
         )
 
     async def remove_tag(self, ticket_id: int, tag: str) -> None:
-        # Compatibility note: some Zammad deployments are strict about verb routing for tags.
+        """Remove a tag from a ticket (idempotent)."""
         # Using POST keeps this client compatible with the documented `/tags/remove` endpoint.
         await self._request_json(
             "POST",
@@ -133,6 +138,7 @@ class AsyncZammadClient:
     async def create_internal_article(
         self, ticket_id: int, subject: str, body_html: str
     ) -> Article:
+        """Create an internal (non-customer-visible) article on a ticket."""
         resp = await self._request_json(
             "POST",
             "api/v1/ticket_articles",
@@ -147,6 +153,7 @@ class AsyncZammadClient:
         return Article.model_validate(resp)
 
     async def list_articles(self, ticket_id: int) -> list[Article]:
+        """List all articles belonging to a ticket."""
         resp = await self._request_json("GET", f"api/v1/ticket_articles/by_ticket/{ticket_id}")
         items = TypeAdapter(list[dict[str, Any]]).validate_python(resp)
         return [Article.model_validate(item) for item in items]

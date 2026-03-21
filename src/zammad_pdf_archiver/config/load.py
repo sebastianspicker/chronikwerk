@@ -60,6 +60,7 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
 
 
 def load_settings(*, config_path: str | Path | None = None) -> Settings:
+    """Load settings from YAML config, env vars, and .env, then validate."""
     _load_dotenv_if_present()
 
     path, explicit = _resolve_config_path(config_path)

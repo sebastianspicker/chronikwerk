@@ -22,6 +22,8 @@ class DeliveryIdStore(Protocol):
 
 
 class InMemoryTTLSet:
+    """In-memory idempotency set that expires keys after a configurable TTL."""
+
     def __init__(self, *, ttl_seconds: float, now: Callable[[], float] = time.monotonic) -> None:
         if ttl_seconds < 0:
             raise ValueError("ttl_seconds must be >= 0")
@@ -59,18 +61,22 @@ class InMemoryTTLSet:
         self._expires_at_by_key[key] = now + self._ttl_seconds
 
     async def seen(self, key: str) -> bool:
+        """Return True if key was already seen and is still within TTL."""
         return self._seen_sync(key)
 
     async def add(self, key: str) -> None:
+        """Record key as seen (idempotent for same key within TTL)."""
         self._add_sync(key)
 
     async def try_claim(self, key: str) -> bool:
+        """Atomically claim key if not yet seen; return True if claimed."""
         if self._seen_sync(key):
             return False
         self._add_sync(key)
         return True
 
     def evict_expired(self) -> None:
+        """Remove all expired keys from the set."""
         self._evict_expired_at(self._now())
 
     def _evict_expired_at(self, now: float) -> None:

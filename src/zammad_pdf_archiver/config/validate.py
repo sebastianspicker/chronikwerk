@@ -77,6 +77,7 @@ def _validate_upstream_host(
 
 
 def validate_settings(settings: Settings) -> None:
+    """Run all cross-field validation rules; raises ConfigValidationError on failure."""
     issues: list[ConfigValidationIssue] = []
     transport = settings.hardening.transport
 

@@ -84,6 +84,7 @@ def _wire_app(app: FastAPI, *, settings: Settings | None) -> None:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    """Create and wire the FastAPI application with middleware, routes, and lifespan."""
     app = FastAPI(title="zammad-pdf-archiver", version=__version__, lifespan=lifespan)
     _wire_app(app, settings=settings)
     return app
