@@ -16,7 +16,9 @@ _TEMPLATE_STYLES_MAIN = "styles.css"
 
 
 @contextmanager
-def _template_folder_path(template_name: str, templates_root: Path | None = None) -> Generator[Path, None, None]:
+def _template_folder_path(
+    template_name: str, templates_root: Path | None = None,
+) -> Generator[Path, None, None]:
     template_name = validate_template_name(template_name)
 
     if templates_root is not None:

@@ -32,7 +32,6 @@ from zammad_pdf_archiver.app.jobs.ticket_storage import (
     store_ticket_files,
 )
 from zammad_pdf_archiver.app.jobs.ticket_stores import (
-    aclose_stores,
     release_ticket,
     try_acquire_ticket,
     try_claim_delivery_id,
@@ -565,8 +564,3 @@ async def _release_ticket_lock(ctx: _TicketJobContext) -> None:
             request_id=ctx.request_id,
             delivery_id=ctx.delivery_id,
         )
-
-
-async def aclose_redis_stores() -> None:
-    """Backwards-compatible alias for legacy imports."""
-    await aclose_stores()
