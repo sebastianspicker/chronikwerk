@@ -38,7 +38,7 @@ class _SafeURLFetcher:
                     raise FatalURLFetchingError(f"file URL not a file: {url!r}")
             except FatalURLFetchingError:
                 raise
-            except Exception as e:
+            except (OSError, ValueError) as e:  # resolve() / is_file() failures
                 raise FatalURLFetchingError(f"invalid file URL: {url!r}") from e
             body = path.read_bytes()
             return URLFetcherResponse(url=url, body=body, status=200)

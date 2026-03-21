@@ -30,7 +30,7 @@ async def _check_redis(settings: Settings) -> dict[str, object]:
         redis = await get_redis(redis_url)
         await redis.ping()
         return {"available": True}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- health probe must not crash; redis errors are not stdlib
         return {"available": False, "reason": str(exc)[:200]}
 
 
@@ -39,7 +39,7 @@ def _check_storage(settings: Settings) -> dict[str, object]:
     try:
         with tempfile.NamedTemporaryFile(dir=root, delete=True):
             return {"writable": True, "path": str(root)}
-    except Exception as exc:
+    except OSError as exc:
         return {"writable": False, "reason": str(exc)[:200]}
 
 

@@ -217,6 +217,6 @@ def sanitize_html_fragment(html: str) -> str:
         parser.feed(html)
         parser.close()
         return parser.sanitized_html()
-    except Exception:
-        # Fail closed: return empty so callers can fall back to rendering body_text.
+    except Exception:  # noqa: BLE001 -- fail-closed: malformed HTML must not crash the sanitizer
+        # Return empty so callers can fall back to rendering body_text.
         return ""

@@ -14,6 +14,7 @@ from zammad_pdf_archiver.app.jobs.redis_queue import drain_dlq, get_queue_stats
 from zammad_pdf_archiver.config.env_aliases import _DEPRECATED_ALIASES
 from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.config.redact import redact_settings_dict
+from zammad_pdf_archiver.config.validate import ConfigValidationError
 
 log = structlog.get_logger(__name__)
 
@@ -37,7 +38,7 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
     except FileNotFoundError as e:
         print(f"✗ Configuration file not found: {e}", file=sys.stderr)
         return 2
-    except Exception as e:
+    except (ConfigValidationError, ValueError, OSError) as e:
         print(f"✗ Configuration is invalid: {e}", file=sys.stderr)
         return 1
 
@@ -51,7 +52,7 @@ def cmd_dump_config(args: argparse.Namespace) -> int:
         redacted = redact_settings_dict(data)
         print(json.dumps(redacted, indent=2, default=str))
         return 0
-    except Exception as e:
+    except (ConfigValidationError, ValueError, OSError) as e:
         print(f"✗ Failed to load configuration: {e}", file=sys.stderr)
         return 1
 
@@ -86,7 +87,7 @@ def cmd_queue_stats(args: argparse.Namespace) -> int:
         stats = asyncio.run(get_queue_stats(settings))
         print(json.dumps(stats, indent=2, default=str))
         return 0
-    except Exception as e:
+    except (RuntimeError, ConnectionError, OSError, ValueError) as e:
         print(f"✗ Failed to read queue stats: {e}", file=sys.stderr)
         return 1
 
@@ -106,7 +107,7 @@ def cmd_queue_drain_dlq(args: argparse.Namespace) -> int:
         drained = asyncio.run(drain_dlq(settings, limit=int(args.limit)))
         print(json.dumps({"status": "ok", "drained": drained}, indent=2))
         return 0
-    except Exception as e:
+    except (RuntimeError, ConnectionError, OSError, ValueError) as e:
         print(f"✗ Failed to drain DLQ: {e}", file=sys.stderr)
         return 1
 
@@ -131,7 +132,7 @@ def cmd_queue_history(args: argparse.Namespace) -> int:
         payload = {"status": "ok", "count": len(items), "items": items}
         print(json.dumps(payload, indent=2, default=str))
         return 0
-    except Exception as e:
+    except (RuntimeError, ConnectionError, OSError, ValueError) as e:
         print(f"✗ Failed to read queue history: {e}", file=sys.stderr)
         return 1
 

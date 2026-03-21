@@ -109,7 +109,7 @@ def build_filename_from_pattern(
     except ValueError:
         # Re-raise ValueError as-is (e.g., from format specifier errors)
         raise
-    except Exception as exc:
+    except (IndexError, TypeError) as exc:  # positional/type errors in format string
         raise ValueError(f"invalid filename_pattern format: {exc}") from exc
 
     rendered = rendered.strip()
