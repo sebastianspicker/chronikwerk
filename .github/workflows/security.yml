@@ -37,8 +37,8 @@ jobs:
 
       - name: Install audit tools
         run: |
-          python -m pip install -U pip
-          python -m pip install -U pip-audit cvss
+          python -m pip install --no-cache-dir -U pip
+          python -m pip install --no-cache-dir -U pip-audit cvss
 
       - name: Run pip-audit (JSON)
         run: |
