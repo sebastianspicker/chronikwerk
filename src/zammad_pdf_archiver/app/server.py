@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from starlette.responses import Response
 
 from zammad_pdf_archiver._version import __version__
 from zammad_pdf_archiver.app.jobs.redis_queue import (
@@ -29,7 +31,7 @@ from zammad_pdf_archiver.config.settings import Settings
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     clear_shutting_down()
     settings = getattr(app.state, "settings", None)
     if settings is not None:
@@ -45,7 +47,7 @@ async def lifespan(app: FastAPI):
     await aclose_queue_clients()
 
 
-async def _global_exception_handler(request, exc):
+async def _global_exception_handler(request: Request, exc: Exception) -> Response:
     from zammad_pdf_archiver.app.middleware.request_id import _REQUEST_ID_HEADER
 
     request_id = getattr(request.state, "request_id", None)

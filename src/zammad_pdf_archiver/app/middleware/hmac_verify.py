@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from starlette.datastructures import Headers
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from zammad_pdf_archiver.adapters.http_util import drain_stream
@@ -41,16 +42,16 @@ def _secret_bytes(settings: Settings | None) -> bytes | None:
     return None
 
 
-def _forbidden():
+def _forbidden() -> JSONResponse:
     return api_error(403, "forbidden", code="forbidden")
 
 
-def _service_misconfigured():
+def _service_misconfigured() -> JSONResponse:
     # Fail closed: running without webhook auth is almost always a production footgun.
     return api_error(503, "webhook_auth_not_configured", code="webhook_auth_not_configured")
 
 
-def _missing_delivery_id():
+def _missing_delivery_id() -> JSONResponse:
     return api_error(400, "missing_delivery_id", code="missing_delivery_id")
 
 
