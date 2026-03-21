@@ -72,6 +72,7 @@ def validate_segments(
 
 
 def _validate_segment(seg: str, *, max_length: int) -> str:
+    """Reject segments that are empty, dot-only, contain separators/nulls, or exceed max_length."""
     if not isinstance(seg, str):
         raise TypeError("segments must be strings")
     if seg == "":
@@ -88,6 +89,7 @@ def _validate_segment(seg: str, *, max_length: int) -> str:
 
 
 def ensure_within_root(root: Path, target: Path) -> None:
+    """Raise ValueError if target resolves outside of root (path-traversal guard)."""
     root_resolved = root.resolve(strict=False)
     target_resolved = target.resolve(strict=False)
 

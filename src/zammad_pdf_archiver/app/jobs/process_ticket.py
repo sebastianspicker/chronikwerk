@@ -175,6 +175,7 @@ async def process_ticket(
 
 
 def _bound_context(ctx: _TicketJobContext) -> dict[str, object]:
+    """Build structlog context vars for the current ticket job."""
     bound: dict[str, object] = {"ticket_id": ctx.ticket_id}
     if ctx.delivery_id:
         bound["delivery_id"] = ctx.delivery_id
@@ -188,6 +189,7 @@ async def _process_with_ticket_lock(
     *,
     payload: dict[str, Any],
 ) -> ProcessTicketResult:
+    """Acquire an exclusive lock for the ticket, then run the processing pipeline."""
     acquired = await try_acquire_ticket(ctx.settings, ctx.ticket_id)
     if not acquired:
         return await _skip_in_flight(ctx)
@@ -202,6 +204,7 @@ async def _process_with_ticket_lock(
 
 
 async def _skip_in_flight(ctx: _TicketJobContext) -> ProcessTicketResult:
+    """Return a skip result when another worker is already processing this ticket."""
     log.info(
         "process_ticket.skip_ticket_in_flight",
         ticket_id=ctx.ticket_id,
@@ -213,6 +216,7 @@ async def _skip_in_flight(ctx: _TicketJobContext) -> ProcessTicketResult:
 
 
 async def _claim_delivery_or_skip(ctx: _TicketJobContext) -> ProcessTicketResult | None:
+    """Enforce at-most-once delivery; returns a skip result if this delivery was already seen."""
     if not ctx.delivery_id:
         return None
     if await try_claim_delivery_id(ctx.settings, ctx.delivery_id):
@@ -233,6 +237,7 @@ async def _process_ticket_with_client(
     *,
     payload: dict[str, Any],
 ) -> ProcessTicketResult:
+    """Open a Zammad client session and drive the full ticket archival pipeline."""
     settings = ctx.settings
     trigger_tag = str(settings.workflow.trigger_tag).strip() or TRIGGER_TAG
     require_trigger_tag = bool(settings.workflow.require_tag)
@@ -278,6 +283,10 @@ async def _run_ticket_pipeline(
     trigger_tag: str,
     require_trigger_tag: bool,
 ) -> tuple[ProcessTicketResult, bool]:
+    """Fetch ticket data, render PDF, store files, and acknowledge success.
+
+    Returns the result and whether total-time metrics should be observed.
+    """
     settings = ctx.settings
     ticket_data = await fetch_ticket_data(client, ctx.ticket_id)
     if not should_process(
@@ -357,6 +366,7 @@ async def _skip_not_triggered(
     *,
     tags: list[str],
 ) -> ProcessTicketResult:
+    """Return a skip result when the ticket lacks the required trigger tag."""
     log.info(
         "process_ticket.skip_should_not_process",
         ticket_id=ctx.ticket_id,
@@ -415,6 +425,7 @@ async def _handle_ticket_pipeline_exception(
     trigger_tag: str,
     exc: Exception,
 ) -> ProcessTicketResult:
+    """Classify the exception, post an error note to the ticket, and update tags."""
     failed_total.inc()
     classified = classify(exc)
     classification_label = _classification_label(classified)
@@ -469,6 +480,7 @@ async def _handle_ticket_pipeline_exception(
 
 
 def _classification_label(classified: TransientError | PermanentError | None) -> str:
+    """Map a classified error to its human-readable label for notes and metrics."""
     is_transient = classified is not None and isinstance(classified, TransientError)
     return "Transient" if is_transient else "Permanent"
 
@@ -476,6 +488,7 @@ def _classification_label(classified: TransientError | PermanentError | None) ->
 def _error_code_hint(
     exc: BaseException, *, classified: TransientError | PermanentError | None
 ) -> tuple[str, str]:
+    """Extract a structured error code and hint, but only for permanent errors."""
     if classified is not None and isinstance(classified, PermanentError):
         return error_code_and_hint(exc)
     return "", ""

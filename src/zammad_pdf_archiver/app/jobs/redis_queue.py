@@ -234,6 +234,7 @@ async def _push_dlq(
 
 
 async def _ensure_group(redis: Any, *, stream: str, group: str) -> None:
+    """Create the consumer group idempotently (ignores BUSYGROUP if it already exists)."""
     _, ResponseError = import_redis()
     try:
         # Start at 0 so backlog existing before group creation is visible to consumers.
@@ -252,6 +253,10 @@ def _retry_delay_seconds(settings: Settings, *, attempt: int) -> float:
 async def _handle_envelope(
     redis: Any, *, settings: Settings, envelope: _QueueEnvelope
 ) -> float:
+    """Process one envelope: respect not-before delay, dispatch, retry or DLQ on failure.
+
+    Returns remaining delay in seconds (>0 means the message should be revisited later).
+    """
     stream = settings.workflow.queue_stream
     group = settings.workflow.queue_group
 
@@ -355,6 +360,7 @@ async def _claim_stale_pending(
     count: int,
     min_idle_ms: int = _CLAIM_IDLE_MS,
 ) -> list[tuple[Any, Any]]:
+    """Steal messages from other consumers that have been idle too long (dead consumer recovery)."""
     try:
         pending_entries = await redis.xpending_range(stream, group, "-", "+", count)
     except Exception:
@@ -388,6 +394,7 @@ async def _read_own_pending(
     consumer: str,
     count: int,
 ) -> list[tuple[Any, Any]]:
+    """Re-read messages already delivered to this consumer but not yet acknowledged."""
     records = await redis.xreadgroup(
         groupname=group,
         consumername=consumer,
@@ -407,6 +414,7 @@ async def _read_new_messages(
     count: int,
     block_ms: int,
 ) -> list[tuple[Any, Any]]:
+    """Block-read for never-delivered messages from the stream."""
     records = await redis.xreadgroup(
         groupname=group,
         consumername=consumer,
@@ -423,6 +431,7 @@ async def _process_messages(
     settings: Settings,
     messages: list[tuple[Any, Any]],
 ) -> float | None:
+    """Decode and handle a batch of stream messages; returns the smallest pending delay if any."""
     stream = settings.workflow.queue_stream
     group = settings.workflow.queue_group
     min_delay: float | None = None
@@ -473,6 +482,7 @@ async def _process_messages(
 
 
 async def _worker_loop(settings: Settings, stop_event: asyncio.Event) -> None:
+    """Main consumer loop: claim stale messages, process pending, then poll for new ones."""
     redis = await _get_redis(settings)
     stream = settings.workflow.queue_stream
     group = settings.workflow.queue_group

@@ -111,6 +111,7 @@ def write_atomic_bytes(
 
 
 def _write_tmp_file(fd: int, data: bytes, *, fsync: bool) -> None:
+    """Write data to the temp fd with correct permissions, optionally fsyncing."""
     with os.fdopen(fd, "wb") as f:
         f.write(data)
         f.flush()
@@ -121,6 +122,7 @@ def _write_tmp_file(fd: int, data: bytes, *, fsync: bool) -> None:
 
 
 def _replace_tmp_with_target(tmp_path: Path, target: Path) -> None:
+    """Atomically replace target with the temp file; cleans up the temp on failure."""
     try:
         os.replace(tmp_path, target)
     except Exception:
@@ -129,6 +131,7 @@ def _replace_tmp_with_target(tmp_path: Path, target: Path) -> None:
 
 
 def _safe_close(fd: int | None) -> None:
+    """Close a file descriptor if non-None, swallowing OSError."""
     if fd is None:
         return
     try:
@@ -138,6 +141,7 @@ def _safe_close(fd: int | None) -> None:
 
 
 def _safe_unlink(path: Path | None) -> None:
+    """Remove a file if non-None, swallowing FileNotFoundError and OSError."""
     if path is None:
         return
     try:

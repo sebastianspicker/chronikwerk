@@ -85,6 +85,7 @@ def _strip_html_to_text(html: str) -> str:
 
 
 def _has_html_hint(*, content_type: str | None, body: str) -> bool:
+    """Detect HTML content via content-type header or a heuristic tag-pattern match."""
     if content_type and "html" in content_type.lower():
         return True
     # Heuristic: only treat bodies as HTML if they look like common HTML tags.
@@ -103,6 +104,7 @@ def _party_from_zammad_ref(ref: Any) -> PartyRef | None:
 
 
 def _article_to_snapshot(article: ZammadArticle) -> Article:
+    """Convert a Zammad API article into a domain-layer Article with sanitized HTML/text."""
     body_raw = article.body if isinstance(article.body, str) else ""
     body_html = ""
     body_text = ""
@@ -151,6 +153,7 @@ def _article_to_snapshot(article: ZammadArticle) -> Article:
 
 
 def _sort_key(article: Article) -> tuple[bool, datetime, int]:
+    """Sort articles chronologically, pushing those without a timestamp to the end."""
     sentinel = datetime.max.replace(tzinfo=UTC)
     created = article.created_at
     if created is not None and created.tzinfo is None:
@@ -250,6 +253,7 @@ def _attachment_enrichment_enabled(
     include_attachment_binary: bool,
     max_total_attachment_bytes: int,
 ) -> bool:
+    """Guard: only enabled when opted in with a positive byte budget."""
     return include_attachment_binary and max_total_attachment_bytes > 0
 
 
@@ -258,6 +262,7 @@ def _attachment_fetch_targets(
     *,
     fetch_one: Callable[[int, AttachmentMeta], Awaitable[tuple[int, int | None, bytes | None]]],
 ) -> list[Awaitable[tuple[int, int | None, bytes | None]]]:
+    """Build a list of coroutines to fetch each attachment, ready for asyncio.gather."""
     targets: list[Awaitable[tuple[int, int | None, bytes | None]]] = []
     for article in snapshot.articles:
         for att in article.attachments:
