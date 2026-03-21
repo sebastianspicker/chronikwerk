@@ -38,7 +38,7 @@ def _check_storage(settings: Settings) -> dict[str, object]:
     root = settings.storage.root
     try:
         with tempfile.NamedTemporaryFile(dir=root, delete=True):
-            return {"writable": True, "path": str(root)}
+            return {"writable": True}
     except OSError as exc:
         return {"writable": False, "reason": str(exc)[:200]}
 

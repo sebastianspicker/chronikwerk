@@ -29,6 +29,24 @@ def test_healthz_ok(tmp_path) -> None:
     assert response.headers.get("X-Request-Id")
 
 
+def test_deep_healthz_does_not_leak_path(tmp_path) -> None:
+    """GET /healthz?deep=true must never expose the filesystem path."""
+    app = create_app(_test_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get("/healthz", params={"deep": "true"})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert "checks" in body
+    storage = body["checks"]["storage"]
+    assert storage["writable"] is True
+    # The response must not contain any filesystem path
+    assert "path" not in storage
+    raw = response.text
+    assert str(tmp_path) not in raw
+
+
 def test_healthz_omit_version(tmp_path) -> None:
     settings = make_settings(
         str(tmp_path),
