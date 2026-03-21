@@ -7,7 +7,7 @@ from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.observability.logger import configure_logging
 
 
-def main() -> int:
+def main() -> int:  # pragma: no cover
     settings = load_settings()
     configure_logging(
         log_level=settings.observability.log_level,

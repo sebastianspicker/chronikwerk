@@ -26,6 +26,6 @@ def wrap_exception(exc: BaseException) -> TransientError | PermanentError:
     wrapped = PermanentError(message or exc.__class__.__name__)
     try:
         wrapped.__cause__ = exc
-    except Exception:
+    except Exception:  # pragma: no cover
         pass
     return wrapped
