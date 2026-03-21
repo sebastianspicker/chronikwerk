@@ -78,3 +78,27 @@ def test_is_shutting_down() -> None:
         assert shutdown_module.is_shutting_down() is False
     finally:
         shutdown_module.clear_shutting_down()
+
+
+def test_track_task_already_done_not_tracked() -> None:
+    """track_task with an already-done task should not add it to _TASKS."""
+
+    async def _run() -> None:
+        async def _noop() -> None:
+            pass
+
+        task = asyncio.create_task(_noop())
+        await task  # ensure task is done
+        await asyncio.sleep(0)
+
+        assert task.done()
+
+        shutdown_module._TASKS.clear()  # noqa: SLF001
+        shutdown_module.track_task(task)
+        assert task not in shutdown_module._TASKS  # noqa: SLF001
+
+    shutdown_module._TASKS.clear()  # noqa: SLF001
+    try:
+        asyncio.run(_run())
+    finally:
+        shutdown_module._TASKS.clear()  # noqa: SLF001
