@@ -86,6 +86,21 @@ exclude = [
   "^dist/",
 ]
 
+[tool.coverage.run]
+source = ["src/zammad_pdf_archiver"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 76
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["test"]
 addopts = "--ignore=.env.example --ignore=.pytest_cache -p no:cacheprovider"
