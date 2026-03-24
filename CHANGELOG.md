@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redis URL credential redaction in logs and config dumps
 - Async retry helper utility for exponential backoff
 - 82+ new tests across CLI, adapters, input validation, and async retry
-- Comprehensive audit reports in docs/audit/
 
 ### Changed
 - Tightened exception handling in CLI, sanitizer, and adapter modules

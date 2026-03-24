@@ -12,6 +12,7 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage_html/
 coverage.xml
 htmlcov/
 
@@ -34,6 +35,10 @@ Thumbs.db
 .vscode/
 .cursor/
 
-# Audit and iterative agent / improvement documentation (local use)
+# AI development artifacts (local use)
 audit/
+docs/audit/
+plans/
+progress.md
+.claude/
 .codex/
