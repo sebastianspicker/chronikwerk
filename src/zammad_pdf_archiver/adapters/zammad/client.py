@@ -301,5 +301,5 @@ def _parse_retry_after_seconds(value: str | None) -> float | None:
         return None
     if seconds < 0:
         return None
-    return seconds
+    return min(seconds, 60)
 

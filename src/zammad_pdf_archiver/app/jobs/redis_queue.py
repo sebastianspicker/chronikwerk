@@ -201,9 +201,8 @@ async def enqueue_ticket_job(
 
 
 async def _ack_and_delete(redis: Any, *, stream: str, group: str, message_id: str) -> None:
-    try:
-        await redis.xack(stream, group, message_id)
-    finally:
+    acked = await redis.xack(stream, group, message_id)
+    if acked:
         await redis.xdel(stream, message_id)
 
 
@@ -278,6 +277,9 @@ async def _handle_envelope(
     if status == "failed_transient":
         if envelope.attempt < settings.workflow.queue_retry_max_attempts:
             delay = _retry_delay_seconds(settings, attempt=envelope.attempt)
+            # ACK the original message first so that if re-enqueue fails the
+            # original stays pending in the consumer group for redelivery.
+            await redis.xack(stream, group, envelope.message_id)
             await enqueue_ticket_job(
                 delivery_id=envelope.delivery_id,
                 payload=envelope.payload,
@@ -286,6 +288,7 @@ async def _handle_envelope(
                 not_before_ts=time.time() + delay,
                 last_error=message or envelope.last_error,
             )
+            await redis.xdel(stream, envelope.message_id)
             queue_retried_total.inc()
         else:
             await _push_dlq(
@@ -295,6 +298,7 @@ async def _handle_envelope(
                 reason="retry_exhausted",
                 error_message=message or envelope.last_error,
             )
+            await _ack_and_delete(redis, stream=stream, group=group, message_id=envelope.message_id)
     elif status == "failed_permanent":
         await _push_dlq(
             redis,
@@ -303,10 +307,11 @@ async def _handle_envelope(
             reason="permanent_error",
             error_message=message or envelope.last_error,
         )
+        await _ack_and_delete(redis, stream=stream, group=group, message_id=envelope.message_id)
     else:
         queue_processed_total.inc()
+        await _ack_and_delete(redis, stream=stream, group=group, message_id=envelope.message_id)
 
-    await _ack_and_delete(redis, stream=stream, group=group, message_id=envelope.message_id)
     return 0.0
 
 
@@ -476,7 +481,29 @@ async def _process_messages(
             log.exception(
                 "queue.worker.handle_message_failed",
                 message_id=envelope.message_id,
+                attempt=envelope.attempt,
             )
+
+            # Check the delivery count: if it exceeds the threshold, move to DLQ.
+            _DLQ_DELIVERY_THRESHOLD = 3
+            if envelope.attempt >= _DLQ_DELIVERY_THRESHOLD:
+                await _push_dlq(
+                    redis,
+                    settings=settings,
+                    envelope=envelope,
+                    reason="handle_envelope_failed",
+                    error_message=f"Failed after {envelope.attempt} attempts",
+                )
+                await _ack_and_delete(
+                    redis,
+                    stream=settings.workflow.queue_stream,
+                    group=settings.workflow.queue_group,
+                    message_id=envelope.message_id,
+                )
+            else:
+                # Leave pending for retry, but add exponential backoff sleep.
+                backoff = min(0.5 * (2 ** envelope.attempt), 30.0)
+                await asyncio.sleep(backoff)
 
     return min_delay
 
@@ -488,6 +515,10 @@ async def _worker_loop(settings: Settings, stop_event: asyncio.Event) -> None:
     group = settings.workflow.queue_group
     consumer = _consumer_name(settings)
     await _ensure_group(redis, stream=stream, group=group)
+
+    consecutive_failures = 0
+    _BACKOFF_BASE = 0.3
+    _BACKOFF_CAP = 30.0
 
     while not stop_event.is_set():
         try:
@@ -531,13 +562,29 @@ async def _worker_loop(settings: Settings, stop_event: asyncio.Event) -> None:
                 await _process_messages(redis, settings=settings, messages=new_messages),
             )
 
+            # Reset backoff on a successful iteration.
+            consecutive_failures = 0
+
             if min_delay is not None and min_delay > 0:
                 await asyncio.sleep(min(min_delay, 1.0))
         except asyncio.CancelledError:  # pragma: no cover
             raise
         except Exception:
-            log.exception("queue.worker.loop_error")
-            await asyncio.sleep(0.3)
+            consecutive_failures += 1
+            log.exception("queue.worker.loop_error", consecutive_failures=consecutive_failures)
+
+            # Check if Redis is still reachable; if not, log at ERROR for visibility.
+            try:
+                await redis.ping()
+            except Exception:
+                log.error(
+                    "queue.worker.redis_unreachable",
+                    detail="Redis ping failed; connection may be stale.",
+                    consecutive_failures=consecutive_failures,
+                )
+
+            backoff = min(_BACKOFF_BASE * (2 ** (consecutive_failures - 1)), _BACKOFF_CAP)
+            await asyncio.sleep(backoff)
 
 
 async def start_queue_worker(settings: Settings) -> asyncio.Task[None] | None:

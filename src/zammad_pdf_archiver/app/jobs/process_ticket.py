@@ -289,6 +289,11 @@ async def _run_ticket_pipeline(
     """
     settings = ctx.settings
     ticket_data = await fetch_ticket_data(client, ctx.ticket_id)
+    # IMPORTANT: should_process is a non-atomic tag check.  In multi-instance
+    # deployments, a second worker may read the same tags before the first worker
+    # writes PROCESSING_TAG.  Multi-instance deployments MUST use
+    # idempotency_backend=redis and execution_backend=redis_queue to prevent
+    # duplicate processing.  See state_machine.py for details.
     if not should_process(
         ticket_data.tags.root,
         trigger_tag=trigger_tag,

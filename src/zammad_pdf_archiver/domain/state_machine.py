@@ -8,6 +8,22 @@ PROCESSING_TAG = "pdf:processing"
 DONE_TAG = "pdf:signed"
 ERROR_TAG = "pdf:error"
 
+# Race condition warning for multi-instance deployments:
+#
+# The tag-based state machine (should_process -> apply_processing -> apply_done/apply_error)
+# is NOT atomic.  Between the should_process() check and the apply_processing() tag write,
+# another instance may read the same tags and also decide to process the ticket.  This can
+# lead to duplicate processing.
+#
+# In single-instance deployments the in-process ticket lock is sufficient.  In multi-instance
+# deployments you MUST use a distributed lock / idempotency backend (Redis) to prevent
+# duplicate work.  Specifically, configure:
+#   - idempotency_backend = "redis"
+#   - execution_backend  = "redis_queue"
+#
+# Without Redis-backed coordination, two instances can race on the tag check and both enter
+# the processing pipeline for the same ticket.
+
 
 class TicketTagger(Protocol):
     async def add_tag(self, ticket_id: int, tag: str) -> None: ...

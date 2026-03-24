@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import io
+import os
+import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
+
+# Interval (seconds) between certificate expiry re-checks for cached signers.
+_CERT_CHECK_INTERVAL_SECONDS = 3600
 
 
 @dataclass(frozen=True)
@@ -60,6 +67,62 @@ def _validate_cert_not_expired(pfx_bytes: bytes, password: bytes | None) -> None
         raise PermanentError(f"Signing certificate expired on {not_after.isoformat()}")
 
 
+@dataclass
+class _CachedSigner:
+    signer: Any  # signers.SimpleSigner
+    pfx_path: str
+    pfx_mtime: float
+    pfx_bytes: bytes
+    password: bytes | None
+    last_cert_check: float
+
+
+_signer_cache_lock = threading.Lock()
+_signer_cache: dict[str, _CachedSigner] = {}
+
+
+def _get_cached_signer(pfx: _PfxMaterial) -> Any:
+    """Return a cached SimpleSigner, re-creating it when the PFX file changes on disk.
+
+    Certificate expiry is re-validated at most once per hour.
+    """
+    from pyhanko.sign import signers
+
+    pfx_path_str = str(pfx.path)
+    current_mtime = os.path.getmtime(pfx_path_str)
+    now = time.monotonic()
+
+    with _signer_cache_lock:
+        cached = _signer_cache.get(pfx_path_str)
+        if cached is not None and cached.pfx_mtime == current_mtime:
+            # Re-validate certificate expiry once per hour.
+            if now - cached.last_cert_check >= _CERT_CHECK_INTERVAL_SECONDS:
+                _validate_cert_not_expired(cached.pfx_bytes, cached.password)
+                cached.last_cert_check = now
+            return cached.signer
+
+    # Build outside the lock to avoid holding it during I/O.
+    _validate_cert_not_expired(pfx.pfx_bytes, pfx.password)
+    try:
+        signer = signers.SimpleSigner.load_pkcs12(pfx.path, passphrase=pfx.password)
+    except Exception as exc:  # noqa: BLE001 - surface as PermanentError with context
+        raise PermanentError("Failed to initialise signer from PKCS#12/PFX bundle") from exc
+
+    entry = _CachedSigner(
+        signer=signer,
+        pfx_path=pfx_path_str,
+        pfx_mtime=current_mtime,
+        pfx_bytes=pfx.pfx_bytes,
+        password=pfx.password,
+        last_cert_check=now,
+    )
+
+    with _signer_cache_lock:
+        _signer_cache[pfx_path_str] = entry
+
+    return signer
+
+
 def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = False) -> bytes:
     """
     Sign a PDF with an (invisible) PAdES signature using a locally provided PKCS#12/PFX bundle.
@@ -70,21 +133,16 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
         raise ValueError("pdf_bytes must be non-empty bytes")
 
     pfx = _load_pfx(signing)
-    _validate_cert_not_expired(pfx.pfx_bytes, pfx.password)
 
     # Import lazily so the rest of the service stays importable even if pyHanko isn't installed.
     from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
-    from pyhanko.sign import signers
     from pyhanko.sign.fields import SigFieldSpec
     from pyhanko.sign.signers.pdf_signer import PdfSignatureMetadata, PdfSigner
 
     reason = signing.pades.reason
     location = signing.pades.location
 
-    try:
-        signer = signers.SimpleSigner.load_pkcs12(pfx.path, passphrase=pfx.password)
-    except Exception as exc:  # noqa: BLE001 - surface as PermanentError with context
-        raise PermanentError("Failed to initialise signer from PKCS#12/PFX bundle") from exc
+    signer = _get_cached_signer(pfx)
 
     field_name = "Signature1"
     meta = PdfSignatureMetadata(field_name=field_name, reason=reason, location=location)

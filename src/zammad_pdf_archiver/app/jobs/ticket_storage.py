@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time as _time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -168,6 +169,15 @@ def _build_and_write_audit(
     )
 
 
+def _backup_if_exists(path: Path, *, storage_root: Path, fsync: bool) -> None:
+    """If *path* already exists, rename it with a ``.bak.<timestamp>`` suffix."""
+    if not path.exists():
+        return
+    timestamp = str(int(_time.time()))
+    backup_path = path.with_name(f"{path.name}.bak.{timestamp}")
+    move_file_within_root(path, backup_path, storage_root=storage_root, fsync=fsync)
+
+
 def _commit_files_to_storage(
     tmp_dir: Path,
     paths: StoragePaths,
@@ -187,13 +197,16 @@ def _commit_files_to_storage(
         ensure_dir(attachments_dir)
         for entry in attachment_entries:
             fname = Path(entry["storage_path"]).name
+            dst = attachments_dir / fname
+            _backup_if_exists(dst, storage_root=storage_root, fsync=fsync)
             move_file_within_root(
                 temp_attachments_dir / fname,
-                attachments_dir / fname,
+                dst,
                 storage_root=storage_root,
                 fsync=fsync,
             )
 
+    _backup_if_exists(paths.target_path, storage_root=storage_root, fsync=fsync)
     move_file_within_root(
         tmp_dir / paths.target_path.name,
         paths.target_path,
@@ -202,6 +215,7 @@ def _commit_files_to_storage(
     )
 
     # Sidecar last — its presence signals successful archival.
+    _backup_if_exists(paths.sidecar_path, storage_root=storage_root, fsync=fsync)
     move_file_within_root(
         tmp_dir / paths.sidecar_path.name,
         paths.sidecar_path,

@@ -98,13 +98,13 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         super().__init__(convert_charrefs=True)
         self._out: list[str] = []
         self._open: list[_OpenTag] = []
-        self._skip_depth = 0
+        self._skip_stack: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         if self._mark_skip_depth(tag):
             return
-        if self._skip_depth:
+        if self._skip_stack:
             return
 
         if not self._is_allowed_tag(tag):
@@ -121,7 +121,7 @@ class _AllowlistHTMLSanitizer(HTMLParser):
 
     def _mark_skip_depth(self, tag: str) -> bool:
         if tag in _DROP_WITH_CONTENT:
-            self._skip_depth += 1
+            self._skip_stack.append(tag)
             return True
         return False
 
@@ -165,10 +165,10 @@ class _AllowlistHTMLSanitizer(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        if tag in _DROP_WITH_CONTENT and self._skip_depth:
-            self._skip_depth -= 1
+        if tag in _DROP_WITH_CONTENT and self._skip_stack and self._skip_stack[-1] == tag:
+            self._skip_stack.pop()
             return
-        if self._skip_depth:
+        if self._skip_stack:
             return
         if tag in _VOID_TAGS:
             return
@@ -181,7 +181,7 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         self._out.append(f"</{tag}>")
 
     def handle_data(self, data: str) -> None:
-        if self._skip_depth:
+        if self._skip_stack:
             return
         if data:
             self._out.append(escape(data))

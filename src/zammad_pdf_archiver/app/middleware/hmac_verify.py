@@ -5,6 +5,7 @@ import hmac
 from collections.abc import Callable
 from typing import Any
 
+import structlog
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -14,12 +15,20 @@ from zammad_pdf_archiver.app.constants import DELIVERY_ID_HEADER, INGEST_PROTECT
 from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.config.settings import Settings
 
+_log = structlog.get_logger(__name__)
+
 _SIGNATURE_HEADER = "X-Hub-Signature"
 
-_ALLOWED_ALGORITHMS: dict[str, tuple[int, Any]] = {
+_ALL_ALGORITHMS: dict[str, tuple[int, Any]] = {
     "sha1": (hashlib.sha1().digest_size, hashlib.sha1),
     "sha256": (hashlib.sha256().digest_size, hashlib.sha256),
 }
+
+
+def _build_allowed_algorithms(*, reject_sha1: bool) -> dict[str, tuple[int, Any]]:
+    if reject_sha1:
+        return {k: v for k, v in _ALL_ALGORITHMS.items() if k != "sha1"}
+    return dict(_ALL_ALGORITHMS)
 
 
 def _secret_bytes(settings: Settings | None) -> bytes | None:
@@ -55,19 +64,23 @@ def _missing_delivery_id() -> JSONResponse:
     return api_error(400, "missing_delivery_id", code="missing_delivery_id")
 
 
-def _parse_signature(value: str) -> tuple[bytes, type] | None:
+def _parse_signature(
+    value: str,
+    allowed_algorithms: dict[str, tuple[int, Any]] | None = None,
+) -> tuple[bytes, type, str] | None:
     """Parse X-Hub-Signature (sha1=<hex> or sha256=<hex>).
-    Returns (digest_bytes, digest_constructor) or None."""
+    Returns (digest_bytes, digest_constructor, algorithm_name) or None."""
+    algos = allowed_algorithms if allowed_algorithms is not None else _ALL_ALGORITHMS
     try:
         algorithm, hex_digest = value.strip().split("=", 1)
     except ValueError:
         return None
 
     algo_lower = algorithm.strip().lower()
-    if algo_lower not in _ALLOWED_ALGORITHMS:
+    if algo_lower not in algos:
         return None
 
-    expected_size, digest_ctor = _ALLOWED_ALGORITHMS[algo_lower]
+    expected_size, digest_ctor = algos[algo_lower]
     hex_digest = hex_digest.strip()
     try:
         digest = bytes.fromhex(hex_digest)
@@ -77,7 +90,7 @@ def _parse_signature(value: str) -> tuple[bytes, type] | None:
     if len(digest) != expected_size:
         return None
 
-    return (digest, digest_ctor)
+    return (digest, digest_ctor, algo_lower)
 
 
 async def _read_body(
@@ -129,10 +142,14 @@ class HmacVerifyMiddleware:
             self._allow_unsigned = webhook.allow_unsigned
             self._allow_unsigned_when_no_secret = webhook.allow_unsigned_when_no_secret
             self._require_delivery_id = webhook.require_delivery_id
+            self._allowed_algorithms = _build_allowed_algorithms(
+                reject_sha1=webhook.webhook_reject_sha1,
+            )
         else:
             self._allow_unsigned = False
             self._allow_unsigned_when_no_secret = False
             self._require_delivery_id = False
+            self._allowed_algorithms = dict(_ALL_ALGORITHMS)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -165,13 +182,20 @@ class HmacVerifyMiddleware:
             await _forbidden()(scope, receive, send)
             return
 
-        parsed = _parse_signature(signature_raw)
+        parsed = _parse_signature(signature_raw, self._allowed_algorithms)
         if parsed is None:
             await drain_stream(receive)
             await _forbidden()(scope, receive, send)
             return
 
-        signature, digest_ctor = parsed
+        signature, digest_ctor, algo_name = parsed
+        if algo_name == "sha1":
+            _log.warning(
+                "hmac.sha1_deprecated",
+                detail="Webhook signature uses SHA-1 which is deprecated. "
+                "Configure the sender to use SHA-256. Set "
+                "hardening.webhook.webhook_reject_sha1=true to reject SHA-1.",
+            )
         mac = hmac.new(self._secret, digestmod=digest_ctor)
         chunks, disconnected = await _read_body(receive, on_chunk=mac.update)
         if disconnected:

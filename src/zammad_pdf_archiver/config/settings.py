@@ -212,6 +212,8 @@ class WebhookHardeningSettings(_BaseSection):
     allow_unsigned_when_no_secret: bool = False
     # When enabled, /ingest requires X-Zammad-Delivery and the replay TTL must be > 0.
     require_delivery_id: bool = False
+    # When True, reject SHA-1 HMAC signatures (only allow SHA-256+).
+    webhook_reject_sha1: bool = False
 
 
 class TransportHardeningSettings(_BaseSection):

@@ -88,7 +88,8 @@ def validate_settings(settings: Settings) -> None:
     _validate_tsa_transport(settings, transport=transport, issues=issues)
     _validate_redis_url(settings, issues)
     _validate_admin_settings(settings, issues)
-    _warn_metrics_without_token(settings)
+    _validate_metrics_require_token(settings, issues)
+    _warn_multi_worker_without_redis(settings)
 
     if issues:
         raise ConfigValidationError(issues)
@@ -246,12 +247,33 @@ def _validate_admin_settings(settings: Settings, issues: list[ConfigValidationIs
             )
 
 
-def _warn_metrics_without_token(settings: Settings) -> None:
+def _validate_metrics_require_token(
+    settings: Settings, issues: list[ConfigValidationIssue]
+) -> None:
     if settings.observability.metrics_enabled:
         token = settings.observability.metrics_bearer_token
         token_value = token.get_secret_value().strip() if token is not None else ""
         if not token_value:
-            log.warning(
-                "Metrics endpoint enabled without bearer token"
-                " \u2014 /metrics is accessible without authentication"
+            issues.append(
+                ConfigValidationIssue(
+                    path="observability.metrics_bearer_token",
+                    message=(
+                        "metrics.enabled=True requires a metrics_bearer_token. "
+                        "Set METRICS_BEARER_TOKEN or disable metrics."
+                    ),
+                )
             )
+
+
+def _warn_multi_worker_without_redis(settings: Settings) -> None:
+    """Emit a startup warning when multiple workers may be configured without Redis
+    coordination, which can lead to duplicate ticket processing due to the
+    non-atomic tag state machine (see state_machine.py)."""
+    execution = (settings.workflow.execution_backend or "").strip().lower()
+    idempotency = (settings.workflow.idempotency_backend or "").strip().lower()
+    if execution == "redis_queue" and idempotency != "redis":
+        log.warning(
+            "Multi-worker execution_backend='redis_queue' without "
+            "idempotency_backend='redis' may cause duplicate ticket processing. "
+            "Set idempotency_backend='redis' for safe multi-instance deployments."
+        )

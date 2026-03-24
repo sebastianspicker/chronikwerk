@@ -97,9 +97,26 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
             )
 
         try:
-            return tsp.TimeStampResp.load(response.content)
+            tsa_resp = tsp.TimeStampResp.load(response.content)
         except Exception as exc:  # noqa: BLE001 - parse errors are not retryable
             raise PermanentError("RFC3161 TSA response is not a valid TimeStampResp") from exc
+
+        # Validate the TSA response status before returning.
+        status_info = tsa_resp["status"]
+        status_value = status_info["status"].native
+        _ACCEPTED_STATUSES = {"granted", "granted_with_mods"}
+        if status_value not in _ACCEPTED_STATUSES:
+            status_string = ""
+            try:
+                status_string = status_info["status_string"].native or ""
+            except Exception:
+                pass
+            raise PermanentError(
+                f"RFC3161 TSA rejected the request: status={status_value!r}"
+                f"{f' ({status_string})' if status_string else ''}"
+            )
+
+        return tsa_resp
 
 
 def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> TimeStamper:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 
 from fastapi import HTTPException, Request
@@ -34,7 +35,11 @@ def verify_bearer_auth(request: Request, settings: Settings) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
     provided = auth[7:].strip().encode("utf-8")
-    if not hmac.compare_digest(expected, provided):
+    # Hash both tokens with SHA-256 before comparing to normalise length and
+    # prevent timing-based length leaks.
+    expected_hash = hashlib.sha256(expected).digest()
+    provided_hash = hashlib.sha256(provided).digest()
+    if not hmac.compare_digest(expected_hash, provided_hash):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 

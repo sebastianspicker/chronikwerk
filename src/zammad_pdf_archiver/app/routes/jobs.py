@@ -31,9 +31,8 @@ def _verify_ops_bearer(request: Request, settings: Settings) -> None:
 
 @router.get("/jobs/queue/stats")
 async def get_queue_status(request: Request) -> dict[str, bool | int | str]:
-    settings: Settings | None = getattr(request.app.state, "settings", None)
-    if settings is None:
-        return {"execution_backend": "unknown", "queue_enabled": False}
+    settings = settings_or_503(request)
+    _verify_ops_bearer(request, settings)
     try:
         stats = await get_queue_stats(settings)
     except Exception:
@@ -80,7 +79,9 @@ async def drain_queue_dlq(request: Request, limit: int = 100) -> dict[str, int |
 
 
 @router.get("/jobs/{ticket_id}")
-async def get_job_status(ticket_id: int) -> dict[str, bool | int]:
+async def get_job_status(request: Request, ticket_id: int) -> dict[str, bool | int]:
+    settings = settings_or_503(request)
+    _verify_ops_bearer(request, settings)
     return {
         "ticket_id": ticket_id,
         "in_flight": is_ticket_in_flight(ticket_id),
