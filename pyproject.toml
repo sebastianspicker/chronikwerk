@@ -38,7 +38,7 @@ dependencies = [
   "weasyprint>=68.0,<69",
   "pydyf>=0.11,<0.12",
   "cryptography>=46.0.5,<48",
-  "pyhanko>=0.26,<0.28",
+  "pyhanko>=0.26,<0.35",
   "pyhanko-certvalidator>=0.26,<0.28",
 ]
 
