@@ -55,6 +55,10 @@ queue_dlq_total = Counter(
     "queue_dlq_total",
     "Number of queued jobs moved to dead-letter queue.",
 )
+ticket_lock_redis_failures_total = Counter(
+    "ticket_lock_redis_failures_total",
+    "Number of Redis distributed lock failures when acquiring ticket locks.",
+)
 
 
 def render_latest(*, registry=REGISTRY) -> tuple[bytes, str]:

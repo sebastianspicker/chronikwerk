@@ -246,7 +246,7 @@ async def _ensure_group(redis: Any, *, stream: str, group: str) -> None:
 
 def _retry_delay_seconds(settings: Settings, *, attempt: int) -> float:
     base = float(settings.workflow.queue_retry_backoff_seconds)
-    return base * (2**max(0, attempt))
+    return min(base * (2 ** max(0, attempt)), 3600)  # cap at 1 hour
 
 
 async def _handle_envelope(
@@ -368,7 +368,8 @@ async def _claim_stale_pending(
     """Steal messages from other consumers that have been idle too long (dead consumer recovery)."""
     try:
         pending_entries = await redis.xpending_range(stream, group, "-", "+", count)
-    except Exception:
+    except Exception as exc:
+        log.warning("Failed to claim stale pending messages: %s", exc)
         return []
 
     message_ids: list[str] = []
@@ -686,9 +687,11 @@ async def replay_dlq(settings: Settings, *, limit: int = 10) -> int:
         except Exception:
             continue
 
-        delivery_id_raw = _as_str(fields.get("delivery_id", "")).strip()
+        # Reset delivery_id to None so the replayed job bypasses idempotency
+        # checks.  The original delivery was already marked as consumed; reusing
+        # the same ID would cause the job to be silently skipped.
         await enqueue_ticket_job(
-            delivery_id=delivery_id_raw or None,
+            delivery_id=None,
             payload=payload,
             settings=settings,
             attempt=0,

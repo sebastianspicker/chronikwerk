@@ -16,6 +16,10 @@ class _BaseSection(BaseModel):
 
 
 class ServerSettings(_BaseSection):
+    # 0.0.0.0 is the standard bind address for containerized services so the
+    # process is reachable from outside the container.  A reverse proxy (e.g.
+    # nginx, Traefik, cloud load balancer) should handle external access,
+    # TLS termination, and IP filtering.
     host: str = "0.0.0.0"
     port: int = Field(default=8080, ge=1, le=65535)
     webhook_shared_secret: SecretStr | None = None

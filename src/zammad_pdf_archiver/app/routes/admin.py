@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import pathlib
 
 import structlog
@@ -24,9 +25,14 @@ from zammad_pdf_archiver.config.validate import (
 router = APIRouter()
 log = structlog.get_logger(__name__)
 
-_DASHBOARD_HTML = (
+_DASHBOARD_PATH = (
     pathlib.Path(__file__).resolve().parent.parent.parent / "templates" / "admin" / "dashboard.html"
-).read_text(encoding="utf-8")
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _read_dashboard_html() -> str:
+    return _DASHBOARD_PATH.read_text(encoding="utf-8")
 
 
 def _verify_admin_auth(request: Request, settings: Settings) -> None:
@@ -37,7 +43,7 @@ def _verify_admin_auth(request: Request, settings: Settings) -> None:
 
 @router.get("/admin", response_class=HTMLResponse)
 def admin_dashboard() -> HTMLResponse:
-    return HTMLResponse(content=_DASHBOARD_HTML)
+    return HTMLResponse(content=_read_dashboard_html())
 
 
 @router.get("/admin/api/queue/stats")
