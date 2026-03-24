@@ -39,7 +39,7 @@ dependencies = [
   "pydyf>=0.11,<0.12",
   "cryptography>=46.0.5,<48",
   "pyhanko>=0.26,<0.28",
-  "pyhanko-certvalidator>=0.26,<0.28",
+  "pyhanko-certvalidator>=0.26,<0.31",
 ]
 
 [project.optional-dependencies]
