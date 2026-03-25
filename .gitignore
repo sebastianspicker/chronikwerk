@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage_html/
+coverage.xml
+htmlcov/
+
+# Virtualenvs / tooling
+.venv/
+venv/
+pip-wheel-metadata/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+.cursor/
+
+# AI development artifacts (local use)
+audit/
+docs/audit/
+plans/
+progress.md
+.claude/
+.codex/

@@ -1,0 +1,275 @@
+:root {
+  --text: #0f172a;
+  --muted: #475569;
+  --border: #dbe1ea;
+  --card: #f8fafc;
+  --internal: #8b2c2c;
+  --external: #165b1a;
+  --internal-bg: #fef2f2;
+  --external-bg: #f0fdf4;
+  --font-sans: "IBM Plex Sans", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0;
+  padding: 0;
+}
+
+body.compact {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.header {
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+body.compact .header {
+  padding-bottom: 7px;
+  margin-bottom: 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.ticket-number {
+  font-weight: 700;
+}
+
+body.compact .title {
+  font-size: 14px;
+}
+
+.subject {
+  font-weight: 400;
+  color: var(--text);
+}
+
+body.compact .subject {
+  margin-left: 0;
+}
+
+.article-count {
+  font-size: 11px;
+  margin: 0 0 8px 0;
+}
+
+.article {
+  padding-top: 12px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+body.compact .article {
+  padding-top: 8px;
+  margin-top: 10px;
+}
+
+.article:first-of-type {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.article-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+body.compact .article-header {
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.article-index {
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 1.8em;
+}
+
+.timestamp {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sender {
+  font-weight: 600;
+}
+
+.dot {
+  color: var(--muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+body.compact .badge {
+  padding: 1px 5px;
+  font-size: 9px;
+}
+
+.badge--internal {
+  color: var(--internal);
+  border-color: #d8bcbc;
+  background-color: var(--internal-bg);
+}
+
+.badge--external {
+  color: var(--external);
+  border-color: #bcd6bc;
+  background-color: var(--external-bg);
+}
+
+.article-subject {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.body {
+  overflow-wrap: anywhere;
+}
+
+.body p {
+  margin: 0 0 10px 0;
+}
+
+body.compact .body p {
+  margin: 0 0 6px 0;
+}
+
+.body p:last-child {
+  margin-bottom: 0;
+}
+
+.body pre,
+.body code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+body.compact .body pre,
+body.compact .body code {
+  font-size: 10px;
+}
+
+.body pre {
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 10px;
+  border-radius: 6px;
+}
+
+body.compact .body pre {
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.body img {
+  max-width: 100%;
+  height: auto;
+}
+
+.body table {
+  border-collapse: collapse;
+  max-width: 100%;
+  font-size: inherit;
+}
+
+.body table td,
+.body table th {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+}
+
+.subheading {
+  margin: 12px 0 6px 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.attachment-list,
+.attachment-index {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.attachment-item,
+.attachment-index-item {
+  margin: 0 0 4px 0;
+}
+
+.attachment-name {
+  font-weight: 600;
+}
+
+.attachment-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.footer {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+@media print {
+  @page {
+    margin: 16mm;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .article {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .header {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .body pre {
+    overflow: visible;
+    max-height: none;
+  }
+
+  .footer {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+}

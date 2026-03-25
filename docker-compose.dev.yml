@@ -1,0 +1,26 @@
+# =============================================================================
+# Development Docker Compose (hot-reload with source mount)
+# =============================================================================
+#
+# Usage:  make dev   (or: docker compose -f docker-compose.dev.yml up --build)
+# Requires: .env file with at minimum ZAMMAD_BASE_URL, ZAMMAD_API_TOKEN, STORAGE_ROOT
+# =============================================================================
+
+services:
+  zammad-pdf-archiver:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"
+      SERVER_PORT: "${SERVER_PORT:-8080}"
+      STORAGE_ROOT: "${STORAGE_ROOT:-/mnt/archive}"
+    volumes:
+      # Mount entire project for hot-reload during development.
+      - ./:/app
+    command: ["bash", "-lc", "PYTHONPATH=/app/src python -m zammad_pdf_archiver"]
