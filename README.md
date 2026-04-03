@@ -3,13 +3,13 @@
 A working tree for zammad-ticket-archiver with an evolving implementation history.
 
 ## Overview
-zammad-ticket-archiver records the stable project shape and the work still worth checking.
+zammad-ticket-archiver keeps setup, verification, and known limitations in one place.
 
 ## Status
-Lifecycle stage: maintenance. Maintenance guidance now reflects the stable shape.
+Lifecycle stage: maintenance. The useful early notes have been carried forward.
 
 ## Development
-- Aligned local and CI checks for payload.
+- Kept the ruff verification command reproducible.
 
 - The document now favors checked behavior over exploratory notes.
 
