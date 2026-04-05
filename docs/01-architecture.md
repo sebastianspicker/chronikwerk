@@ -5,7 +5,7 @@
 This page keeps the current 01 architecture guidance concise after earlier rough notes.
 
 ## Usage
-- Merged scattered ruff guidance into the docs.
+- Merged scattered ci guidance into the docs.
 
 - Earlier scratch notes were compressed into the current guidance.
 
