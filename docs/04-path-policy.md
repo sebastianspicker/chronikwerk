@@ -65,7 +65,7 @@ Prefix entries may use either separator style:
 - `Customers > ACME GmbH`
 - `Customers/ACME GmbH`
 
-Comparison is done on sanitized segments.
+Comparison is done on canonically normalized raw segments, not on the lossy sanitized filesystem segments.
 
 ## 5. Filename Policy
 

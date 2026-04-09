@@ -61,6 +61,37 @@ def test_build_target_dir_allow_prefixes_accepts_slash_separator() -> None:
     assert out == Path("/archive/root/user_example.com/Customers/ACME_GmbH/2026")
 
 
+def test_build_target_dir_allow_prefixes_do_not_match_sanitized_unicode_collisions() -> None:
+    root = Path("/archive/root")
+
+    with pytest.raises(ValueError, match="allow_prefixes"):
+        build_target_dir(
+            root,
+            "user",
+            ["🤷"],
+            allow_prefixes=["客户"],
+        )
+
+    with pytest.raises(ValueError, match="allow_prefixes"):
+        build_target_dir(
+            root,
+            "user",
+            ["客户"],
+            allow_prefixes=["🤷"],
+        )
+
+
+def test_build_target_dir_allow_prefixes_accept_canonically_equivalent_unicode() -> None:
+    root = Path("/archive/root")
+    out = build_target_dir(
+        root,
+        "user",
+        ["Müller", "2026"],
+        allow_prefixes=["Mu\u0308ller"],
+    )
+    assert out == Path("/archive/root/user/Muller/2026")
+
+
 def test_build_filename_is_deterministic() -> None:
     assert build_filename(123, "2026-02-07", "Hello world") == "123-2026-02-07-Hello_world"
 

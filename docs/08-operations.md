@@ -12,7 +12,7 @@ This runbook is for deployment, monitoring, troubleshooting, and recovery.
   - schedules one background task per payload
 - `POST /retry/{ticket_id}`
   - returns `202` with `{"status":"accepted","ticket_id":...}`
-  - schedules one explicit retry job without delivery-ID dedupe
+  - schedules one explicit forced reprocessing job without delivery-ID dedupe
 - `GET /jobs/{ticket_id}`
   - returns process-local status: `ticket_id`, `in_flight`, `shutting_down`
 - `GET /jobs/queue/stats`
@@ -28,7 +28,9 @@ This runbook is for deployment, monitoring, troubleshooting, and recovery.
 - `GET /metrics`
   - available only when `observability.metrics_enabled=true`; optional Bearer auth via `METRICS_BEARER_TOKEN`
 - `GET /admin` and `/admin/api/*`
-  - optional admin dashboard/API (requires `admin.enabled=true` + Bearer token)
+  - optional admin dashboard/API (`admin.enabled=true`)
+  - `GET /admin` serves the HTML shell without Bearer auth
+  - `/admin/api/*` requires Bearer auth
 
 Common ingest error responses:
 - `403` invalid/missing HMAC signature when signed mode is active
@@ -78,7 +80,8 @@ In `inprocess` mode operators can re-trigger by saving the ticket or reapplying 
 ### Tag transitions
 
 - processing start:
-  - remove `pdf:signed`, `pdf:error`, trigger tag
+  - normal ingest: remove `pdf:error`, trigger tag
+  - explicit retry/reprocess: also remove `pdf:signed`
   - add `pdf:processing`
 - success:
   - remove `pdf:processing`, `pdf:error`, trigger tag
@@ -119,6 +122,7 @@ Use this procedure after failed runs:
   - ensure trigger tag is present
   - remove `pdf:signed` only if you intentionally want a new archive output
 4. Trigger a fresh ticket update/macro to emit a new webhook, or call `POST /retry/{ticket_id}`.
+  - explicit retry forces one reprocessing run even when the trigger tag is missing or `pdf:signed` is present
 5. Confirm final state (`pdf:signed` or new `pdf:error` with updated note).
 
 ## 6. Troubleshooting Matrix

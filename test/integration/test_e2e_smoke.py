@@ -145,7 +145,6 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
         assert ERROR_TAG not in added
 
         assert TRIGGER_TAG in removed
-        assert DONE_TAG in removed
         assert ERROR_TAG in removed
         assert PROCESSING_TAG in removed
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-rc.2] - 2026-04-09
+
 ### Added
 - Coverage threshold enforcement in CI (76% minimum with branch coverage)
 - Batch size limit (100 items) on POST /ingest/batch endpoint

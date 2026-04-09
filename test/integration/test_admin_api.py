@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from test.support.settings_factory import make_settings
+from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY
 from zammad_pdf_archiver.app.server import create_app
 
 
@@ -113,6 +114,7 @@ def test_admin_retry_dispatches_job(tmp_path, monkeypatch) -> None:
     assert response.json() == {"status": "accepted", "ticket_id": 456}
     assert len(calls) == 1
     assert calls[0]["ticket_id"] == 456
+    assert calls[0][FORCE_REPROCESS_KEY] is True
     assert isinstance(calls[0].get("_request_id"), str)
 
 

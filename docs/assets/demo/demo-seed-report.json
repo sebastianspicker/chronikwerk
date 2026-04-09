@@ -256,7 +256,7 @@
         {
           "article_id": 5011,
           "event": "article_created",
-          "subject": "PDF archived (0.2.0rc1)",
+          "subject": "PDF archived (0.2.0rc2)",
           "ticket_id": 1102,
           "ts": "2026-03-02T09:08:14.994055+00:00"
         },
@@ -339,7 +339,7 @@
         {
           "article_id": 5012,
           "event": "article_created",
-          "subject": "PDF archiver error (0.2.0rc1)",
+          "subject": "PDF archiver error (0.2.0rc2)",
           "ticket_id": 1103,
           "ts": "2026-03-02T09:08:15.052763+00:00"
         },
@@ -432,7 +432,7 @@
         {
           "article_id": 5013,
           "event": "article_created",
-          "subject": "PDF archiver error (0.2.0rc1)",
+          "subject": "PDF archiver error (0.2.0rc2)",
           "ticket_id": 1105,
           "ts": "2026-03-02T09:08:15.120735+00:00"
         },
@@ -525,7 +525,7 @@
         {
           "article_id": 5014,
           "event": "article_created",
-          "subject": "PDF archived (0.2.0rc1)",
+          "subject": "PDF archived (0.2.0rc2)",
           "ticket_id": 1106,
           "ts": "2026-03-02T09:08:15.329427+00:00"
         },
@@ -608,7 +608,7 @@
         {
           "article_id": 5015,
           "event": "article_created",
-          "subject": "PDF archived (0.2.0rc1)",
+          "subject": "PDF archived (0.2.0rc2)",
           "ticket_id": 1108,
           "ts": "2026-03-02T09:08:15.474078+00:00"
         },

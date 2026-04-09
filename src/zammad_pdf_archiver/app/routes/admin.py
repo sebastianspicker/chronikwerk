@@ -7,7 +7,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from starlette.responses import HTMLResponse
 
-from zammad_pdf_archiver.app.constants import REQUEST_ID_KEY
+from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
 from zammad_pdf_archiver.app.jobs.history import read_history
 from zammad_pdf_archiver.app.jobs.redis_queue import (
     drain_dlq,
@@ -90,6 +90,7 @@ async def admin_retry_ticket(
     payload: dict[str, object] = {
         "ticket_id": ticket_id,
         REQUEST_ID_KEY: getattr(request.state, "request_id", None),
+        FORCE_REPROCESS_KEY: True,
     }
     try:
         await _dispatch_ticket(

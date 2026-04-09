@@ -545,8 +545,8 @@ def test_rate_limit_burst_upper_bound() -> None:
         )
 
 
-def test_metrics_without_token_raises() -> None:
-    """When metrics_enabled=True but no bearer token is set, validation raises."""
+def test_metrics_without_token_is_allowed() -> None:
+    """When metrics_enabled=True but no bearer token is set, validation still passes."""
     settings = Settings.from_mapping(
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
@@ -561,5 +561,4 @@ def test_metrics_without_token_raises() -> None:
         }
     )
 
-    with pytest.raises(ConfigValidationError, match="metrics_bearer_token"):
-        validate_settings(settings)
+    validate_settings(settings)

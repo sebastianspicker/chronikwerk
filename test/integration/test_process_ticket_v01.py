@@ -137,7 +137,6 @@ def test_process_ticket_v01_happy_path_writes_pdf_and_updates_tags(tmp_path, mon
         assert ERROR_TAG not in added
 
         assert TRIGGER_TAG in removed
-        assert DONE_TAG in removed
         assert ERROR_TAG in removed
         assert PROCESSING_TAG in removed
 
@@ -339,6 +338,66 @@ def test_process_ticket_v01_transient_failure_keeps_trigger_and_posts_note(
         req = json.loads(article_route.calls[0].request.content.decode("utf-8"))
         assert f"PDF archiver error ({VERSION})" in req["subject"]
         assert "Transient" in req["body"]
+
+
+def test_process_ticket_v01_force_reprocess_overrides_done_tag(tmp_path, monkeypatch) -> None:
+    settings = _test_settings(str(tmp_path))
+    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    payload = {
+        "ticket_id": 123,
+        "_request_id": "req-force-1",
+        "_force_reprocess": True,
+        "user": {"login": "agent-from-webhook"},
+    }
+
+    with respx.mock:
+        respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": 123,
+                    "number": "20240123",
+                    "owner": {"login": "agent"},
+                    "updated_by": {"login": "fallback-agent"},
+                    "preferences": {
+                        "custom_fields": {
+                            "archive_user_mode": "owner",
+                            "archive_path": ["A", "B", "C"],
+                        }
+                    },
+                },
+            )
+        )
+
+        respx.get(
+            "https://zammad.example.local/api/v1/tags",
+            params={"object": "Ticket", "o_id": "123"},
+        ).mock(return_value=httpx.Response(200, json=[DONE_TAG]))
+
+        respx.get("https://zammad.example.local/api/v1/ticket_articles/by_ticket/123").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+
+        remove_tag_route = respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        add_tag_route = respx.post("https://zammad.example.local/api/v1/tags/add").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        article_route = respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
+            return_value=httpx.Response(200, json={"id": 999})
+        )
+
+        asyncio.run(process_ticket("delivery-force-1", payload, settings))
+
+        added = _called_tag_items(add_tag_route)
+        removed = _called_tag_items(remove_tag_route)
+
+        assert PROCESSING_TAG in added
+        assert DONE_TAG in added
+        assert DONE_TAG in removed
+        assert article_route.called
 
 
 def test_process_ticket_v01_invalid_archive_path_is_permanent_and_writes_no_files(

@@ -22,7 +22,8 @@ services:
     ports:
       - "${PUBLISH_PORT:-${SERVER_PORT:-8080}}:${SERVER_PORT:-8080}"
     env_file:
-      - "${ARCHIVER_ENV_FILE:-.env}"
+      - path: "${ARCHIVER_ENV_FILE:-.env}"
+        required: false
     environment:
       # Sane defaults -- override in .env or host environment.
       SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"

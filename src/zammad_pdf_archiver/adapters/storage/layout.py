@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 from zammad_pdf_archiver.domain.path_policy import (
@@ -23,6 +24,10 @@ def _parse_prefix_segments(prefix: str) -> list[str]:
     return parts
 
 
+def _normalize_prefix_segment(segment: str) -> str:
+    return unicodedata.normalize("NFC", segment)
+
+
 def build_target_dir(
     root: Path,
     username: str,
@@ -41,11 +46,12 @@ def build_target_dir(
     if not isinstance(root, Path):
         root = Path(root)
 
+    raw_segments = list(segments)
     validate_segments([username], max_depth=1)
-    validate_segments(list(segments))
+    validate_segments(raw_segments)
 
     user_safe = sanitize_segment(username)
-    segs_safe = [sanitize_segment(s) for s in segments]
+    segs_safe = [sanitize_segment(s) for s in raw_segments]
 
     validate_segments([user_safe], max_depth=1)
     validate_segments(segs_safe)
@@ -59,11 +65,10 @@ def build_target_dir(
         for prefix in allow_prefixes:
             prefix_parts = _parse_prefix_segments(prefix)
             validate_segments(prefix_parts)
-            prefix_safe = [sanitize_segment(p) for p in prefix_parts]
-            validate_segments(prefix_safe)
-            allowed.append(prefix_safe)
+            allowed.append([_normalize_prefix_segment(part) for part in prefix_parts])
 
-        if not any(segs_safe[: len(prefix)] == prefix for prefix in allowed):
+        normalized_segments = [_normalize_prefix_segment(segment) for segment in raw_segments]
+        if not any(normalized_segments[: len(prefix)] == prefix for prefix in allowed):
             raise ValueError("archive_path is not allowed by allow_prefixes policy")
 
     target = root / user_safe

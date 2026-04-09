@@ -24,3 +24,11 @@ def test_systemd_env_template_does_not_force_missing_config_path() -> None:
     # The YAML config is optional; default template should not force a missing file.
     assert env.get("CONFIG_PATH", "") == ""
 
+
+def test_systemd_env_template_marks_webhook_secret_as_required_by_default() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    env_path = repo_root / "infra" / "systemd" / "zammad-archiver.env"
+    text = env_path.read_text("utf-8")
+
+    assert "Webhook auth (required unless you explicitly enable unsigned mode" in text
+    assert "WEBHOOK_HMAC_SECRET" in text

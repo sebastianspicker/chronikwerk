@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+import pytest
+
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
 from zammad_pdf_archiver.app.jobs.process_ticket import ProcessTicketResult
@@ -141,6 +143,71 @@ def test_handle_envelope_transient_requeues(monkeypatch, tmp_path) -> None:
     assert retry_entry["attempt"] == "1"
     assert float(retry_entry["not_before_ts"]) >= time.time() - 0.5
     assert fake.acked == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")]
+    assert fake.deleted[-1] == (settings.workflow.queue_stream, "1-0")
+
+
+def test_handle_envelope_transient_requeues_and_deletes_original_when_ack_fails(
+    monkeypatch, tmp_path
+) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "workflow": {
+                "execution_backend": "redis_queue",
+                "redis_url": "redis://localhost/0",
+                "queue_retry_max_attempts": 2,
+                "queue_retry_backoff_seconds": 1.0,
+            }
+        },
+    )
+    fake = _FakeRedis()
+
+    async def _stub_process_ticket(delivery_id, payload, settings):  # noqa: ANN001, ARG001
+        return ProcessTicketResult(
+            status="failed_transient",
+            ticket_id=payload.get("ticket_id"),
+            message="tmp",
+        )
+
+    async def _stub_enqueue_ticket_job(  # noqa: ANN001
+        *,
+        delivery_id,
+        payload,
+        settings,
+        attempt,
+        not_before_ts,
+        last_error,
+    ) -> str:
+        fields = {
+            "payload_json": "{}",
+            "delivery_id": delivery_id or "",
+            "attempt": str(attempt),
+            "not_before_ts": str(not_before_ts),
+            "last_error": last_error or "",
+        }
+        return await fake.xadd(settings.workflow.queue_stream, fields)
+
+    async def _failing_xack(stream: str, group: str, message_id: str) -> int:  # noqa: ARG001
+        raise RuntimeError("ack failed")
+
+    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
+    monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _stub_enqueue_ticket_job)
+    fake.xack = _failing_xack  # type: ignore[method-assign]
+    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+        message_id="1-0",
+        payload={"ticket_id": 123},
+        delivery_id="d-1",
+        attempt=0,
+        not_before_ts=0.0,
+        last_error=None,
+    )
+
+    with pytest.raises(RuntimeError, match="ack failed"):
+        redis_queue.asyncio.run(
+            redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
+        )
+
+    assert any(stream == settings.workflow.queue_stream for stream, _ in fake.xadds)
     assert fake.deleted[-1] == (settings.workflow.queue_stream, "1-0")
 
 

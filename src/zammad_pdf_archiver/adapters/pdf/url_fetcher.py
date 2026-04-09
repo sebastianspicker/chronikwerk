@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -39,7 +40,13 @@ class _SafeURLFetcher:
             except (OSError, ValueError) as e:  # resolve() / is_file() failures
                 raise FatalURLFetchingError(f"invalid file URL: {url!r}") from e
             body = path.read_bytes()
-            return URLFetcherResponse(url=url, body=body, status=200)
+            mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            return URLFetcherResponse(
+                url=url,
+                body=body,
+                headers={"Content-Type": mime_type},
+                status=200,
+            )
         raise FatalURLFetchingError(f"URL scheme not allowed: {scheme!r}")
 
     def __call__(self, url: str, *args, **kwargs):
