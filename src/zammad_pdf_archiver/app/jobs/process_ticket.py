@@ -39,7 +39,6 @@ from zammad_pdf_archiver.app.jobs.ticket_stores import (
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 from zammad_pdf_archiver.domain.state_machine import (
-    PROCESSING_TAG,
     TRIGGER_TAG,
     apply_done,
     apply_error,
@@ -573,17 +572,6 @@ async def _apply_error_and_cleanup_processing_tag(
             classification=classification_label,
         )
         return
-
-    try:
-        await client.remove_tag(ctx.ticket_id, PROCESSING_TAG)
-    except Exception:
-        log.exception(
-            "process_ticket.processing_tag_cleanup_failed",
-            ticket_id=ctx.ticket_id,
-            request_id=ctx.request_id,
-            delivery_id=ctx.delivery_id,
-            classification=classification_label,
-        )
 
 
 async def _release_ticket_lock(ctx: _TicketJobContext) -> None:

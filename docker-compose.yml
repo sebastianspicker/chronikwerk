@@ -10,6 +10,9 @@
 # For dev/hot-reload, use: docker compose -f docker-compose.dev.yml up --build
 # For the self-contained demo: docker compose -f docker-compose.demo.yml up -d --build
 #
+# Note: the `env_file` object form below requires Docker Compose >= 2.24.0.
+# If your client reports parse errors around `path` or `required`, upgrade Compose.
+#
 # See README.md and docs/deploy.md for full deployment instructions.
 # =============================================================================
 
@@ -22,6 +25,7 @@ services:
     ports:
       - "${PUBLISH_PORT:-${SERVER_PORT:-8080}}:${SERVER_PORT:-8080}"
     env_file:
+      # Docker Compose >= 2.24.0 required for `path` + `required`.
       - path: "${ARCHIVER_ENV_FILE:-.env}"
         required: false
     environment:

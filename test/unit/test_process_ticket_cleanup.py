@@ -28,7 +28,7 @@ def _settings(storage_root: Path) -> Settings:
     )
 
 
-def test_process_ticket_logs_processing_tag_cleanup_failures(
+def test_process_ticket_does_not_do_redundant_processing_tag_cleanup(
     monkeypatch, tmp_path: Path
 ) -> None:
     ticket_stores.reset_for_tests()
@@ -114,4 +114,4 @@ def test_process_ticket_logs_processing_tag_cleanup_failures(
 
     asyncio.run(process_ticket("d-cleanup-log-1", payload, settings))
 
-    assert "process_ticket.processing_tag_cleanup_failed" in capturing_log.exception_events
+    assert "process_ticket.processing_tag_cleanup_failed" not in capturing_log.exception_events
