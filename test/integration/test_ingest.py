@@ -6,6 +6,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from test.support.settings_factory import make_settings
+from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
@@ -117,6 +118,30 @@ def test_ingest_passes_delivery_id_header_to_process_ticket(tmp_path, monkeypatc
     assert payload["ticket"]["id"] == 123
     assert isinstance(payload.get("_request_id"), str)
     assert payload["_request_id"]
+    assert FORCE_REPROCESS_KEY not in payload
+
+
+def test_ingest_ignores_force_reprocess_field_from_public_payload(tmp_path, monkeypatch) -> None:
+    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
+
+    async def _stub_process_ticket(
+        delivery_id: str | None, payload: dict[str, Any], settings: Settings
+    ) -> None:
+        calls.append((delivery_id, payload, settings))
+
+    app = create_app(_test_settings(str(tmp_path)))
+    import zammad_pdf_archiver.app.routes.ingest as ingest_route
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    client = TestClient(app)
+
+    response = client.post(
+        "/ingest",
+        json={"ticket": {"id": 123}, FORCE_REPROCESS_KEY: True},
+    )
+    assert response.status_code == 202
+    assert len(calls) == 1
+    assert FORCE_REPROCESS_KEY not in calls[0][1]
 
 
 def test_ingest_rejects_missing_delivery_id_when_required(tmp_path) -> None:
@@ -179,6 +204,35 @@ def test_ingest_batch_accepts_multiple_payloads(tmp_path, monkeypatch) -> None:
     assert calls[1][1]["ticket_id"] == 222
 
 
+def test_batch_ingest_ignores_force_reprocess_flag_from_public_payload(
+    tmp_path, monkeypatch
+) -> None:
+    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
+
+    async def _stub_process_ticket(
+        delivery_id: str | None, payload: dict[str, Any], settings: Settings
+    ) -> None:
+        calls.append((delivery_id, payload, settings))
+
+    app = create_app(_test_settings(str(tmp_path)))
+    import zammad_pdf_archiver.app.routes.ingest as ingest_route
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    client = TestClient(app)
+
+    response = client.post(
+        "/ingest/batch",
+        json=[
+            {"ticket": {"id": 111}, FORCE_REPROCESS_KEY: True},
+            {"ticket_id": 222, FORCE_REPROCESS_KEY: True},
+        ],
+    )
+    assert response.status_code == 202
+    assert len(calls) == 2
+    assert FORCE_REPROCESS_KEY not in calls[0][1]
+    assert FORCE_REPROCESS_KEY not in calls[1][1]
+
+
 def _test_settings_with_admin(storage_root: str, **extra_overrides: Any) -> Settings:
     overrides: dict[str, Any] = {
         "admin": {
@@ -215,6 +269,7 @@ def test_retry_endpoint_accepts_ticket_id(tmp_path, monkeypatch) -> None:
     assert len(calls) == 1
     assert calls[0][0] is None
     assert calls[0][1]["ticket_id"] == 987
+    assert calls[0][1][FORCE_REPROCESS_KEY] is True
 
 
 def test_retry_requires_auth(tmp_path) -> None:
@@ -249,6 +304,7 @@ def test_retry_with_valid_token(tmp_path, monkeypatch) -> None:
     assert response.status_code == 202
     assert response.json() == {"status": "accepted", "ticket_id": 123}
     assert len(calls) == 1
+    assert calls[0][1][FORCE_REPROCESS_KEY] is True
 
 
 def test_retry_with_invalid_token(tmp_path) -> None:

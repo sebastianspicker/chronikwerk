@@ -10,7 +10,6 @@ from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.errors import TransientError
-from zammad_pdf_archiver.domain.state_machine import PROCESSING_TAG
 
 
 def _settings(storage_root: Path) -> Settings:
@@ -28,7 +27,7 @@ def _settings(storage_root: Path) -> Settings:
     )
 
 
-def test_process_ticket_logs_processing_tag_cleanup_failures(
+def test_process_ticket_does_not_do_redundant_processing_tag_cleanup(
     monkeypatch, tmp_path: Path
 ) -> None:
     ticket_stores.reset_for_tests()
@@ -62,8 +61,7 @@ def test_process_ticket_logs_processing_tag_cleanup_failures(
             return TagList(["pdf:sign"])
 
         async def remove_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
-            if tag == PROCESSING_TAG:
-                raise RuntimeError("cleanup-remove-failed")
+            return None
 
         async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
             return None
@@ -114,4 +112,4 @@ def test_process_ticket_logs_processing_tag_cleanup_failures(
 
     asyncio.run(process_ticket("d-cleanup-log-1", payload, settings))
 
-    assert "process_ticket.processing_tag_cleanup_failed" in capturing_log.exception_events
+    assert "process_ticket.processing_tag_cleanup_failed" not in capturing_log.exception_events

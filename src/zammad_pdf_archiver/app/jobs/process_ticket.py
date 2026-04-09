@@ -10,7 +10,7 @@ import structlog
 
 from zammad_pdf_archiver._version import VERSION
 from zammad_pdf_archiver.adapters.zammad.client import AsyncZammadClient
-from zammad_pdf_archiver.app.constants import REQUEST_ID_KEY
+from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
 from zammad_pdf_archiver.app.jobs.async_retry import async_retry
 from zammad_pdf_archiver.app.jobs.history import record_history_event
 from zammad_pdf_archiver.app.jobs.retry_policy import classify
@@ -39,7 +39,6 @@ from zammad_pdf_archiver.app.jobs.ticket_stores import (
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 from zammad_pdf_archiver.domain.state_machine import (
-    PROCESSING_TAG,
     TRIGGER_TAG,
     apply_done,
     apply_error,
@@ -185,6 +184,10 @@ def _bound_context(ctx: _TicketJobContext) -> dict[str, object]:
     return bound
 
 
+def _force_reprocess_requested(payload: dict[str, Any]) -> bool:
+    return payload.get(FORCE_REPROCESS_KEY) is True
+
+
 async def _process_with_ticket_lock(
     ctx: _TicketJobContext,
     *,
@@ -242,6 +245,7 @@ async def _process_ticket_with_client(
     settings = ctx.settings
     trigger_tag = str(settings.workflow.trigger_tag).strip() or TRIGGER_TAG
     require_trigger_tag = bool(settings.workflow.require_tag)
+    force_reprocess = _force_reprocess_requested(payload)
 
     async with AsyncZammadClient(
         base_url=str(settings.zammad.base_url),
@@ -259,6 +263,7 @@ async def _process_ticket_with_client(
                 payload=payload,
                 trigger_tag=trigger_tag,
                 require_trigger_tag=require_trigger_tag,
+                force_reprocess=force_reprocess,
             )
             return result
         except asyncio.CancelledError:
@@ -283,6 +288,7 @@ async def _run_ticket_pipeline(
     payload: dict[str, Any],
     trigger_tag: str,
     require_trigger_tag: bool,
+    force_reprocess: bool,
 ) -> tuple[ProcessTicketResult, bool]:
     """Fetch ticket data, render PDF, store files, and acknowledge success.
 
@@ -295,7 +301,7 @@ async def _run_ticket_pipeline(
     # writes PROCESSING_TAG.  Multi-instance deployments MUST use
     # idempotency_backend=redis and execution_backend=redis_queue to prevent
     # duplicate processing.  See state_machine.py for details.
-    if not should_process(
+    if not force_reprocess and not should_process(
         ticket_data.tags.root,
         trigger_tag=trigger_tag,
         require_trigger_tag=require_trigger_tag,
@@ -305,7 +311,12 @@ async def _run_ticket_pipeline(
             False,
         )
 
-    await apply_processing(client, ctx.ticket_id, trigger_tag=trigger_tag)
+    await apply_processing(
+        client,
+        ctx.ticket_id,
+        trigger_tag=trigger_tag,
+        force_reprocess=force_reprocess,
+    )
 
     custom_fields = ticket_custom_fields(ticket_data.ticket)
     username = determine_username(
@@ -560,6 +571,7 @@ async def _apply_error_and_cleanup_processing_tag(
             delivery_id=ctx.delivery_id,
             classification=classification_label,
         )
+        return
 
 
 async def _release_ticket_lock(ctx: _TicketJobContext) -> None:

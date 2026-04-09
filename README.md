@@ -80,6 +80,7 @@ Default trigger tag is `pdf:sign` (`workflow.trigger_tag`).
 Processing behavior:
 - `workflow.require_tag=true` (default): ticket is processed only when trigger tag is present.
 - If ticket already has `pdf:signed`, processing is skipped.
+- `POST /retry/{ticket_id}` and `POST /admin/api/retry/{ticket_id}` force one reprocessing run even when the trigger tag is absent or `pdf:signed` is already present.
 
 ### Required Ticket Fields
 
@@ -97,7 +98,8 @@ The field names for `archive_path`, `archive_user_mode`, and `archive_user` are 
 ### Tag State Transitions
 
 - Start: `apply_processing()`
-  - remove `pdf:signed`, `pdf:error`, trigger tag
+  - normal ingest: remove `pdf:error`, trigger tag
+  - explicit retry/reprocess: also remove `pdf:signed`
   - add `pdf:processing`
 - Success: `apply_done()`
   - remove `pdf:processing`, `pdf:error`, trigger tag
@@ -242,7 +244,7 @@ make demo-down     # tear down
 | `GET` | `/admin` | -- | Admin dashboard (optional) |
 | `GET` | `/admin/api/*` | Bearer | Admin API (optional) |
 | `GET` | `/healthz` | -- | Health check (supports `?deep=true`) |
-| `GET` | `/metrics` | Bearer | Prometheus metrics (optional) |
+| `GET` | `/metrics` | Optional Bearer | Prometheus metrics (optional) |
 
 See [`docs/api.md`](docs/api.md) for full request/response details.
 

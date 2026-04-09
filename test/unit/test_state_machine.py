@@ -56,6 +56,19 @@ def test_apply_processing_transitions() -> None:
         client = _StubClient()
         await apply_processing(client, 123)
         assert client.calls == [
+            ("remove_tag", 123, ERROR_TAG),
+            ("remove_tag", 123, TRIGGER_TAG),
+            ("add_tag", 123, PROCESSING_TAG),
+        ]
+
+    asyncio.run(run())
+
+
+def test_apply_processing_force_reprocess_removes_done_tag() -> None:
+    async def run() -> None:
+        client = _StubClient()
+        await apply_processing(client, 123, force_reprocess=True)
+        assert client.calls == [
             ("remove_tag", 123, DONE_TAG),
             ("remove_tag", 123, ERROR_TAG),
             ("remove_tag", 123, TRIGGER_TAG),
@@ -70,7 +83,6 @@ def test_apply_processing_respects_custom_trigger_tag() -> None:
         client = _StubClient()
         await apply_processing(client, 123, trigger_tag="pdf:archive")
         assert client.calls == [
-            ("remove_tag", 123, DONE_TAG),
             ("remove_tag", 123, ERROR_TAG),
             ("remove_tag", 123, "pdf:archive"),
             ("add_tag", 123, PROCESSING_TAG),

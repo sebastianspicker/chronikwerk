@@ -8,7 +8,11 @@ from fastapi import APIRouter, Path, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import JSONResponse
 
-from zammad_pdf_archiver.app.constants import DELIVERY_ID_HEADER, REQUEST_ID_KEY
+from zammad_pdf_archiver.app.constants import (
+    DELIVERY_ID_HEADER,
+    FORCE_REPROCESS_KEY,
+    REQUEST_ID_KEY,
+)
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.app.jobs.redis_queue import enqueue_ticket_job
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down, track_task
@@ -43,6 +47,13 @@ class IngestPayload(BaseModel):
 
     def resolved_ticket_id(self) -> int | None:
         return extract_ticket_id(self.model_dump())
+
+
+def _public_payload_for_job(payload: IngestPayload, request_id: str | None) -> dict[str, Any]:
+    payload_for_job = payload.model_dump()
+    payload_for_job.pop(FORCE_REPROCESS_KEY, None)
+    payload_for_job[REQUEST_ID_KEY] = request_id
+    return payload_for_job
 
 
 async def _run_process_ticket_background(
@@ -130,8 +141,10 @@ async def ingest_webhook(
     if ticket_id is not None:
         delivery_id_raw = request.headers.get(DELIVERY_ID_HEADER)
         delivery_id = (delivery_id_raw or "").strip() or None
-        payload_for_job = payload.model_dump()
-        payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
+        payload_for_job = _public_payload_for_job(
+            payload,
+            getattr(request.state, "request_id", None),
+        )
         assert settings is not None
         await _dispatch_ticket(
             delivery_id=delivery_id,
@@ -170,8 +183,10 @@ async def batch_ingest(
     for payload in payloads:
         ticket_id = payload.resolved_ticket_id()
         if ticket_id is not None:
-            payload_for_job = payload.model_dump()
-            payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
+            payload_for_job = _public_payload_for_job(
+                payload,
+                getattr(request.state, "request_id", None),
+            )
             assert settings is not None
             await _dispatch_ticket(
                 delivery_id=None,
@@ -194,6 +209,7 @@ async def retry_ticket(
 
     payload_for_job: dict[str, Any] = {"ticket_id": ticket_id}
     payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
+    payload_for_job[FORCE_REPROCESS_KEY] = True
     await _dispatch_ticket(
         delivery_id=None,  # Retry does not need deduplication
         payload_for_job=payload_for_job,

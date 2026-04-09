@@ -284,8 +284,7 @@ async def _handle_envelope(redis: Any, *, settings: Settings, envelope: _QueueEn
                 not_before_ts=time.time() + delay,
                 last_error=message or envelope.last_error,
             )
-            await redis.xack(stream, group, envelope.message_id)
-            await redis.xdel(stream, envelope.message_id)
+            await _ack_and_delete(redis, stream=stream, group=group, message_id=envelope.message_id)
             queue_retried_total.inc()
         else:
             await _push_dlq(

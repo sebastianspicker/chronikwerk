@@ -28,10 +28,11 @@ def _patch_weasyprint_urls():
         pass
 
     class URLFetcherResponse:
-        def __init__(self, url: str, body: bytes, status: int = 200):
+        def __init__(self, url: str, body: bytes, status: int = 200, **kwargs):
             self.url = url
             self.body = body
             self.status = status
+            self.extra = kwargs
 
     class URLFetcher:
         def __init__(self, allowed_protocols=()):
@@ -71,6 +72,7 @@ def test_file_url_within_template_root_allowed(tmp_path: Path) -> None:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher.fetch(f"file://{asset}")
     assert result.body == b"body { color: red; }"
+    assert result.extra["headers"]["Content-Type"] == "text/css"
 
 
 def test_file_url_in_subdirectory_allowed(tmp_path: Path) -> None:

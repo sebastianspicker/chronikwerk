@@ -163,27 +163,24 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         # Normalize <br/> style tags; route through the same allowlist logic.
         self.handle_starttag(tag, attrs)
 
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if tag in _DROP_WITH_CONTENT and self._skip_stack:
-            # Pop up to and including the matching tag to handle mismatched
-            # nested tags (e.g. <script><style></script> leaves style orphaned).
-            while self._skip_stack:
-                popped = self._skip_stack.pop()
-                if popped == tag:
-                    break
-            return
-        if self._skip_stack:
-            return
-        if tag in _VOID_TAGS:
-            return
+    def _pop_skip_stack_for_tag(self, tag: str) -> bool:
+        if tag not in _DROP_WITH_CONTENT or not self._skip_stack:
+            return False
+        # Pop up to and including the matching tag to handle mismatched
+        # nested tags (e.g. <script><style></script> leaves style orphaned).
+        while self._skip_stack:
+            popped = self._skip_stack.pop()
+            if popped == tag:
+                break
+        return True
 
+    def _close_matching_open_tag(self, tag: str) -> bool:
         if not self._open:
-            return
+            return False
         if self._open[-1].name == tag:
             self._open.pop()
             self._out.append(f"</{tag}>")
-            return
+            return True
         # Browser-style error recovery: search backwards for a matching open tag.
         for i in range(len(self._open) - 1, -1, -1):
             if self._open[i].name == tag:
@@ -191,7 +188,19 @@ class _AllowlistHTMLSanitizer(HTMLParser):
                 for j in range(len(self._open) - 1, i - 1, -1):
                     self._out.append(f"</{self._open[j].name}>")
                 del self._open[i:]
-                return
+                return True
+        return False
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if self._pop_skip_stack_for_tag(tag):
+            return
+        if self._skip_stack:
+            return
+        if tag in _VOID_TAGS:
+            return
+        if self._close_matching_open_tag(tag):
+            return
         # No matching open tag found — discard the end tag silently.
 
     def handle_data(self, data: str) -> None:

@@ -23,8 +23,8 @@ from zammad_pdf_archiver.app.middleware.body_size_limit import BodySizeLimitMidd
 from zammad_pdf_archiver.app.middleware.hmac_verify import HmacVerifyMiddleware
 from zammad_pdf_archiver.app.middleware.rate_limit import RateLimitMiddleware
 from zammad_pdf_archiver.app.middleware.request_id import (
-    RequestIdMiddleware,
     _REQUEST_ID_HEADER,
+    RequestIdMiddleware,
 )
 from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.app.routes.healthz import router as healthz_router

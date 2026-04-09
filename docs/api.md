@@ -75,8 +75,13 @@ JSON array of ingest payload objects (maximum **100** items per request). Each i
 
 ### `POST /retry/{ticket_id}`
 
-Schedules one retry run for a specific ticket ID.
+Schedules one forced reprocessing run for a specific ticket ID.
 Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
+
+Behavior notes:
+- bypasses trigger-tag gating
+- bypasses `pdf:signed` skip behavior
+- still skips delivery-ID dedupe by using no delivery ID
 
 #### Request headers
 
@@ -231,7 +236,7 @@ Always available.
   "time": "2026-02-07T12:00:00+00:00",
   "checks": {
     "redis": { "available": true },
-    "storage": { "writable": true, "path": "/data/archive" }
+    "storage": { "writable": true }
   }
 }
 ```
@@ -246,7 +251,7 @@ When a deep check fails, the response may look like:
   "time": "2026-02-07T12:00:00+00:00",
   "checks": {
     "redis": { "available": false, "reason": "not_configured" },
-    "storage": { "writable": true, "path": "/data/archive" }
+    "storage": { "writable": true }
   }
 }
 ```

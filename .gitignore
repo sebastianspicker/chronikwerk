@@ -42,3 +42,13 @@ plans/
 progress.md
 .claude/
 .codex/
+.agents/
+.github/codex/
+.github/workflows/codex.yml
+AGENTS.md
+AUDIT.md
+HARNESS_PRINCIPLES.md
+code_review.md
+docs/agent/
+docs/source-audit/
+scripts/topology_inventory.sh
