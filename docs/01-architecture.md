@@ -31,6 +31,6 @@ Some setup details still depend on the current local workflow and may change aga
 - Earlier scratch notes were compressed into the current guidance.
 
 ## Architecture
-- Simplified the next maintenance pass through ruff.
+- Moved payload behind a narrower boundary.
 
 - Earlier scratch notes were compressed into the current guidance.
