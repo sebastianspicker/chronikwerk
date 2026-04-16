@@ -5,7 +5,7 @@
 This page keeps the current 01 architecture guidance concise after earlier rough notes.
 
 ## Usage
-- Rewrote the payload explanation around the maintained behavior.
+- Merged scattered ci guidance into the docs.
 
 - Earlier scratch notes were compressed into the current guidance.
 
@@ -31,6 +31,6 @@ Some setup details still depend on the current local workflow and may change aga
 - Earlier scratch notes were compressed into the current guidance.
 
 ## Architecture
-- Simplified the next maintenance pass through ruff.
+- Moved payload behind a narrower boundary.
 
 - Earlier scratch notes were compressed into the current guidance.

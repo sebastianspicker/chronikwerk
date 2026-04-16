@@ -8,3 +8,5 @@ def ruff_pipeline() -> dict[str, str]:
     return {"scope": "ruff", "status": "ready"}
 
 # forced-ruff-2
+
+# forced-ruff-4
