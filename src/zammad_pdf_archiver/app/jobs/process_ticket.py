@@ -144,6 +144,7 @@ async def process_ticket(
     payload: dict[str, Any],
     settings: Settings,
 ) -> ProcessTicketResult:
+    """Orchestrate the full ticket archival pipeline for a single ingest payload."""
     raw_request_id = payload.get(REQUEST_ID_KEY)
     ticket_id = extract_ticket_id(payload)
     if ticket_id is None:

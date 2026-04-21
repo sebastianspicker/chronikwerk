@@ -8,6 +8,7 @@ from zammad_pdf_archiver.domain.path_policy import ensure_within_root
 
 
 def ensure_dir(path: Path) -> None:
+    """Create path and all intermediate parents if they do not already exist."""
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
@@ -42,6 +43,7 @@ def _validate_and_prepare(target_path: Path, storage_root: Path) -> tuple[Path, 
 
 
 def write_bytes(target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True) -> None:
+    """Write data to target_path within storage_root with O_NOFOLLOW and correct permissions."""
     target, parent = _validate_and_prepare(target_path, storage_root)
 
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -87,6 +89,7 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
 def write_atomic_bytes(
     target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True
 ) -> None:
+    """Write data atomically to target_path via a temp file and os.replace within storage_root."""
     target, parent = _validate_and_prepare(target_path, storage_root)
 
     tmp_path: Path | None = None

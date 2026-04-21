@@ -14,7 +14,7 @@ class _SafeURLFetcher:
         self._root = template_root.resolve()
 
     def fetch(self, url: str, headers=None):
-        from weasyprint.urls import (  # type: ignore[import-untyped]
+        from weasyprint.urls import (
             FatalURLFetchingError,
             URLFetcher,
             URLFetcherResponse,

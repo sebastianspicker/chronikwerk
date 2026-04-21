@@ -35,6 +35,7 @@ from zammad_pdf_archiver.config.settings import Settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Start the queue worker on startup and perform graceful shutdown on teardown."""
     clear_shutting_down()
     settings = getattr(app.state, "settings", None)
     if settings is not None:

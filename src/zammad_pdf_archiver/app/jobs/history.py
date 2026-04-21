@@ -47,6 +47,7 @@ async def record_history_event(
     delivery_id: str | None = None,
     request_id: str | None = None,
 ) -> bool:
+    """Append a processing history event to the Redis stream; return True on success."""
     redis = await _redis_client(settings)
     if redis is None:
         return False
@@ -116,6 +117,7 @@ async def read_history(
     limit: int,
     ticket_id: int | None = None,
 ) -> list[dict[str, Any]]:
+    """Read the most recent history events from the Redis stream, optionally filtered by ticket."""
     redis = await _redis_client(settings)
     if redis is None:
         return []
@@ -154,6 +156,7 @@ async def read_history_json(
     limit: int,
     ticket_id: int | None = None,
 ) -> str:
+    """Return history events as a JSON string with status, count, and items fields."""
     payload = {
         "status": "ok",
         "count": 0,

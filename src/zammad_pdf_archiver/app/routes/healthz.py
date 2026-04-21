@@ -43,8 +43,21 @@ def _check_storage(settings: Settings) -> dict[str, object]:
         return {"writable": False, "reason": str(exc)[:200]}
 
 
+def _deep_check_healthy(name: str, result: object) -> bool | None:
+    if not isinstance(result, dict):
+        return None
+    if name == "redis" and result.get("reason") == "not_configured":
+        return None
+    if "available" in result:
+        return bool(result["available"])
+    if "writable" in result:
+        return bool(result["writable"])
+    return None
+
+
 @router.get("/healthz")
 async def healthz(request: Request, deep: bool = False) -> dict[str, object]:
+    """Return service health; include Redis and storage checks when deep=True."""
     out: dict[str, object] = {
         "status": "ok",
         "time": datetime.now(UTC).isoformat(),
@@ -60,9 +73,9 @@ async def healthz(request: Request, deep: bool = False) -> dict[str, object]:
         checks["storage"] = _check_storage(settings)
         out["checks"] = checks
         healthy_checks = [
-            v.get("available", v.get("writable", False))
-            for v in checks.values()
-            if isinstance(v, dict) and "reason" not in v
+            result
+            for name, value in checks.items()
+            if (result := _deep_check_healthy(name, value)) is not None
         ]
         all_ok = bool(healthy_checks) and all(healthy_checks)
         if not all_ok:

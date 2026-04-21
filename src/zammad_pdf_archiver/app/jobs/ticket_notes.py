@@ -34,6 +34,7 @@ def success_note_html(
     delivery_id: str | None,
     timestamp_utc: str,
 ) -> str:
+    """Return an HTML note body summarising a successful PDF archival operation."""
     return _html_field_list(
         f"PDF archived ({VERSION})",
         [
@@ -90,6 +91,7 @@ def error_note_html(
     code: str = "",
     hint: str = "",
 ) -> str:
+    """Return an HTML note body describing an archival failure with classification and hints."""
     fields: list[tuple[str, str]] = [
         ("classification", classification),
         ("error", message),
@@ -117,6 +119,7 @@ def concise_exc_message(exc: BaseException) -> str:
 
 
 def action_hint(exc: BaseException, *, classified: TransientError | PermanentError | None) -> str:
+    """Return a human-readable operator action hint for the given exception and classification."""
     if classified is not None and isinstance(classified, TransientError):
         return (
             "Transient failure. Verify Zammad/TSA reachability and storage availability; "

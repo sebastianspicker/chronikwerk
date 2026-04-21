@@ -4,6 +4,7 @@ from zammad_pdf_archiver.adapters.zammad.models import Ticket
 
 
 def require_nonempty(value: Any, *, field: str) -> str:
+    """Return the stripped string value or raise ValueError if it is empty or not a string."""
     if not isinstance(value, str):
         raise ValueError(f"{field} must be a string")
     out = value.strip()
@@ -20,6 +21,7 @@ def determine_username(
     mode_field_name: str,
     archive_user_field_name: str = "archive_user",
 ) -> str:
+    """Resolve the archive username from ticket data based on the configured mode field."""
     raw_mode = custom_fields.get(mode_field_name)
     mode = str(raw_mode).strip() if raw_mode is not None else "owner"
 
@@ -47,6 +49,7 @@ def determine_username(
 
 
 def parse_archive_path_segments(value: Any) -> list[str]:
+    """Parse and validate archive_path into a non-empty list of non-empty path segments."""
     if value is None:
         raise ValueError("custom_fields.archive_path is missing")
 

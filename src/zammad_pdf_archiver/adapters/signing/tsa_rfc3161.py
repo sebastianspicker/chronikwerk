@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
-from asn1crypto import tsp  # type: ignore[import-untyped]
+from asn1crypto import tsp
 from pyhanko.sign.timestamps.api import TimeStamper
 from pyhanko.sign.timestamps.common_utils import set_tsp_headers
 

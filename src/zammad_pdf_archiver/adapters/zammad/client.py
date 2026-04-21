@@ -28,6 +28,7 @@ class _RetryPolicy:
     backoff_base_seconds: float = 0.2
 
     def backoff_seconds(self, attempt: int) -> float:
+        """Return the exponential backoff delay in seconds for a zero-based retry attempt."""
         # attempt is 0-based for *retry count* (i.e., after the first failure).
         return self.backoff_base_seconds * (2**attempt)
 
@@ -77,6 +78,7 @@ class AsyncZammadClient:
         )
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client if it was created by this instance."""
         if self._owns_http_client:
             await self._http.aclose()
 

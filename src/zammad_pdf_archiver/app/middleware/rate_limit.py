@@ -40,6 +40,7 @@ class _InMemoryTokenBucketLimiter:
         self._buckets: dict[str, _Bucket] = {}
 
     async def allow(self, key: str) -> bool:
+        """Return True if the request for key is within the rate limit, False otherwise."""
         now = float(self._now())
         async with self._lock:
             if len(self._buckets) > self._max_entries:

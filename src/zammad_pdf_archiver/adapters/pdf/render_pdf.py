@@ -119,7 +119,7 @@ def render_pdf(
 
         # Import lazily so the rest of the codebase can be imported without the
         # WeasyPrint native dependencies.
-        from weasyprint import CSS, HTML  # type: ignore[import-untyped]
+        from weasyprint import CSS, HTML
 
         stylesheets = [CSS(filename=str(path)) for path in css_paths]
 

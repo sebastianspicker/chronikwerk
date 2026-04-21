@@ -56,6 +56,10 @@ def _public_payload_for_job(payload: IngestPayload, request_id: str | None) -> d
     return payload_for_job
 
 
+def _normalized_delivery_id(value: str | None) -> str | None:
+    return (value or "").strip() or None
+
+
 async def _run_process_ticket_background(
     *,
     delivery_id: str | None,
@@ -127,6 +131,7 @@ async def ingest_webhook(
     payload: IngestPayload,
     dry_run: bool = False,
 ) -> JSONResponse:
+    """Accept a single Zammad webhook payload and dispatch it for ticket archival."""
     settings, error = _resolve_settings_or_error(request)
     if error is not None:
         return error
@@ -139,8 +144,7 @@ async def ingest_webhook(
         )
 
     if ticket_id is not None:
-        delivery_id_raw = request.headers.get(DELIVERY_ID_HEADER)
-        delivery_id = (delivery_id_raw or "").strip() or None
+        delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
         payload_for_job = _public_payload_for_job(
             payload,
             getattr(request.state, "request_id", None),
@@ -161,6 +165,7 @@ async def batch_ingest(
     payloads: list[IngestPayload],
     dry_run: bool = False,
 ) -> JSONResponse:
+    """Accept a batch of webhook payloads and dispatch each for ticket archival."""
     settings, error = _resolve_settings_or_error(request)
     if error is not None:
         return error
@@ -180,16 +185,18 @@ async def batch_ingest(
         )
 
     accepted = 0
-    for payload in payloads:
+    batch_delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
+    for index, payload in enumerate(payloads):
         ticket_id = payload.resolved_ticket_id()
         if ticket_id is not None:
             payload_for_job = _public_payload_for_job(
                 payload,
                 getattr(request.state, "request_id", None),
             )
+            delivery_id = f"{batch_delivery_id}:{index}" if batch_delivery_id is not None else None
             assert settings is not None
             await _dispatch_ticket(
-                delivery_id=None,
+                delivery_id=delivery_id,
                 payload_for_job=payload_for_job,
                 settings=settings,
             )
@@ -204,6 +211,7 @@ async def retry_ticket(
     # Security: reject non-positive ticket IDs at the parameter level.
     ticket_id: int = Path(..., ge=1),
 ) -> JSONResponse:
+    """Force reprocessing of a ticket by ID, bypassing idempotency checks."""
     settings = settings_or_503(request)
     verify_bearer_auth(request, settings)
 

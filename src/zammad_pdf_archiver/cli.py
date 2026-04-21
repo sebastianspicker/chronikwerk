@@ -22,6 +22,16 @@ from zammad_pdf_archiver.config.validate import ConfigValidationError
 log = structlog.get_logger(__name__)
 
 
+def _missing_config_path_from_error(error: ConfigValidationError) -> str | None:
+    for issue in error.issues:
+        if issue.path != "CONFIG_PATH":
+            continue
+        prefix = "Config file not found:"
+        if issue.message.startswith(prefix):
+            return issue.message.removeprefix(prefix).strip()
+    return None
+
+
 def _cli_command(
     error_prefix: str,
     *,
@@ -69,7 +79,13 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
     except FileNotFoundError as e:
         print(f"✗ Configuration file not found: {e}", file=sys.stderr)
         return 2
-    except (ConfigValidationError, ValueError, OSError) as e:
+    except ConfigValidationError as e:
+        if missing_path := _missing_config_path_from_error(e):
+            print(f"✗ Configuration file not found: {missing_path}", file=sys.stderr)
+            return 2
+        print(f"✗ Configuration is invalid: {e}", file=sys.stderr)
+        return 1
+    except (ValueError, OSError) as e:
         print(f"✗ Configuration is invalid: {e}", file=sys.stderr)
         return 1
 

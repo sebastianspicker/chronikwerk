@@ -22,6 +22,7 @@ async def fetch_ticket_data(
     client: AsyncZammadClient,
     ticket_id: int,
 ) -> TicketData:
+    """Fetch a ticket and its tags from Zammad and return them as a TicketData bundle."""
     ticket = await client.get_ticket(ticket_id)
     tags = await client.list_tags(ticket_id)
 

@@ -169,6 +169,7 @@ async def build_snapshot(
     ticket: ZammadTicket | None = None,
     tags: TagList | None = None,
 ) -> Snapshot:
+    """Fetch ticket, tags, and articles from Zammad and assemble them into a Snapshot."""
     if ticket is None:
         ticket = await client.get_ticket(ticket_id)
     if tags is None:

@@ -32,6 +32,7 @@ class ConfigValidationError(ValueError):
 
 
 def issues_from_pydantic_error(error: ValidationError) -> list[ConfigValidationIssue]:
+    """Convert a Pydantic ValidationError into a list of ConfigValidationIssue instances."""
     issues: list[ConfigValidationIssue] = []
     for item in error.errors(include_url=False):
         loc = ".".join(str(part) for part in item.get("loc", ())) or "<root>"

@@ -122,6 +122,7 @@ def _replay_receive(chunks: list[bytes]) -> Receive:
     idx = 0
 
     async def receive() -> Message:
+        """Replay buffered body chunks as ASGI http.request messages."""
         nonlocal idx
         if idx >= len(chunks):
             return {"type": "http.request", "body": b"", "more_body": False}
