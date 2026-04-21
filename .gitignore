@@ -25,15 +25,23 @@ pip-wheel-metadata/
 .env
 .env.*
 !.env.example
+.envrc
+.python-version
+.direnv/
 
 # OS
 .DS_Store
 Thumbs.db
 
+# Local runtime artifacts
+*.log
+coverage.json
+
 # IDEs
 .idea/
 .vscode/
 .cursor/
+.kilo/
 
 # AI development artifacts (local use)
 audit/

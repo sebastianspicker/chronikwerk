@@ -8,7 +8,7 @@ This document summarizes the service threat model and implemented mitigations.
 flowchart LR
   Z["Zammad"] -->|"Webhook"| I["Ingress: /ingest"]
   OP["Operators"] -->|"Config + secrets"| I
-  A["Admin / Ops clients"] -->|"Bearer auth: /admin/api/* + /jobs/history + /jobs/queue/dlq/drain"| I
+  A["Admin / Ops clients"] -->|"Bearer auth: /admin/api/* + /jobs/{ticket_id} + /jobs/queue/stats + /jobs/history + /jobs/queue/dlq/drain"| I
   I -->|"API token"| ZA["Zammad API"]
   I -->|"Queue + history streams"| R["Redis (optional)"]
   I -->|"Write output"| FS["Archive filesystem"]

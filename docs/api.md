@@ -53,11 +53,20 @@ Batch webhook ingestion endpoint.
 
 - `dry_run` (bool, optional, default `false`) -- when `true`, validates the payload and returns `202` with `{"status":"dry_run_accepted","count":<int>}` without dispatching any background work. Useful for integration testing.
 
+#### Request headers
+
+- `Content-Type: application/json` (recommended)
+- `X-Request-Id: <id>` (optional)
+- `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
+- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
+
 #### Request body
 
 JSON array of ingest payload objects (maximum **100** items per request). Each item must contain either:
 - `ticket.id`
 - `ticket_id`
+
+When `X-Zammad-Delivery` is present, the service derives per-item delivery IDs as `<delivery-id>:<index>` (zero-based) before applying idempotency checks.
 
 #### Success response
 
@@ -67,6 +76,7 @@ JSON array of ingest payload objects (maximum **100** items per request). Each i
 
 #### Error responses
 
+- `400` `{"detail":"missing_delivery_id"}`
 - `403` `{"detail":"forbidden"}`
 - `422` invalid body (e.g. missing or invalid ticket id in an item), or batch exceeds 100 items (`{"detail":"batch_too_large"}`)
 - `413` `{"detail":"request_too_large"}`
@@ -104,6 +114,11 @@ Behavior notes:
 ### `GET /jobs/{ticket_id}`
 
 Returns process-local job status for one ticket.
+Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
+
+#### Request headers
+
+- `Authorization: Bearer <ADMIN_BEARER_TOKEN>` (required)
 
 #### Response
 
@@ -122,9 +137,19 @@ Notes:
 - `in_flight` is process-local and non-persistent.
 - Status is reset on process restart.
 
+#### Error responses
+
+- `401` missing/invalid bearer token
+- `503` `{"detail":"ops_token_not_configured"}` or `{"detail":"settings_not_configured"}`
+
 ### `GET /jobs/queue/stats`
 
 Returns queue status for the configured execution backend.
+Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
+
+#### Request headers
+
+- `Authorization: Bearer <ADMIN_BEARER_TOKEN>` (required)
 
 #### Response (in-process backend)
 
@@ -134,6 +159,11 @@ Returns queue status for the configured execution backend.
   "queue_enabled": false
 }
 ```
+
+#### Error responses
+
+- `401` missing/invalid bearer token
+- `503` `{"detail":"ops_token_not_configured"}` or queue backend unavailable (`{"status":"error","detail":"queue_unavailable"}` payload)
 
 ### `GET /jobs/history`
 

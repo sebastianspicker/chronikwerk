@@ -1,9 +1,9 @@
 # Product Requirements Document (PRD)
 # Zammad PDF Archiver
 
-**Version:** 0.1  
+**Version:** 0.2
 **Status:** Living document (aligned with current implementation and docs)  
-**Last updated:** 2026-02-10
+**Last updated:** 2026-04-20
 
 NFR verification tests live in `test/nfr/`.
 

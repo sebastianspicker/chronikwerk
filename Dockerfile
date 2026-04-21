@@ -12,7 +12,7 @@ COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
 
 RUN python -m pip install --no-cache-dir -U pip uv \
-  && uv pip install --no-cache-dir .
+  && uv pip install --no-cache-dir ".[redis]"
 
 
 FROM python:3.12-slim AS runtime

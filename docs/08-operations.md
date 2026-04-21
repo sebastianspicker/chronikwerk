@@ -15,8 +15,10 @@ This runbook is for deployment, monitoring, troubleshooting, and recovery.
   - schedules one explicit forced reprocessing job without delivery-ID dedupe
 - `GET /jobs/{ticket_id}`
   - returns process-local status: `ticket_id`, `in_flight`, `shutting_down`
+  - requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
 - `GET /jobs/queue/stats`
   - returns queue state (disabled for `inprocess`, depth/pending/DLQ for `redis_queue`)
+  - requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
 - `GET /jobs/history`
   - returns Redis-backed processing history (`processed`, `failed_*`, `skipped_*`)
   - requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
@@ -96,6 +98,7 @@ In `inprocess` mode operators can re-trigger by saving the ticket or reapplying 
 
 - dedupe key: `X-Zammad-Delivery`
 - repeated delivery IDs are skipped for `workflow.delivery_id_ttl_seconds`
+- for `POST /ingest/batch`, each item uses a derived key `<delivery-id>:<index>` so retries of the same batch are deduplicated per item
 - dedupe store depends on backend:
   - `idempotency_backend=memory`: in-memory only (restart clears dedupe history)
   - `idempotency_backend=redis`: durable across process restarts and multi-worker deployments

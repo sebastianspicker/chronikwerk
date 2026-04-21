@@ -10,10 +10,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [
-  { name = "Maintainers", email = "maintainers@example.invalid" },
+  { name = "Maintainers", email = "sebastianspicker@users.noreply.github.com" },
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Intended Audience :: System Administrators",
   "Operating System :: OS Independent",
@@ -59,6 +59,10 @@ scripts = [
 ]
 redis = ["redis>=5.0"]
 
+[project.urls]
+Repository = "https://github.com/sebastianspicker/zammad-ticket-archiver"
+"Bug Tracker" = "https://github.com/sebastianspicker/zammad-ticket-archiver/issues"
+
 [project.scripts]
 zammad-pdf-archiver = "zammad_pdf_archiver.runtime:main"
 zammad-archiver-cli = "zammad_pdf_archiver.cli:main"
@@ -90,12 +94,17 @@ exclude = [
   "^scripts/",
 ]
 
+[[tool.mypy.overrides]]
+# asn1crypto and weasyprint have no type stubs; ignores are intentional
+module = ["asn1crypto.*", "weasyprint.*"]
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source = ["src/zammad_pdf_archiver"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 85
+fail_under = 92
 show_missing = true
 skip_empty = true
 exclude_lines = [

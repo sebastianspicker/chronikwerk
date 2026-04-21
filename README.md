@@ -36,8 +36,8 @@ This repository provides:
   - `POST /ingest`
   - `POST /ingest/batch`
   - `POST /retry/{ticket_id}`
-  - `GET /jobs/{ticket_id}`
-  - `GET /jobs/queue/stats`
+  - `GET /jobs/{ticket_id}` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
+  - `GET /jobs/queue/stats` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `GET /jobs/history` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `POST /jobs/queue/dlq/drain` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `GET /admin` (when `admin.enabled=true`)
@@ -277,6 +277,7 @@ Precedence (highest first):
   - `TSA_USER`
   - `TSA_PASS`
 - Delivery ID dedupe is in-memory only and resets on process restart. For consistent deduplication across restarts or multiple instances, use Redis (`workflow.idempotency_backend=redis`, `workflow.redis_url`); see [Operations](docs/08-operations.md).
+- For `POST /ingest/batch`, a batch-level `X-Zammad-Delivery` header is expanded to per-item IDs of the form `<delivery-id>:<index>` before dedupe is applied.
 - Processing after `202` is **best-effort** in default `inprocess` mode. For durable retries and dead-letter handling, enable `workflow.execution_backend=redis_queue` with `workflow.redis_url`; see [Processing and Idempotency](docs/08-operations.md#4-processing-and-idempotency-behavior).
 - If a ticket is stuck in `pdf:processing` after a crash, see [Stuck in pdf:processing](docs/faq.md#why-is-a-ticket-stuck-with-pdfprocessing) in the FAQ.
 
