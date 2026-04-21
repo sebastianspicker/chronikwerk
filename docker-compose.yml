@@ -1,0 +1,66 @@
+# =============================================================================
+# Production Docker Compose for zammad-pdf-archiver
+# =============================================================================
+#
+# Usage:
+#   1. Copy .env.example to .env and edit with your values
+#   2. docker compose up -d --build
+#   3. curl http://localhost:8080/healthz
+#
+# For dev/hot-reload, use: docker compose -f docker-compose.dev.yml up --build
+# For the self-contained demo: docker compose -f docker-compose.demo.yml up -d --build
+#
+# Note: the `env_file` object form below requires Docker Compose >= 2.24.0.
+# If your client reports parse errors around `path` or `required`, upgrade Compose.
+#
+# See README.md and docs/deploy.md for full deployment instructions.
+# =============================================================================
+
+services:
+  zammad-pdf-archiver:
+    image: zammad-pdf-archiver:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PUBLISH_PORT:-${SERVER_PORT:-8080}}:${SERVER_PORT:-8080}"
+    env_file:
+      # Docker Compose >= 2.24.0 required for `path` + `required`.
+      - path: "${ARCHIVER_ENV_FILE:-.env}"
+        required: false
+    environment:
+      # Sane defaults -- override in .env or host environment.
+      SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"
+      SERVER_PORT: "${SERVER_PORT:-8080}"
+      STORAGE_ROOT: "${STORAGE_ROOT:-/mnt/archive}"
+      SIGNING_PFX_PATH: "${SIGNING_PFX_PATH:-/run/secrets/signing.pfx}"
+    volumes:
+      # Config file (optional). Set CONFIG_PATH=./config/config.yaml in .env to enable.
+      - ./config:/app/config:ro
+
+      # Archive storage: bind-mount the host path where PDFs should be written.
+      # The host path is typically a CIFS/SMB mount (see scripts/ops/mount-cifs.sh).
+      - "${STORAGE_ROOT:-/mnt/archive}:${STORAGE_ROOT:-/mnt/archive}:rw"
+
+      # Signing material (uncomment when SIGNING_ENABLED=true):
+      # - /etc/zammad-archiver/secrets/signing.pfx:/run/secrets/signing.pfx:ro
+
+    # Security hardening: read-only root filesystem, no privilege escalation.
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os,urllib.request; p=os.getenv('SERVER_PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()\"",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped

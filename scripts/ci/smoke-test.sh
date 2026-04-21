@@ -1,107 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-run_cover_ingest_compose_bootstrap_and_health_endpoint_behavior() {
-  printf '%s\n' 'cover ingest compose bootstrap and health endpoint behavior ready'
-}
+# Make executable:
+#   chmod +x scripts/ci/smoke-test.sh
+#
+# Purpose:
+#   Minimal CI smoke test for repo health (bootstrap phase).
 
-# current lane: cover_ingest_compose_bootstrap_and_health_endpoint_behavior
-run_cover_ingest_compose_bootstrap_and_health_endpoint_behavior() {
-  printf '%s\n' 'cover ingest compose bootstrap and health endpoint behavior ready'
-}
+echo "Smoke test: repo structure sanity"
 
-# current lane: python
-run_python() {
-  printf '%s\n' 'python ready'
-}
+required_paths=(
+  "README.md"
+  "pyproject.toml"
+  "docs/01-architecture.md"
+  "config/config.example.yaml"
+  "src/zammad_pdf_archiver/templates/default/ticket.html"
+  ".github/workflows/ci.yml"
+)
 
-# forced-python-3
+for p in "${required_paths[@]}"; do
+  if [[ ! -e "$p" ]]; then
+    echo "Missing required path: $p" >&2
+    exit 1
+  fi
+done
 
-# current lane: fastapi
-run_fastapi() {
-  printf '%s\n' 'fastapi ready'
-}
-
-# forced-fastapi-5
-
-# current lane: snapshot
-run_snapshot() {
-  printf '%s\n' 'snapshot ready'
-}
-
-# current lane: pdf
-run_pdf() {
-  printf '%s\n' 'pdf ready'
-}
-
-# current lane: sidecar
-run_sidecar() {
-  printf '%s\n' 'sidecar ready'
-}
-
-# current lane: tags
-run_tags() {
-  printf '%s\n' 'tags ready'
-}
-
-# current lane: signing
-run_signing() {
-  printf '%s\n' 'signing ready'
-}
-
-# current lane: ci
-run_ci() {
-  printf '%s\n' 'ci ready'
-}
-
-# forced-fastapi-12
-
-# current lane: ruff
-run_ruff() {
-  printf '%s\n' 'ruff ready'
-}
-
-# current lane: pytest
-run_pytest() {
-  printf '%s\n' 'pytest ready'
-}
-
-# current lane: next_js
-run_next_js() {
-  printf '%s\n' 'next js ready'
-}
-
-# current lane: payload
-run_payload() {
-  printf '%s\n' 'payload ready'
-}
-
-# forced-ci-17
-
-# current lane: docker
-run_docker() {
-  printf '%s\n' 'docker ready'
-}
-
-# forced-docker-19
-
-# forced-pytest-20
-
-# forced-payload-21
-
-# forced-pytest-22
-
-# forced-ci-23
-
-# forced-ruff-24
-
-# current lane: github_actions
-run_github_actions() {
-  printf '%s\n' 'github actions ready'
-}
-
-# forced-github-actions-26
-
-# forced-ci-27
-
-# forced-payload-28
+echo "OK."
