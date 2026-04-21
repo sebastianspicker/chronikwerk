@@ -6,8 +6,18 @@ import httpx
 import pytest
 import respx
 
-from zammad_pdf_archiver.adapters.zammad.client import AsyncZammadClient
-from zammad_pdf_archiver.adapters.zammad.errors import AuthError, NotFoundError, ServerError
+from zammad_pdf_archiver.adapters.zammad.client import (
+    AsyncZammadClient,
+    _parse_retry_after_seconds,
+    _RetryPolicy,
+)
+from zammad_pdf_archiver.adapters.zammad.errors import (
+    AuthError,
+    ClientError,
+    NotFoundError,
+    RateLimitError,
+    ServerError,
+)
 
 
 async def _no_sleep(_: float) -> None:
@@ -246,3 +256,192 @@ def test_5xx_raises_server_error_after_retries() -> None:
         )
         asyncio.run(run())
         assert route.call_count == 4
+
+
+# ---------------------------------------------------------------------------
+# New tests for missing coverage
+# ---------------------------------------------------------------------------
+
+
+def test_base_url_missing_scheme_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="scheme"):
+        AsyncZammadClient(base_url="zammad.example", api_token="tok")
+
+
+def test_aclose_without_owning_http_client_is_noop() -> None:
+    """aclose is a no-op when an external http_client was supplied."""
+
+    async def run() -> None:
+        external = httpx.AsyncClient()
+        client = AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="tok",
+            http_client=external,
+        )
+        # Should not raise or call aclose on the external client
+        await client.aclose()
+        await external.aclose()
+
+    asyncio.run(run())
+
+
+def test_list_tags_dict_response_with_tags_key() -> None:
+    """list_tags handles Zammad versions that return {"tags": [...]} wrapper."""
+
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            sleep=_no_sleep,
+        ) as client:
+            tags = await client.list_tags(123)
+            assert tags.root == ["foo", "bar"]
+
+    with respx.mock:
+        respx.get(
+            "https://zammad.example/api/v1/tags",
+            params={"object": "Ticket", "o_id": "123"},
+        ).mock(return_value=httpx.Response(200, json={"tags": ["foo", "bar"]}))
+        asyncio.run(run())
+
+
+def test_list_tags_invalid_format_raises_client_error() -> None:
+    """list_tags raises ClientError when tags value cannot be parsed as list[str]."""
+
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            sleep=_no_sleep,
+        ) as client:
+            with pytest.raises(ClientError, match="unexpected"):
+                await client.list_tags(123)
+
+    with respx.mock:
+        respx.get(
+            "https://zammad.example/api/v1/tags",
+            params={"object": "Ticket", "o_id": "123"},
+        ).mock(return_value=httpx.Response(200, json={"tags": {"not": "a-list"}}))
+        asyncio.run(run())
+
+
+def test_timeout_raises_server_error_after_retries() -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            sleep=_no_sleep,
+            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
+        ) as client:
+            with pytest.raises(ServerError, match="timeout"):
+                await client.get_ticket(123)
+
+    with respx.mock:
+        respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            side_effect=[
+                httpx.ReadTimeout("timeout"),
+                httpx.ReadTimeout("timeout"),
+            ]
+        )
+        asyncio.run(run())
+
+
+def test_transport_error_raises_server_error_after_retries() -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            sleep=_no_sleep,
+            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
+        ) as client:
+            with pytest.raises(ServerError, match="Network error"):
+                await client.get_ticket(123)
+
+    with respx.mock:
+        respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            side_effect=[
+                httpx.NetworkError("connection reset"),
+                httpx.NetworkError("connection reset"),
+            ]
+        )
+        asyncio.run(run())
+
+
+def test_rate_limit_exhausted_raises_rate_limit_error() -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            sleep=_no_sleep,
+            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
+        ) as client:
+            with pytest.raises(RateLimitError):
+                await client.get_ticket(123)
+
+    with respx.mock:
+        respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "0"}),
+                httpx.Response(429),
+            ]
+        )
+        asyncio.run(run())
+
+
+def test_400_raises_client_error() -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            sleep=_no_sleep,
+        ) as client:
+            with pytest.raises(ClientError):
+                await client.get_ticket(123)
+
+    with respx.mock:
+        respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            return_value=httpx.Response(400, json={"error": "bad request"})
+        )
+        asyncio.run(run())
+
+
+def test_raise_for_status_429_direct() -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="tok",
+            sleep=_no_sleep,
+        ) as client:
+            req = httpx.Request("GET", "https://zammad.example/api/v1/test")
+            resp = httpx.Response(429, request=req)
+            with pytest.raises(RateLimitError):
+                client._raise_for_status(resp)  # noqa: SLF001
+
+    asyncio.run(run())
+
+
+def test_raise_for_status_500_direct() -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="tok",
+            sleep=_no_sleep,
+        ) as client:
+            req = httpx.Request("GET", "https://zammad.example/api/v1/test")
+            resp = httpx.Response(500, request=req)
+            with pytest.raises(ServerError):
+                client._raise_for_status(resp)  # noqa: SLF001
+
+    asyncio.run(run())
+
+
+def test_parse_retry_after_none_returns_none() -> None:
+    assert _parse_retry_after_seconds(None) is None
+
+
+def test_parse_retry_after_invalid_string_returns_none() -> None:
+    assert _parse_retry_after_seconds("not-a-number") is None
+
+
+def test_parse_retry_after_negative_returns_none() -> None:
+    assert _parse_retry_after_seconds("-5") is None

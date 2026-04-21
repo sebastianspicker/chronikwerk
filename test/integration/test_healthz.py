@@ -222,3 +222,22 @@ def test_check_redis_connection_failure(tmp_path) -> None:
     assert redis_check["available"] is False
     assert "reason" in redis_check
     assert len(redis_check["reason"]) > 0
+
+
+def test_deep_healthz_redis_failure_reports_degraded_when_storage_is_healthy(tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"redis_url": "redis://localhost:6379/0"}},
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    mock_redis = AsyncMock(return_value={"available": False, "reason": "connection refused"})
+    with patch("zammad_pdf_archiver.app.routes.healthz._check_redis", mock_redis):
+        response = client.get("/healthz", params={"deep": "true"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["redis"] == {"available": False, "reason": "connection refused"}
+    assert body["checks"]["storage"]["writable"] is True

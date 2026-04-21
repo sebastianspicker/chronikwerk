@@ -174,7 +174,7 @@ def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
     assert calls == []
 
 
-def test_ingest_batch_accepts_multiple_payloads(tmp_path, monkeypatch) -> None:
+def test_ingest_batch_uses_per_item_delivery_ids_when_header_present(tmp_path, monkeypatch) -> None:
     calls: list[tuple[str | None, dict[str, Any], Settings]] = []
 
     async def _stub_process_ticket(
@@ -194,12 +194,13 @@ def test_ingest_batch_accepts_multiple_payloads(tmp_path, monkeypatch) -> None:
             {"ticket": {"id": 111}},
             {"ticket_id": 222},
         ],
+        headers={"X-Zammad-Delivery": "delivery-batch-xyz"},
     )
     assert response.status_code == 202
     assert response.json() == {"status": "accepted", "count": 2}
     assert len(calls) == 2
-    assert calls[0][0] is None
-    assert calls[1][0] is None
+    assert calls[0][0] == "delivery-batch-xyz:0"
+    assert calls[1][0] == "delivery-batch-xyz:1"
     assert calls[0][1]["ticket"]["id"] == 111
     assert calls[1][1]["ticket_id"] == 222
 
@@ -358,7 +359,9 @@ def test_ingest_uses_redis_queue_dispatch_when_enabled(tmp_path, monkeypatch) ->
     app = create_app(
         _test_settings(
             str(tmp_path),
-            overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost/0"}},
+            overrides={
+                "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost/0"}
+            },
         )
     )
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
@@ -381,6 +384,7 @@ def test_ingest_uses_redis_queue_dispatch_when_enabled(tmp_path, monkeypatch) ->
 
 def test_batch_ingest_exceeds_max_size(tmp_path, monkeypatch) -> None:
     """POST /ingest/batch with 101 items returns 422 (batch too large)."""
+
     async def _stub_process_ticket(
         delivery_id: str | None, payload: dict[str, Any], settings: Settings
     ) -> None:

@@ -377,3 +377,288 @@ def test_claim_stale_pending_reassigns_messages() -> None:
 
     assert fake.claim_ids == ["1-0", "3-0"]
     assert messages == [("1-0", {"payload_json": "{}"}), ("3-0", {"payload_json": "{}"})]
+
+
+# ---------------------------------------------------------------------------
+# New tests for missing coverage
+# ---------------------------------------------------------------------------
+
+
+def test_get_redis_raises_when_no_redis_url(tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "inprocess", "redis_url": ""}},
+    )
+    with pytest.raises(RuntimeError, match="redis_url"):
+        redis_queue.asyncio.run(redis_queue._get_redis(settings))  # noqa: SLF001
+
+
+def test_handle_envelope_retry_exhausted_moves_to_dlq(monkeypatch, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "workflow": {
+                "execution_backend": "redis_queue",
+                "redis_url": "redis://localhost:6379",
+                "queue_retry_max_attempts": 2,
+                "queue_dlq_stream": "zammad:jobs:dlq",
+            }
+        },
+    )
+    fake = _FakeRedis()
+
+    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
+        return ProcessTicketResult(status="failed_transient", ticket_id=42, message="transient")
+
+    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
+    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+        message_id="1-0",
+        payload={"ticket_id": 42},
+        delivery_id="dlv1",
+        attempt=2,  # >= max_attempts=2
+        not_before_ts=0.0,
+        last_error=None,
+    )
+    redis_queue.asyncio.run(
+        redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
+    )
+    dlq_entries = [e for stream, e in fake.xadds if "dlq" in stream]
+    assert any(e.get("reason") == "retry_exhausted" for e in dlq_entries)
+
+
+def test_handle_envelope_success_acks_and_increments(monkeypatch, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+    fake = _FakeRedis()
+
+    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
+        return ProcessTicketResult(status="ok", ticket_id=99, message="done")
+
+    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
+    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+        message_id="5-0",
+        payload={"ticket_id": 99},
+        delivery_id="d-5",
+        attempt=0,
+        not_before_ts=0.0,
+        last_error=None,
+    )
+    result = redis_queue.asyncio.run(
+        redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
+    )
+    assert result == 0.0
+    assert fake.acked == [(settings.workflow.queue_stream, settings.workflow.queue_group, "5-0")]
+    assert fake.deleted[-1] == (settings.workflow.queue_stream, "5-0")
+
+
+def test_process_messages_exception_is_caught(monkeypatch, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+    fake = _FakeRedis()
+
+    async def _failing_handle_envelope(redis, *, settings, envelope):  # noqa: ANN001, ARG001
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(redis_queue, "_handle_envelope", _failing_handle_envelope)  # noqa: SLF001
+
+    messages = [
+        (
+            "1-0",
+            {
+                "payload_json": '{"ticket_id": 1}',
+                "delivery_id": "d1",
+                "attempt": "0",
+                "not_before_ts": "0.0",
+            },
+        )
+    ]
+    result = redis_queue.asyncio.run(
+        redis_queue._process_messages(fake, settings=settings, messages=messages)  # noqa: SLF001
+    )
+    assert result is None
+
+
+def test_stop_worker_no_task_returns_immediately(tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+    manager = redis_queue.RedisQueueManager()
+    redis_queue.asyncio.run(manager.stop_worker(settings))  # should not raise
+
+
+def test_stop_worker_timeout_cancels_task(tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+
+    async def run() -> None:
+        manager = redis_queue.RedisQueueManager()
+        key = redis_queue._worker_key(settings)  # noqa: SLF001
+        stop_event = redis_queue.asyncio.Event()
+
+        async def _forever() -> None:
+            await redis_queue.asyncio.sleep(999)
+
+        task = redis_queue.asyncio.create_task(_forever())
+        manager._tasks[key] = task  # noqa: SLF001
+        manager._stops[key] = stop_event  # noqa: SLF001
+
+        try:
+            await manager.stop_worker(settings, timeout=0.01)
+        except BaseException:  # noqa: BLE001
+            pass
+        assert task.done()
+
+    redis_queue.asyncio.run(run())
+
+
+def test_stop_all_with_no_workers() -> None:
+    async def run() -> None:
+        manager = redis_queue.RedisQueueManager()
+        await manager.stop_all()
+
+    redis_queue.asyncio.run(run())
+
+
+def test_stop_all_cancels_slow_tasks() -> None:
+    async def run() -> None:
+        manager = redis_queue.RedisQueueManager()
+        key = "test-key"
+        stop_event = redis_queue.asyncio.Event()
+
+        async def _forever() -> None:
+            await redis_queue.asyncio.sleep(999)
+
+        task = redis_queue.asyncio.create_task(_forever())
+        manager._tasks[key] = task  # noqa: SLF001
+        manager._stops[key] = stop_event  # noqa: SLF001
+
+        try:
+            await manager.stop_all(timeout=0.01)
+        except BaseException:  # noqa: BLE001
+            pass
+        assert task.done()
+
+    redis_queue.asyncio.run(run())
+
+
+def test_stop_all_key_without_stop_event() -> None:
+    """stop_all skips signalling for keys that have a task but no stop event."""
+
+    async def run() -> None:
+        manager = redis_queue.RedisQueueManager()
+        key = "orphan-key"
+
+        async def _quick() -> None:
+            pass
+
+        task = redis_queue.asyncio.create_task(_quick())
+        manager._tasks[key] = task  # noqa: SLF001
+        # intentionally no entry in _stops
+
+        await manager.stop_all()
+        assert not manager._tasks  # noqa: SLF001
+
+    redis_queue.asyncio.run(run())
+
+
+def test_drain_dlq_empty_returns_zero(monkeypatch, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+    fake = _FakeRedis()
+
+    async def fake_get_redis(_settings):  # noqa: ANN001
+        return fake
+
+    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
+    result = redis_queue.asyncio.run(redis_queue.drain_dlq(settings))
+    assert result == 0
+
+
+def test_replay_dlq_empty_returns_zero(monkeypatch, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+    fake = _FakeRedis()
+
+    async def fake_get_redis(_settings):  # noqa: ANN001
+        return fake
+
+    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
+    result = redis_queue.asyncio.run(redis_queue.replay_dlq(settings))
+    assert result == 0
+
+
+def test_replay_dlq_invalid_json_skips_entry(monkeypatch, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+    fake = _FakeRedis(
+        dlq_entries=[("1-0", {"payload_json": "not-valid-json"})]
+    )
+
+    async def fake_get_redis(_settings):  # noqa: ANN001
+        return fake
+
+    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
+    result = redis_queue.asyncio.run(redis_queue.replay_dlq(settings))
+    assert result == 0
+
+
+def test_worker_loop_one_iteration(monkeypatch, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "workflow": {
+                "execution_backend": "redis_queue",
+                "redis_url": "redis://localhost:6379",
+                "queue_read_block_ms": 100,
+            }
+        },
+    )
+
+    class _FullFakeRedis:
+        async def ping(self) -> None:
+            pass
+
+    fake_redis = _FullFakeRedis()
+
+    async def fake_get_redis(_settings):  # noqa: ANN001
+        return fake_redis
+
+    async def fake_ensure_group(redis, *, stream, group) -> None:  # noqa: ANN001, ARG001
+        pass
+
+    async def fake_claim(*args, **kwargs):  # noqa: ANN002, ANN003
+        return []
+
+    async def fake_read_own(*args, **kwargs):  # noqa: ANN002, ANN003
+        return []
+
+    async def fake_process(redis, *, settings, messages):  # noqa: ANN001, ARG001
+        return None
+
+    stop_event = redis_queue.asyncio.Event()
+
+    async def fake_read_new(*args, **kwargs):  # noqa: ANN002, ANN003
+        stop_event.set()
+        return []
+
+    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
+    monkeypatch.setattr(redis_queue, "_ensure_group", fake_ensure_group)
+    monkeypatch.setattr(redis_queue, "_claim_stale_pending", fake_claim)
+    monkeypatch.setattr(redis_queue, "_read_own_pending", fake_read_own)
+    monkeypatch.setattr(redis_queue, "_read_new_messages", fake_read_new)
+    monkeypatch.setattr(redis_queue, "_process_messages", fake_process)
+
+    redis_queue.asyncio.run(redis_queue._worker_loop(settings, stop_event))  # noqa: SLF001

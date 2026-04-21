@@ -102,6 +102,131 @@ def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -
     assert audit["signing"]["cert_fingerprint"] == expected
 
 
+def test_build_audit_record_cert_fingerprint_from_pem_cert_path(tmp_path: Path) -> None:
+    """_extract_cert_fingerprint reads a PEM cert from pades.cert_path."""
+    from datetime import timedelta
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    from zammad_pdf_archiver.config.settings import SigningPadesSettings
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PEM Signer")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(private_key=key, algorithm=hashes.SHA256())
+    )
+    pem_bytes = cert.public_bytes(serialization.Encoding.PEM)
+    cert_path = tmp_path / "signer.pem"
+    cert_path.write_bytes(pem_bytes)
+
+    signing = SigningSettings.model_construct(
+        enabled=True,
+        pfx_path=None,
+        pfx_password=None,
+        pades=SigningPadesSettings(cert_path=cert_path),
+    )
+    audit = build_audit_record(
+        ticket_id=2,
+        ticket_number="T2",
+        title="pem test",
+        created_at=datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC),
+        storage_path="/mnt/archive/T2.pdf",
+        sha256="ff",
+        signing_settings=signing,
+    )
+
+    expected_fp = cert.fingerprint(hashes.SHA256()).hex()
+    assert audit["signing"]["cert_fingerprint"] == expected_fp
+
+
+def test_build_audit_record_cert_fingerprint_from_der_cert_path(tmp_path: Path) -> None:
+    """_extract_cert_fingerprint reads a DER cert from pades.cert_path."""
+    from datetime import timedelta
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    from zammad_pdf_archiver.config.settings import SigningPadesSettings
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "DER Signer")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(private_key=key, algorithm=hashes.SHA256())
+    )
+    der_bytes = cert.public_bytes(serialization.Encoding.DER)
+    cert_path = tmp_path / "signer.der"
+    cert_path.write_bytes(der_bytes)
+
+    signing = SigningSettings.model_construct(
+        enabled=True,
+        pfx_path=None,
+        pfx_password=None,
+        pades=SigningPadesSettings(cert_path=cert_path),
+    )
+    audit = build_audit_record(
+        ticket_id=3,
+        ticket_number="T3",
+        title="der test",
+        created_at=datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC),
+        storage_path="/mnt/archive/T3.pdf",
+        sha256="ee",
+        signing_settings=signing,
+    )
+
+    expected_fp = cert.fingerprint(hashes.SHA256()).hex()
+    assert audit["signing"]["cert_fingerprint"] == expected_fp
+
+
+def test_build_audit_record_cert_fingerprint_returns_none_on_error(tmp_path: Path) -> None:
+    """_extract_cert_fingerprint returns None when cert_path is invalid."""
+    from zammad_pdf_archiver.config.settings import SigningPadesSettings
+
+    bad_cert = tmp_path / "bad.pem"
+    bad_cert.write_bytes(b"not a valid certificate")
+
+    signing = SigningSettings.model_construct(
+        enabled=True,
+        pfx_path=None,
+        pfx_password=None,
+        pades=SigningPadesSettings(cert_path=bad_cert),
+    )
+    audit = build_audit_record(
+        ticket_id=4,
+        ticket_number="T4",
+        title="error test",
+        created_at=datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC),
+        storage_path="/mnt/archive/T4.pdf",
+        sha256="cc",
+        signing_settings=signing,
+    )
+
+    # When fingerprint extraction fails, the key should be absent or None.
+    assert audit["signing"].get("cert_fingerprint") is None
+
+
 def test_build_audit_record_includes_attachments_when_provided() -> None:
     """Optional attachment list is added to audit record (PRD §8.2)."""
     audit = build_audit_record(

@@ -29,8 +29,13 @@ def test_cmd_validate_config_success(monkeypatch, capsys, tmp_path) -> None:
 def test_cmd_validate_config_file_not_found(monkeypatch, capsys) -> None:
     """validate-config exits 2 when config file is missing."""
 
+    issue = ConfigValidationIssue(
+        path="CONFIG_PATH",
+        message="Config file not found: config/missing.yaml",
+    )
+
     def _raise():
-        raise FileNotFoundError("config/missing.yaml")
+        raise ConfigValidationError([issue])
 
     monkeypatch.setattr(cli, "load_settings", _raise)
 

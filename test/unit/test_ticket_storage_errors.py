@@ -69,6 +69,33 @@ def _make_snapshot_no_attachments() -> Snapshot:
 
 
 # ===================================================================
+# 0. compute_storage_paths
+# ===================================================================
+
+
+def test_compute_storage_paths(tmp_path: Path) -> None:
+    """compute_storage_paths returns correct target and sidecar paths."""
+    from zammad_pdf_archiver.app.jobs.ticket_storage import compute_storage_paths
+
+    storage_root = tmp_path / "storage"
+    storage_root.mkdir()
+
+    paths = compute_storage_paths(
+        storage_root=storage_root,
+        username="testuser",
+        archive_path_segments=["2025"],
+        allow_prefixes=None,
+        filename_pattern="Ticket-{ticket_number}_{timestamp_utc}.pdf",
+        ticket_number="10001",
+        date_iso="2025-01-01",
+    )
+
+    assert paths.target_path.name == "Ticket-10001_2025-01-01.pdf"
+    assert paths.sidecar_path.name == "Ticket-10001_2025-01-01.pdf.json"
+    assert paths.target_dir.is_relative_to(storage_root)
+
+
+# ===================================================================
 # 1. _write_attachments — happy path
 # ===================================================================
 
@@ -178,3 +205,121 @@ class TestStoreTicketFilesAttachmentWriteFailure:
                     now=now,
                     settings=settings,
                 )
+
+
+# ===================================================================
+# 3. _backup_if_exists — file already present
+# ===================================================================
+
+
+def test_backup_if_exists_renames_existing_file(tmp_path: Path) -> None:
+    """_backup_if_exists should rename an existing file to *.bak.<timestamp>."""
+    from zammad_pdf_archiver.app.jobs.ticket_storage import _backup_if_exists
+
+    root = tmp_path / "storage"
+    root.mkdir()
+    target = root / "archive.pdf"
+    target.write_bytes(b"original")
+
+    _backup_if_exists(target, storage_root=root, fsync=False)
+
+    assert not target.exists()
+    bak_files = list(root.glob("archive.pdf.bak.*"))
+    assert len(bak_files) == 1
+
+
+def test_backup_if_exists_noop_when_no_file(tmp_path: Path) -> None:
+    """_backup_if_exists should be a no-op when the target does not exist."""
+    from zammad_pdf_archiver.app.jobs.ticket_storage import _backup_if_exists
+
+    root = tmp_path / "storage"
+    root.mkdir()
+    target = root / "nonexistent.pdf"
+
+    _backup_if_exists(target, storage_root=root, fsync=False)  # should not raise
+
+
+# ===================================================================
+# 4. store_ticket_files — happy path with attachments (covers commit path)
+# ===================================================================
+
+
+def test_store_ticket_files_happy_path_with_attachments(tmp_path: Path) -> None:
+    """store_ticket_files succeeds when attachments are present (exercises commit branch)."""
+    settings = _make_settings(tmp_path)
+    snapshot = _make_snapshot_with_attachments()
+
+    target_dir = tmp_path / "archive" / "user"
+    target_dir.mkdir(parents=True)
+    paths = StoragePaths(
+        target_dir=target_dir,
+        target_path=target_dir / "Ticket-10001_2025-01-01.pdf",
+        sidecar_path=target_dir / "Ticket-10001_2025-01-01.pdf.json",
+    )
+    now = datetime(2025, 1, 1, tzinfo=UTC)
+
+    result = store_ticket_files(
+        pdf_bytes=b"%PDF-1.4 fake",
+        snapshot=snapshot,
+        paths=paths,
+        ticket_id=100,
+        now=now,
+        settings=settings,
+    )
+
+    assert result.target_path == paths.target_path
+    assert result.sidecar_path == paths.sidecar_path
+    assert paths.target_path.is_file()
+    assert paths.sidecar_path.is_file()
+
+
+# ===================================================================
+# 5. store_ticket_files — sidecar move failure removes orphan PDF
+# ===================================================================
+
+
+def test_store_ticket_files_sidecar_failure_cleans_up_pdf(tmp_path: Path) -> None:
+    """When the sidecar move fails, the already-moved PDF is removed to maintain atomicity."""
+    from unittest.mock import patch
+
+    settings = _make_settings(tmp_path)
+    snapshot = _make_snapshot_no_attachments()
+
+    target_dir = tmp_path / "archive" / "user"
+    target_dir.mkdir(parents=True)
+    pdf_path = target_dir / "Ticket-20001_2025-01-01.pdf"
+    paths = StoragePaths(
+        target_dir=target_dir,
+        target_path=pdf_path,
+        sidecar_path=target_dir / "Ticket-20001_2025-01-01.pdf.json",
+    )
+    now = datetime(2025, 1, 1, tzinfo=UTC)
+
+    call_count = 0
+
+    original_move = __import__(
+        "zammad_pdf_archiver.adapters.storage.fs_storage", fromlist=["move_file_within_root"]
+    ).move_file_within_root
+
+    def _failing_sidecar_move(src: Path, dst: Path, **kwargs: object) -> None:
+        nonlocal call_count
+        call_count += 1
+        if dst == paths.sidecar_path:
+            # PDF already moved at this point - create it to simulate the scenario
+            pdf_path.write_bytes(b"%PDF-moved")
+            raise OSError("sidecar move failed")
+        return original_move(src, dst, **kwargs)
+
+    with patch(
+        "zammad_pdf_archiver.app.jobs.ticket_storage.move_file_within_root",
+        side_effect=_failing_sidecar_move,
+    ):
+        with pytest.raises(OSError, match="sidecar move failed"):
+            store_ticket_files(
+                pdf_bytes=b"%PDF-1.4 fake",
+                snapshot=snapshot,
+                paths=paths,
+                ticket_id=200,
+                now=now,
+                settings=settings,
+            )

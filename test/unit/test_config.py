@@ -562,3 +562,100 @@ def test_metrics_without_token_is_allowed() -> None:
     )
 
     validate_settings(settings)
+
+
+# ---------------------------------------------------------------------------
+# _is_local_upstream_host coverage
+# ---------------------------------------------------------------------------
+
+
+def test_is_local_upstream_host_localhost_returns_true() -> None:
+    from zammad_pdf_archiver.config.validate import _is_local_upstream_host
+
+    assert _is_local_upstream_host("localhost") is True
+    assert _is_local_upstream_host("localhost.localdomain") is True
+    assert _is_local_upstream_host("127.0.0.1") is True
+    assert _is_local_upstream_host("::1") is True
+
+
+def test_is_local_upstream_host_external_returns_false() -> None:
+    from zammad_pdf_archiver.config.validate import _is_local_upstream_host
+
+    assert _is_local_upstream_host("example.com") is False
+    assert _is_local_upstream_host("192.168.1.1") is False
+
+
+# ---------------------------------------------------------------------------
+# delivery_id_ttl_seconds validation
+# ---------------------------------------------------------------------------
+
+
+def test_require_delivery_id_with_zero_ttl_raises(tmp_path: Path) -> None:
+    """require_delivery_id=True with delivery_id_ttl_seconds=0 → ConfigValidationError."""
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://z.example.local", "api_token": "t"},
+            "storage": {"root": str(tmp_path)},
+            "hardening": {
+                "webhook": {
+                    "allow_unsigned": True,
+                    "allow_unsigned_when_no_secret": True,
+                    "require_delivery_id": True,
+                }
+            },
+            "workflow": {"delivery_id_ttl_seconds": 0},
+        }
+    )
+    with pytest.raises(ConfigValidationError, match="delivery_id_ttl_seconds"):
+        validate_settings(settings)
+
+
+# ---------------------------------------------------------------------------
+# TSA transport validation
+# ---------------------------------------------------------------------------
+
+
+def test_plain_http_tsa_url_raises_without_allow_insecure(tmp_path: Path) -> None:
+    """Plain HTTP TSA URL without allow_insecure_http → ConfigValidationError."""
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://z.example.local", "api_token": "t"},
+            "storage": {"root": str(tmp_path)},
+            "hardening": {
+                "webhook": {"allow_unsigned": True, "allow_unsigned_when_no_secret": True},
+                "transport": {"allow_insecure_http": False},
+            },
+            "signing": {
+                "enabled": False,
+                "timestamp": {
+                    "enabled": True,
+                    "rfc3161": {"tsa_url": "http://tsa.example.com/rfc3161"},
+                },
+            },
+        }
+    )
+    with pytest.raises(ConfigValidationError, match="Plain HTTP TSA URL"):
+        validate_settings(settings)
+
+
+def test_localhost_tsa_url_raises_without_allow_local(tmp_path: Path) -> None:
+    """TSA URL pointing to localhost → ConfigValidationError when allow_local_upstreams=False."""
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://z.example.local", "api_token": "t"},
+            "storage": {"root": str(tmp_path)},
+            "hardening": {
+                "webhook": {"allow_unsigned": True, "allow_unsigned_when_no_secret": True},
+                "transport": {"allow_local_upstreams": False, "allow_insecure_http": True},
+            },
+            "signing": {
+                "enabled": False,
+                "timestamp": {
+                    "enabled": True,
+                    "rfc3161": {"tsa_url": "http://localhost/rfc3161"},
+                },
+            },
+        }
+    )
+    with pytest.raises(ConfigValidationError, match="local.*upstream|tsa_url"):
+        validate_settings(settings)

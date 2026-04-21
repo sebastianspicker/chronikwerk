@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -95,3 +96,63 @@ class TestFormatDatetime:
         assert "2025" in result
         assert "06" in result
         assert "15" in result
+
+
+# ---------------------------------------------------------------------------
+# _loader_for coverage
+# ---------------------------------------------------------------------------
+
+
+class TestLoaderFor:
+    def test_none_root_uses_package_loader(self) -> None:
+        from jinja2 import PackageLoader
+
+        from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
+
+        loader = _loader_for("default", None)
+        assert isinstance(loader, PackageLoader)
+
+    def test_nonexistent_root_raises(self, tmp_path: Path) -> None:
+        from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
+
+        missing = tmp_path / "does_not_exist"
+        with pytest.raises(FileNotFoundError, match="Template root folder not found"):
+            _loader_for("default", missing)
+
+    def test_missing_template_subdir_raises(self, tmp_path: Path) -> None:
+        from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
+
+        # Root exists but template subdir does not
+        with pytest.raises(FileNotFoundError, match="Template folder not found"):
+            _loader_for("no_such_variant", tmp_path)
+
+    def test_valid_root_and_subdir_uses_filesystem_loader(self, tmp_path: Path) -> None:
+        from jinja2 import FileSystemLoader
+
+        from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
+
+        (tmp_path / "default").mkdir()
+        loader = _loader_for("default", tmp_path)
+        assert isinstance(loader, FileSystemLoader)
+
+
+# ---------------------------------------------------------------------------
+# format_dt_local filter via rendered template context
+# ---------------------------------------------------------------------------
+
+
+class TestFormatDtLocalFilter:
+    def test_format_dt_local_uses_context_timezone(self) -> None:
+        """format_dt_local picks up pdf_timezone from the Jinja2 context."""
+        from datetime import UTC, datetime
+
+        from zammad_pdf_archiver.adapters.pdf.template_engine import _env_for
+
+        env = _env_for("default", templates_root=None)
+        template = env.from_string(
+            "{{ dt | format_dt_local }}",
+        )
+        dt = datetime(2025, 6, 15, 12, 0, tzinfo=UTC)
+        rendered = template.render(dt=dt, pdf_timezone="Europe/Berlin")
+        # Berlin is UTC+2 in summer
+        assert "2025-06-15 14:00" in rendered

@@ -48,7 +48,8 @@ def test_env_aliases_from_env_example_are_honored(
     monkeypatch.setenv("SIGNING_REASON", "Unit Test Reason")
     monkeypatch.setenv("SIGNING_LOCATION", "Unit Test Location")
 
-    settings = load_settings()
+    with pytest.warns(DeprecationWarning, match="TEMPLATE_VARIANT|RENDER_LOCALE|RENDER_TIMEZONE"):
+        settings = load_settings()
     assert settings.pdf.template_variant == "minimal"
     assert settings.pdf.locale == "en_US"
     assert settings.pdf.timezone == "UTC"

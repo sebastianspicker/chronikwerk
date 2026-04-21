@@ -86,7 +86,7 @@ def _write_test_pfx(path: Path, password: str) -> None:
 
 
 def _tsa_response_for_request(req_bytes: bytes) -> bytes:
-    from asn1crypto import keys, tsp, x509  # type: ignore[import-untyped]
+    from asn1crypto import keys, tsp, x509
     from cryptography import x509 as pyca_x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa

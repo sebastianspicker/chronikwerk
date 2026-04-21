@@ -127,9 +127,7 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
         assert response.json() == {"status": "accepted", "ticket_id": 123}
 
         date_iso = fixed_now.date().isoformat()
-        expected_path = (
-            tmp_path / "agent" / "A" / "B" / "C" / f"Ticket-20240123_{date_iso}.pdf"
-        )
+        expected_path = tmp_path / "agent" / "A" / "B" / "C" / f"Ticket-20240123_{date_iso}.pdf"
         assert expected_path.exists()
         assert expected_path.read_bytes().startswith(b"%PDF")
 
@@ -229,3 +227,104 @@ def test_e2e_smoke_ingest_duplicate_delivery_id_is_idempotent(tmp_path, monkeypa
         assert ticket_route.call_count == 1
         assert tags_route.call_count == 1
         assert article_route.call_count == 1
+
+
+def test_e2e_smoke_batch_duplicate_delivery_id_is_idempotent(tmp_path, monkeypatch) -> None:
+    secret = "test-secret"
+    monkeypatch.setenv("ZAMMAD_BASE_URL", "https://zammad.example.local")
+    monkeypatch.setenv("ZAMMAD_API_TOKEN", "test-token")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WEBHOOK_HMAC_SECRET", secret)
+
+    settings = load_settings()
+    app = create_app(settings)
+
+    ticket_stores.reset_for_tests()
+
+    payloads = [
+        {"ticket": {"id": 101}, "user": {"login": "agent-101"}},
+        {"ticket": {"id": 202}, "user": {"login": "agent-202"}},
+    ]
+    body = json.dumps(payloads, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    with respx.mock(assert_all_called=True) as zammad:
+        ticket_101 = zammad.get("https://zammad.example.local/api/v1/tickets/101").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": 101,
+                    "number": "20240101",
+                    "owner": {"login": "agent-101"},
+                    "updated_by": {"login": "fallback-agent-101"},
+                    "preferences": {
+                        "custom_fields": {"archive_user_mode": "owner", "archive_path": ["A"]}
+                    },
+                },
+            )
+        )
+        ticket_202 = zammad.get("https://zammad.example.local/api/v1/tickets/202").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": 202,
+                    "number": "20240102",
+                    "owner": {"login": "agent-202"},
+                    "updated_by": {"login": "fallback-agent-202"},
+                    "preferences": {
+                        "custom_fields": {"archive_user_mode": "owner", "archive_path": ["B"]}
+                    },
+                },
+            )
+        )
+        tags_101 = zammad.get(
+            "https://zammad.example.local/api/v1/tags",
+            params={"object": "Ticket", "o_id": "101"},
+        ).mock(return_value=httpx.Response(200, json=[TRIGGER_TAG]))
+        tags_202 = zammad.get(
+            "https://zammad.example.local/api/v1/tags",
+            params={"object": "Ticket", "o_id": "202"},
+        ).mock(return_value=httpx.Response(200, json=[TRIGGER_TAG]))
+        articles_101 = zammad.get(
+            "https://zammad.example.local/api/v1/ticket_articles/by_ticket/101"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        articles_202 = zammad.get(
+            "https://zammad.example.local/api/v1/ticket_articles/by_ticket/202"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        zammad.post("https://zammad.example.local/api/v1/tags/remove").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        zammad.post("https://zammad.example.local/api/v1/tags/add").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        article_route = zammad.post("https://zammad.example.local/api/v1/ticket_articles").mock(
+            return_value=httpx.Response(200, json={"id": 999})
+        )
+
+        async def _call_ingest_batch(delivery_id: str) -> httpx.Response:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.post(
+                    "/ingest/batch",
+                    content=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Hub-Signature": _sign(body, secret),
+                        "X-Zammad-Delivery": delivery_id,
+                    },
+                )
+
+        first = asyncio.run(_call_ingest_batch("delivery-smoke-batch-1"))
+        second = asyncio.run(_call_ingest_batch("delivery-smoke-batch-1"))
+
+        assert first.status_code == 202
+        assert second.status_code == 202
+        assert first.json() == {"status": "accepted", "count": 2}
+        assert second.json() == {"status": "accepted", "count": 2}
+
+        assert ticket_101.call_count == 1
+        assert ticket_202.call_count == 1
+        assert tags_101.call_count == 1
+        assert tags_202.call_count == 1
+        assert articles_101.call_count == 1
+        assert articles_202.call_count == 1
+        assert article_route.call_count == 2
