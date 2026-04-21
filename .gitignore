@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage_html/
+coverage.xml
+htmlcov/
+
+# Virtualenvs / tooling
+.venv/
+venv/
+pip-wheel-metadata/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+.envrc
+.python-version
+.direnv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local runtime artifacts
+*.log
+coverage.json
+
+# IDEs
+.idea/
+.vscode/
+.cursor/
+.kilo/
+
+# AI development artifacts (local use)
+audit/
+docs/audit/
+plans/
+progress.md
+.claude/
+.codex/
+.agents/
+.github/codex/
+.github/workflows/codex.yml
+AGENTS.md
+AUDIT.md
+HARNESS_PRINCIPLES.md
+code_review.md
+docs/agent/
+docs/source-audit/
+scripts/topology_inventory.sh

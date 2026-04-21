@@ -1,24 +1,34 @@
-# Bug_Report
+---
+name: Bug report
+about: Report a bug or unexpected behavior
+title: "[Bug] "
+labels: bug
+assignees: ""
+---
 
+## Description
 
-## Context
-This page keeps the current bug_report guidance concise after earlier rough notes.
+<!-- What happened? What did you expect? -->
 
-## Usage
-- Rewrote the the main flow explanation around the maintained behavior.
+## Steps to reproduce
 
-- Earlier scratch notes were compressed into the current guidance.
+1.
+2.
+3.
 
-## Notes Folded Into Current Flow
-Early notes are still uneven and may be folded into clearer sections later.
+## Environment
 
-## Development
-- Kept the the main flow verification command reproducible.
+- OS:
+- Python:
+- Deployment: (docker/systemd/other)
 
-- Earlier scratch notes were compressed into the current guidance.
+## Logs / Output
 
-## Caveats
-Some setup details still depend on the current local workflow and may change again.
+```text
+paste relevant logs here
+```
 
-## Revision Notes
-Latest pass: narrow-the-remaining-spl during maintenance burst work (forced-narrow-the-remaining-spl-6).
+## Additional context
+
+<!-- Anything else that helps -->
+

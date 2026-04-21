@@ -1,36 +1,172 @@
-# 01 Architecture
+# 01 - Architecture
 
+`zammad-pdf-archiver` is a single API service with two execution modes:
+- in-process background worker (`workflow.execution_backend=inprocess`)
+- Redis queue worker (`workflow.execution_backend=redis_queue`)
 
-## Context
-This page keeps the current 01 architecture guidance concise after earlier rough notes.
+## Runtime Flow
 
-## Usage
-- Merged scattered ci guidance into the docs.
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Z as Zammad
+  participant I as POST /ingest
+  participant D as Dispatcher
+  participant R as Redis Queue
+  participant W as Queue Worker
+  participant J as process_ticket
+  participant ZA as Zammad Adapter
+  participant SN as Snapshot Builder
+  participant PDF as PDF Renderer
+  participant SIG as Signing Adapter
+  participant TSA as TSA (RFC3161)
+  participant ST as Storage Adapter
+  participant H as History Stream
 
-- Earlier scratch notes were compressed into the current guidance.
+  Z->>I: Webhook JSON (+ optional headers)
+  I-->>Z: 202 Accepted
+  I->>D: dispatch job
 
-## Notes Folded Into Current Flow
-Early notes are still uneven and may be folded into clearer sections later.
+  alt workflow.execution_backend == inprocess
+    D->>J: schedule background task
+  else workflow.execution_backend == redis_queue
+    D->>R: enqueue (XADD)
+    W->>R: consume (XREADGROUP)
+    W->>J: process queued ticket
+  end
 
-## Caveats
-Some setup details still depend on the current local workflow and may change again.
+  J->>ZA: get_ticket + list_tags
+  J->>ZA: apply_processing tags
+  J->>ZA: list_articles
+  J->>SN: build snapshot
+  J->>PDF: render_pdf(snapshot)
 
-## Features
-- Shaped signing into a usable first pass during core-build-out work.
+  alt signing.enabled
+    J->>SIG: sign_pdf(pdf_bytes)
+    opt signing.timestamp.enabled
+      SIG->>TSA: request timestamp token
+      TSA-->>SIG: timestamp response
+    end
+  end
 
-- Earlier scratch notes were compressed into the current guidance.
+  J->>ST: write PDF
+  J->>ST: write audit sidecar JSON
+  J->>ZA: create internal note
+  J->>ZA: apply_done/apply_error tags
+  opt history enabled
+    J->>H: record processed/failed/skipped event
+  end
+```
 
-## Development
-- Kept the the main flow verification command reproducible.
+## Tag State Machine
 
-- Earlier scratch notes were compressed into the current guidance.
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> SignRequested: Trigger tag added (default pdf:sign)
+  SignRequested --> Processing: apply_processing()
+  Processing --> Signed: Success -> apply_done()
+  Processing --> ErrorTransient: Transient failure -> apply_error(keep_trigger=true)
+  Processing --> ErrorPermanent: Permanent failure -> apply_error(keep_trigger=false)
+  ErrorTransient --> SignRequested: Retry by ticket update/macro
+  ErrorPermanent --> SignRequested: Operator fix plus re-add trigger
+```
 
-## Reliability
-- Closed a concrete ci edge found during maintenance work.
+State details:
+- `pdf:signed` is terminal for automatic processing (`should_process` returns false).
+- `pdf:processing` is best-effort cleaned in both success and error paths.
+- `pdf:error` is set on failures.
 
-- Earlier scratch notes were compressed into the current guidance.
+## Module Boundaries
 
-## Architecture
-- Moved payload behind a narrower boundary.
+### Ingress and app wiring
 
-- Earlier scratch notes were compressed into the current guidance.
+Code:
+- `src/zammad_pdf_archiver/app/server.py`
+- `src/zammad_pdf_archiver/app/routes/ingest.py`
+- `src/zammad_pdf_archiver/app/middleware/`
+- `src/zammad_pdf_archiver/app/jobs/process_ticket.py`
+- `src/zammad_pdf_archiver/app/jobs/async_retry.py`
+
+Responsibilities:
+- expose HTTP endpoints
+- enforce ingress hardening (HMAC, body size, rate limit, request ID)
+- schedule asynchronous background processing
+- provide exponential-backoff retry helper for transient failures
+
+### Zammad adapter
+
+Code:
+- `src/zammad_pdf_archiver/adapters/zammad/client.py`
+- `src/zammad_pdf_archiver/adapters/zammad/models.py`
+
+Responsibilities:
+- fetch ticket, tags, and articles
+- create internal ticket notes
+- add/remove tags
+
+### Snapshot adapter
+
+Code:
+- `src/zammad_pdf_archiver/adapters/snapshot/build_snapshot.py`
+- `src/zammad_pdf_archiver/domain/snapshot_models.py`
+
+Responsibilities:
+- normalize Zammad payloads into stable snapshot schema
+- sanitize article HTML
+- derive fallback text and sort articles deterministically
+
+### PDF adapter
+
+Code:
+- `src/zammad_pdf_archiver/adapters/pdf/template_engine.py`
+- `src/zammad_pdf_archiver/adapters/pdf/render_pdf.py`
+- templates: `src/zammad_pdf_archiver/templates/`
+
+Responsibilities:
+- render HTML from snapshot
+- collect template CSS
+- generate PDF bytes via WeasyPrint
+
+### Signing adapter
+
+Code:
+- `src/zammad_pdf_archiver/adapters/signing/sign_pdf.py`
+- `src/zammad_pdf_archiver/adapters/signing/tsa_rfc3161.py`
+
+Responsibilities:
+- load PKCS#12/PFX signing material
+- apply PAdES signature
+- optionally call TSA and embed timestamp token
+
+### Storage adapter
+
+Code:
+- `src/zammad_pdf_archiver/adapters/storage/layout.py`
+- `src/zammad_pdf_archiver/adapters/storage/fs_storage.py`
+- `src/zammad_pdf_archiver/domain/path_policy.py`
+
+Responsibilities:
+- build deterministic target paths/filenames
+- enforce path policy and root containment
+- write files atomically or direct (configurable)
+
+### Domain layer
+
+Code:
+- `src/zammad_pdf_archiver/domain/state_machine.py`
+- `src/zammad_pdf_archiver/domain/errors.py`
+- `src/zammad_pdf_archiver/domain/idempotency.py`
+- `src/zammad_pdf_archiver/domain/audit.py`
+
+Responsibilities:
+- tag transition policy
+- transient vs permanent error semantics
+- in-memory TTL dedupe by delivery ID
+- audit sidecar checksum and metadata model
+
+## Related ADRs
+
+- [`adr/0001-tag-vs-fields.md`](adr/0001-tag-vs-fields.md)
+- [`adr/0002-storage-approach.md`](adr/0002-storage-approach.md)
+- [`adr/0003-signature-timestamp.md`](adr/0003-signature-timestamp.md)
