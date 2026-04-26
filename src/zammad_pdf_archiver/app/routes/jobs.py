@@ -1,37 +1,23 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
-
 from fastapi import APIRouter, HTTPException, Request
 
 from zammad_pdf_archiver.app.jobs.history import read_history
 from zammad_pdf_archiver.app.jobs.redis_queue import drain_dlq, get_queue_stats
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down
 from zammad_pdf_archiver.app.jobs.ticket_stores import is_ticket_in_flight
-from zammad_pdf_archiver.app.responses import settings_or_503
+from zammad_pdf_archiver.app.responses import clamp_limit, settings_or_503, verify_bearer_auth
 from zammad_pdf_archiver.config.settings import Settings
 
 router = APIRouter()
 
 
 def _verify_ops_bearer(request: Request, settings: Settings) -> None:
-    token = settings.admin.bearer_token
-    expected = token.get_secret_value().encode("utf-8") if token is not None else b""
-    if not expected:
-        raise HTTPException(status_code=503, detail="ops_token_not_configured")
-
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or len(auth) < 8:
-        raise HTTPException(status_code=401, detail="unauthorized")
-
-    provided = auth[7:].strip().encode("utf-8")
-    # Hash both tokens with SHA-256 before comparing to normalise length and
-    # prevent timing-based length leaks.
-    expected_hash = hashlib.sha256(expected).digest()
-    provided_hash = hashlib.sha256(provided).digest()
-    if not hmac.compare_digest(expected_hash, provided_hash):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    verify_bearer_auth(
+        request,
+        settings,
+        missing_token_detail="ops_token_not_configured",
+    )
 
 
 @router.get("/jobs/queue/stats")
@@ -61,7 +47,7 @@ async def get_job_history(
     settings = settings_or_503(request)
     _verify_ops_bearer(request, settings)
 
-    bounded_limit = max(1, min(int(limit), 5000))
+    bounded_limit = clamp_limit(limit, default=100, minimum=1, maximum=5000)
     try:
         items = await read_history(
             settings,
@@ -78,7 +64,7 @@ async def drain_queue_dlq(request: Request, limit: int = 100) -> dict[str, int |
     """Drain up to limit messages from the dead-letter queue back into the main queue."""
     settings = settings_or_503(request)
     _verify_ops_bearer(request, settings)
-    bounded_limit = max(1, min(int(limit), 1000))
+    bounded_limit = clamp_limit(limit, default=100, minimum=1, maximum=1000)
     try:
         drained = await drain_dlq(settings, limit=bounded_limit)
     except Exception as exc:

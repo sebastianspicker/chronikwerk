@@ -14,7 +14,7 @@ from zammad_pdf_archiver.app.jobs.redis_queue import (
     get_queue_stats,
     replay_dlq,
 )
-from zammad_pdf_archiver.app.responses import settings_or_503, verify_bearer_auth
+from zammad_pdf_archiver.app.responses import clamp_limit, settings_or_503, verify_bearer_auth
 from zammad_pdf_archiver.app.routes.ingest import _dispatch_ticket
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import (
@@ -68,8 +68,12 @@ async def admin_history(
     settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
-    resolved_limit = limit if limit is not None else settings.admin.history_limit
-    bounded_limit = max(1, min(int(resolved_limit), 5000))
+    bounded_limit = clamp_limit(
+        limit,
+        default=settings.admin.history_limit,
+        minimum=1,
+        maximum=5000,
+    )
     try:
         items = await read_history(settings, limit=bounded_limit, ticket_id=ticket_id)
     except Exception as exc:
@@ -109,7 +113,7 @@ async def admin_drain_dlq(request: Request, limit: int = 100) -> dict[str, objec
     settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
-    bounded_limit = max(1, min(int(limit), 1000))
+    bounded_limit = clamp_limit(limit, default=100, minimum=1, maximum=1000)
     try:
         drained = await drain_dlq(settings, limit=bounded_limit)
     except Exception as exc:
@@ -126,7 +130,7 @@ async def admin_replay_dlq(
     settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
 
-    bounded_limit = max(1, min(int(limit), 1000))
+    bounded_limit = clamp_limit(limit, default=10, minimum=1, maximum=1000)
     try:
         replayed = await replay_dlq(settings, limit=bounded_limit)
     except Exception as exc:

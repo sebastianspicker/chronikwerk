@@ -9,7 +9,12 @@ from fastapi import Request
 from starlette.datastructures import State
 
 from test.support.settings_factory import make_settings
-from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_auth
+from zammad_pdf_archiver.app.responses import (
+    api_error,
+    clamp_limit,
+    settings_or_503,
+    verify_bearer_auth,
+)
 from zammad_pdf_archiver.config.settings import Settings
 
 
@@ -100,6 +105,15 @@ def test_verify_bearer_auth_raises_401_for_wrong_token(tmp_path) -> None:
     assert exc_info.value.status_code == 401  # type: ignore[attr-defined]
 
 
+def test_verify_bearer_auth_uses_custom_missing_token_detail(tmp_path) -> None:
+    s = make_settings(str(tmp_path))
+    req = _make_authed_request("any-token")
+    with pytest.raises(Exception) as exc_info:
+        verify_bearer_auth(req, s, missing_token_detail="ops_token_not_configured")
+    assert exc_info.value.status_code == 503  # type: ignore[attr-defined]
+    assert exc_info.value.detail == "ops_token_not_configured"  # type: ignore[attr-defined]
+
+
 def test_verify_bearer_auth_succeeds_for_correct_token(tmp_path) -> None:
     s = make_settings(str(tmp_path), overrides={"admin": {"bearer_token": "my-secret"}})
     req = _make_authed_request("my-secret")
@@ -135,3 +149,9 @@ def test_api_error_with_request_id() -> None:
 def test_api_error_with_custom_headers() -> None:
     resp = api_error(401, "Unauthorized", headers={"WWW-Authenticate": "Bearer"})
     assert resp.headers.get("WWW-Authenticate") == "Bearer"
+
+
+def test_clamp_limit_defaults_and_bounds() -> None:
+    assert clamp_limit(None, default=25, minimum=1, maximum=50) == 25
+    assert clamp_limit(0, default=25, minimum=1, maximum=50) == 1
+    assert clamp_limit(1000, default=25, minimum=1, maximum=50) == 50

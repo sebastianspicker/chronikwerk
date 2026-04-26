@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Protocol
 
@@ -19,6 +19,8 @@ from zammad_pdf_archiver.domain.snapshot_models import (
     TicketMeta,
 )
 from zammad_pdf_archiver.domain.ticket_utils import ticket_custom_fields
+
+UTC = timezone.utc
 
 _HTML_TAG_HINT_RE = re.compile(
     r"<\s*(?:p|div|br|span|a|ul|ol|li|pre|code|blockquote|table|tr|td|th|strong|em|b|i|u)\b",

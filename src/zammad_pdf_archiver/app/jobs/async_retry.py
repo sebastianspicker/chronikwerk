@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
+T = TypeVar("T")
 
-async def async_retry[T](
+async def async_retry(
     coro_factory: Callable[[], Awaitable[T]],
     *,
     max_retries: int = 3,

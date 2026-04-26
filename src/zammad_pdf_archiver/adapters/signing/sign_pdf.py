@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 # Interval (seconds) between certificate expiry re-checks for cached signers.
 _CERT_CHECK_INTERVAL_SECONDS = 3600
+UTC = timezone.utc
 
 
 @dataclass(frozen=True)

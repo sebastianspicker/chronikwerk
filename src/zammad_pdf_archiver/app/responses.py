@@ -19,7 +19,12 @@ def settings_or_503(request: Request) -> Settings:
     return settings
 
 
-def verify_bearer_auth(request: Request, settings: Settings) -> None:
+def verify_bearer_auth(
+    request: Request,
+    settings: Settings,
+    *,
+    missing_token_detail: str = "admin_token_not_configured",
+) -> None:
     """Verify ``Authorization: Bearer <token>`` against the admin bearer token.
 
     Raises :class:`~fastapi.HTTPException` (401) when the token is missing or
@@ -28,7 +33,7 @@ def verify_bearer_auth(request: Request, settings: Settings) -> None:
     token = settings.admin.bearer_token
     expected = token.get_secret_value().encode("utf-8") if token is not None else b""
     if not expected:
-        raise HTTPException(status_code=503, detail="admin_token_not_configured")
+        raise HTTPException(status_code=503, detail=missing_token_detail)
 
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer ") or len(auth) < 8:
@@ -41,6 +46,12 @@ def verify_bearer_auth(request: Request, settings: Settings) -> None:
     provided_hash = hashlib.sha256(provided).digest()
     if not hmac.compare_digest(expected_hash, provided_hash):
         raise HTTPException(status_code=401, detail="unauthorized")
+
+
+def clamp_limit(value: int | None, *, default: int, minimum: int, maximum: int) -> int:
+    """Clamp optional integer limits to a safe inclusive range."""
+    resolved = default if value is None else int(value)
+    return max(minimum, min(resolved, maximum))
 
 
 def api_error(

@@ -38,6 +38,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
+validate_credentials_file() {
+  local path="$1"
+  if [[ ! -f "${path}" ]]; then
+    echo "ERROR: credentials file not found: ${path}" >&2
+    exit 1
+  fi
+
+  # Require owner-only permissions for credentials (e.g. 600/400).
+  local mode
+  mode="$(stat -c '%a' "${path}")"
+  local group_other="${mode: -2}"
+  if [[ "${group_other}" != "00" ]]; then
+    echo "ERROR: credentials file permissions too broad (${mode}); require *00 (e.g. 600)." >&2
+    exit 1
+  fi
+}
+
 if [[ -z "${creds_file}" ]]; then
   : "${CIFS_USERNAME:?Missing CIFS_USERNAME (or set CIFS_CREDENTIALS_FILE)}"
   : "${CIFS_PASSWORD:?Missing CIFS_PASSWORD (or set CIFS_CREDENTIALS_FILE)}"
@@ -54,6 +71,8 @@ if [[ -z "${creds_file}" ]]; then
   } > "${tmp_creds}"
   creds_file="${tmp_creds}"
 fi
+
+validate_credentials_file "${creds_file}"
 
 opts="credentials=${creds_file},uid=${uid},gid=${gid},iocharset=utf8,file_mode=0640,dir_mode=0750,noserverino"
 

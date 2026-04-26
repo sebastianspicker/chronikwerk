@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from importlib import metadata
 
 import structlog
@@ -11,6 +11,7 @@ from zammad_pdf_archiver.config.settings import Settings
 
 router = APIRouter()
 log = structlog.get_logger(__name__)
+UTC = timezone.utc
 
 
 def _service_version() -> str:
