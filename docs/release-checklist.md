@@ -103,8 +103,9 @@ ARCHIVER_ENV_FILE=.env.example STORAGE_ROOT=/tmp/zammad-archive docker compose d
 Perform these checks in the target runtime environment before promoting the release:
 
 - `/metrics` exposure:
-  - If metrics are enabled (`METRICS_ENABLED=true`), verify `GET /metrics` is reachable only from approved internal sources (reverse proxy ACL, firewall, or private network).
-  - Verify unauthorised external access is blocked.
+  - If metrics are enabled (`METRICS_ENABLED=true`), set `METRICS_BEARER_TOKEN`.
+  - Verify `GET /metrics` returns `401` without the bearer token and `200` with it.
+  - Verify unauthorised external access is blocked by reverse proxy ACL, firewall, or private network policy where possible.
 - CIFS/SMB write safety:
   - Confirm the service identity (UID/GID `10001` by default in container image) can create directories and files under `STORAGE_ROOT`.
   - Confirm `STORAGE_ROOT` is mounted read-write and has sufficient free space/quota.

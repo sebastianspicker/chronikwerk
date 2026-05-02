@@ -28,17 +28,18 @@ This runbook is for deployment, monitoring, troubleshooting, and recovery.
 - `GET /healthz`
   - basic liveness/status payload (optionally omit version/service via `HEALTHZ_OMIT_VERSION`)
 - `GET /metrics`
-  - available only when `observability.metrics_enabled=true`; optional Bearer auth via `METRICS_BEARER_TOKEN`
+  - available only when `observability.metrics_enabled=true`
+  - requires `Authorization: Bearer <METRICS_BEARER_TOKEN>`
 - `GET /admin` and `/admin/api/*`
   - optional admin dashboard/API (`admin.enabled=true`)
-  - `GET /admin` serves the HTML shell without Bearer auth
+  - `GET /admin` requires Bearer auth or HTTP Basic auth; for Basic auth the username is ignored and the password must equal `ADMIN_BEARER_TOKEN`
   - `/admin/api/*` requires Bearer auth
 
 Common ingest error responses:
 - `403` invalid/missing HMAC signature when signed mode is active
 - `503` no webhook auth configured and unsigned mode disabled
 - `400` missing delivery header when `require_delivery_id=true`
-- `413` request exceeds configured body size
+- `413` request exceeds configured body size; over-limit `Content-Length` is rejected before body reads, and streaming bodies stop at the first over-limit chunk
 - `422` invalid body (e.g. missing or invalid ticket id)
 - `429` request rate-limited
 
@@ -236,7 +237,7 @@ For local development, to remove untracked and ignored files (e.g. `.mypy_cache`
 External risks operators should be aware of:
 
 - **CIFS/network storage:** Durability and consistency depend on the share and network; consider fsync and atomic write settings.
-- **`/metrics` access:** When enabled, protect with `METRICS_BEARER_TOKEN` or network policy; otherwise metrics may be exposed.
+- **`/metrics` access:** When enabled, set `METRICS_BEARER_TOKEN` and still restrict access by network policy where possible.
 - **TSA certificate trust:** RFC3161 timestamp validation depends on TSA and CA trust configuration.
 
 Before deployment, run through [Release and deployment checklist](release-checklist.md) for safety checks.

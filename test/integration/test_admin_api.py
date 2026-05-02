@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 from fastapi.testclient import TestClient
 
 from test.support.settings_factory import make_settings
@@ -45,6 +47,40 @@ def test_admin_api_rejects_invalid_bearer_token(tmp_path) -> None:
         headers={"Authorization": "Bearer wrong-token"},
     )
     assert response.status_code == 401
+
+
+def test_admin_dashboard_requires_auth(tmp_path) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get("/admin")
+
+    assert response.status_code == 401
+    assert response.headers.get("WWW-Authenticate") == (
+        'Basic realm="zammad-pdf-archiver-admin"'
+    )
+
+
+def test_admin_dashboard_accepts_valid_basic_auth(tmp_path) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+    client = TestClient(app)
+    credentials = base64.b64encode(b"ignored:admin-token").decode("ascii")
+
+    response = client.get("/admin", headers={"Authorization": f"Basic {credentials}"})
+
+    assert response.status_code == 200
+    content_type = response.headers.get("content-type", "")
+    assert "text/html" in content_type
+    assert "<html" in response.text.lower() or "<!doctype" in response.text.lower()
+
+
+def test_admin_dashboard_accepts_valid_bearer_auth(tmp_path) -> None:
+    app = create_app(_admin_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get("/admin", headers={"Authorization": "Bearer admin-token"})
+
+    assert response.status_code == 200
 
 
 def test_admin_api_accepts_valid_token_and_returns_stats(tmp_path, monkeypatch) -> None:
@@ -294,11 +330,11 @@ def test_admin_disabled_returns_404(tmp_path) -> None:
 
 
 def test_admin_dashboard_returns_html(tmp_path) -> None:
-    """GET /admin returns 200 with HTML content-type when admin is enabled."""
+    """GET /admin returns 200 with HTML content-type when authenticated."""
     app = create_app(_admin_settings(str(tmp_path)))
     client = TestClient(app)
 
-    response = client.get("/admin")
+    response = client.get("/admin", headers={"Authorization": "Bearer admin-token"})
     assert response.status_code == 200
     content_type = response.headers.get("content-type", "")
     assert "text/html" in content_type

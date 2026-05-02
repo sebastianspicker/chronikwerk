@@ -41,7 +41,7 @@ Example payload:
 - `400` `{"detail":"missing_delivery_id"}`
 - `403` `{"detail":"forbidden"}`
 - `422` invalid body (e.g. missing or invalid ticket id)
-- `413` `{"detail":"request_too_large"}`
+- `413` `{"detail":"request_too_large","code":"request_too_large"}`; requests with an over-limit `Content-Length` are rejected before the application reads the body, and streaming requests stop at the first chunk that exceeds the limit.
 - `429` `{"detail":"rate_limited"}`
 - `503` `{"detail":"webhook_auth_not_configured"}`
 
@@ -79,7 +79,7 @@ When `X-Zammad-Delivery` is present, the service derives per-item delivery IDs a
 - `400` `{"detail":"missing_delivery_id"}`
 - `403` `{"detail":"forbidden"}`
 - `422` invalid body (e.g. missing or invalid ticket id in an item), or batch exceeds 100 items (`{"detail":"batch_too_large"}`)
-- `413` `{"detail":"request_too_large"}`
+- `413` `{"detail":"request_too_large","code":"request_too_large"}`; requests with an over-limit `Content-Length` are rejected before the application reads the body, and streaming requests stop at the first chunk that exceeds the limit.
 - `429` `{"detail":"rate_limited"}`
 - `503` `{"detail":"webhook_auth_not_configured"}` or `{"detail":"shutting_down"}`
 
@@ -293,14 +293,18 @@ Notes:
 
 ### `GET /metrics`
 
-Only mounted when `observability.metrics_enabled=true`. When `METRICS_BEARER_TOKEN` is set, requests must include `Authorization: Bearer <token>`; otherwise `401` is returned.
+Only mounted when `observability.metrics_enabled=true`. `METRICS_BEARER_TOKEN` is required whenever metrics are enabled. Requests must include `Authorization: Bearer <token>`; missing or invalid tokens return `401`. A metrics route constructed without a configured token returns `503` instead of exposing metrics.
 
 Response format:
 - Prometheus text exposition (`text/plain`)
 
 ### `GET /admin`
 
-Returns a lightweight admin dashboard HTML shell.
+Returns a lightweight admin dashboard HTML shell. Requires `admin.enabled=true` and either:
+- `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
+- HTTP Basic auth; the username is ignored and the password must equal `ADMIN_BEARER_TOKEN`
+
+Missing or invalid dashboard auth returns `401` with `WWW-Authenticate: Basic realm="zammad-pdf-archiver-admin"`.
 
 ### Admin API (`/admin/api/*`)
 

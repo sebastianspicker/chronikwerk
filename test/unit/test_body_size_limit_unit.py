@@ -165,6 +165,35 @@ def test_middleware_rejects_oversized_content_length(tmp_path) -> None:
     )
 
 
+def test_middleware_does_not_drain_oversized_content_length(tmp_path) -> None:
+    overrides = {"hardening": {"body_size_limit": {"max_bytes": 100}}}
+    settings = make_settings(str(tmp_path), overrides=overrides)
+
+    responses: list[Any] = []
+    receive_calls = 0
+
+    async def _fake_send(msg: Any) -> None:
+        responses.append(msg)
+
+    async def _large_receive() -> dict[str, Any]:
+        nonlocal receive_calls
+        receive_calls += 1
+        if receive_calls > 1:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.request", "body": b"x" * 1024, "more_body": True}
+
+    middleware = BodySizeLimitMiddleware(app=_inner_app, settings=settings)
+    scope = _make_scope("/ingest", content_length=1024 * 1024)
+
+    asyncio.run(middleware(scope, _large_receive, _fake_send))
+
+    assert receive_calls == 0
+    assert any(
+        msg.get("type") == "http.response.start" and msg.get("status") == 413
+        for msg in responses
+    )
+
+
 def test_middleware_rejects_streaming_body_over_limit(tmp_path) -> None:
     overrides = {"hardening": {"body_size_limit": {"max_bytes": 10}}}
     settings = make_settings(str(tmp_path), overrides=overrides)
@@ -191,6 +220,39 @@ def test_middleware_rejects_streaming_body_over_limit(tmp_path) -> None:
 
     asyncio.run(middleware(scope, _oversized_receive, _fake_send))
 
+    assert any(
+        msg.get("type") == "http.response.start" and msg.get("status") == 413
+        for msg in responses
+    )
+
+
+def test_middleware_does_not_drain_after_streaming_body_over_limit(tmp_path) -> None:
+    overrides = {"hardening": {"body_size_limit": {"max_bytes": 10}}}
+    settings = make_settings(str(tmp_path), overrides=overrides)
+
+    responses: list[Any] = []
+
+    async def _fake_send(msg: Any) -> None:
+        responses.append(msg)
+
+    call_count = 0
+
+    async def _oversized_receive() -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {"type": "http.request", "body": b"x" * 20, "more_body": True}
+        return {"type": "http.request", "body": b"y" * 20, "more_body": False}
+
+    async def _inner(scope: Any, receive: Any, send: Any) -> None:
+        await receive()
+
+    middleware = BodySizeLimitMiddleware(app=_inner, settings=settings)
+    scope = _make_scope("/ingest")
+
+    asyncio.run(middleware(scope, _oversized_receive, _fake_send))
+
+    assert call_count == 1
     assert any(
         msg.get("type") == "http.response.start" and msg.get("status") == 413
         for msg in responses

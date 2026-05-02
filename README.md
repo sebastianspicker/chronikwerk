@@ -40,10 +40,10 @@ This repository provides:
   - `GET /jobs/queue/stats` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `GET /jobs/history` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `POST /jobs/queue/dlq/drain` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
-  - `GET /admin` (when `admin.enabled=true`)
-  - `GET /admin/api/*` (when `admin.enabled=true`)
+  - `GET /admin` (requires Bearer or HTTP Basic auth via `ADMIN_BEARER_TOKEN`)
+  - `GET /admin/api/*` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `GET /healthz`
-  - `GET /metrics` (when enabled)
+  - `GET /metrics` (requires Bearer token via `METRICS_BEARER_TOKEN` when enabled)
 - End-to-end ticket processing:
   1. receive webhook
   2. fetch ticket + tags + articles from Zammad
@@ -241,10 +241,10 @@ make demo-down     # tear down
 | `GET` | `/jobs/queue/stats` | Bearer | Queue statistics |
 | `GET` | `/jobs/history` | Bearer | Processing history |
 | `POST` | `/jobs/queue/dlq/drain` | Bearer | Drain dead-letter queue |
-| `GET` | `/admin` | -- | Admin dashboard (optional) |
+| `GET` | `/admin` | Bearer or Basic | Admin dashboard (optional) |
 | `GET` | `/admin/api/*` | Bearer | Admin API (optional) |
 | `GET` | `/healthz` | -- | Health check (supports `?deep=true`) |
-| `GET` | `/metrics` | Optional Bearer | Prometheus metrics (optional) |
+| `GET` | `/metrics` | Bearer | Prometheus metrics (optional) |
 
 See [`docs/api.md`](docs/api.md) for full request/response details.
 
