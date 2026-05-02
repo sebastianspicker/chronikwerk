@@ -161,7 +161,7 @@ Processing is asynchronous (202 Accepted); path and security are configurable an
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | F25 | Expose `GET /healthz` with status, service name, version, time; optional omit of version/service via `HEALTHZ_OMIT_VERSION`. | P0 |
-| F26 | Optionally expose `GET /metrics` (Prometheus) when `observability.metrics_enabled=true`; optional Bearer auth via `METRICS_BEARER_TOKEN`. | P1 |
+| F26 | Optionally expose `GET /metrics` (Prometheus) when `observability.metrics_enabled=true`; enabled metrics require Bearer auth via `METRICS_BEARER_TOKEN`. | P1 |
 | F27 | Emit structured logs with request_id, ticket_id, delivery_id; redact secrets in logs and error notes. | P0 |
 
 ---

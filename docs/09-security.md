@@ -8,7 +8,7 @@ This document summarizes the service threat model and implemented mitigations.
 flowchart LR
   Z["Zammad"] -->|"Webhook"| I["Ingress: /ingest"]
   OP["Operators"] -->|"Config + secrets"| I
-  A["Admin / Ops clients"] -->|"Bearer auth: /admin/api/* + /jobs/{ticket_id} + /jobs/queue/stats + /jobs/history + /jobs/queue/dlq/drain"| I
+  A["Admin / Ops clients"] -->|"Bearer/Basic auth: /admin; Bearer auth: /admin/api/* + /jobs/{ticket_id} + /jobs/queue/stats + /jobs/history + /jobs/queue/dlq/drain"| I
   I -->|"API token"| ZA["Zammad API"]
   I -->|"Queue + history streams"| R["Redis (optional)"]
   I -->|"Write output"| FS["Archive filesystem"]
@@ -62,6 +62,8 @@ Redaction is best-effort (known keys and common patterns). Operators should avoi
 
 Mitigations:
 - body size limit middleware (`MAX_BODY_BYTES`)
+- over-limit bodies return `413` immediately; the application does not drain
+  attacker-controlled bytes after the limit is known or exceeded
 - token-bucket rate limiting (`RATE_LIMIT_*`)
 
 ### Threat: unsafe upstream transport settings
@@ -101,7 +103,7 @@ Operational controls required:
 - configure and rotate webhook HMAC secret
 - keep body/rate limits enabled and tuned
 - require delivery IDs when available
-- protect `/metrics` access when enabled (set `METRICS_BEARER_TOKEN` or restrict by network)
+- protect `/metrics` access when enabled (set `METRICS_BEARER_TOKEN` and restrict by network where possible)
 - when behind a reverse proxy, set `RATE_LIMIT_CLIENT_KEY_HEADER=X-Forwarded-For` so rate limits apply per client IP (trust proxy to set the header)
 - secure and monitor storage mount permissions
 - keep signing/TSA credentials in secrets management, not source-controlled files

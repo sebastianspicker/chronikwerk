@@ -82,7 +82,7 @@ observability:
   log_level: "INFO"             # LOG_LEVEL
   log_format: null               # LOG_FORMAT (json|human)
   json_logs: false               # LOG_JSON (legacy)
-  metrics_enabled: false         # METRICS_ENABLED
+  metrics_enabled: false         # METRICS_ENABLED; requires metrics_bearer_token when true
   metrics_bearer_token: null     # METRICS_BEARER_TOKEN
   healthz_omit_version: false    # HEALTHZ_OMIT_VERSION
 

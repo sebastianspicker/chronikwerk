@@ -89,6 +89,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_tsa_transport(settings, transport=transport, issues=issues)
     _validate_redis_url(settings, issues)
     _validate_admin_settings(settings, issues)
+    _validate_metrics_settings(settings, issues)
     _warn_multi_worker_without_redis(settings)
 
     if issues:
@@ -241,6 +242,22 @@ def _validate_admin_settings(settings: Settings, issues: list[ConfigValidationIs
                     path="admin.bearer_token",
                     message=(
                         "admin.enabled=true requires admin.bearer_token (set ADMIN_BEARER_TOKEN)."
+                    ),
+                )
+            )
+
+
+def _validate_metrics_settings(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    if settings.observability.metrics_enabled:
+        token = settings.observability.metrics_bearer_token
+        token_value = token.get_secret_value().strip() if token is not None else ""
+        if not token_value:
+            issues.append(
+                ConfigValidationIssue(
+                    path="observability.metrics_bearer_token",
+                    message=(
+                        "observability.metrics_enabled=true requires "
+                        "observability.metrics_bearer_token (set METRICS_BEARER_TOKEN)."
                     ),
                 )
             )
