@@ -34,12 +34,19 @@ class ZammadSettings(_BaseSection):
 
 
 class WorkflowSettings(_BaseSection):
+    """Processing coordination knobs.
+
+    `execution_backend` decides where accepted jobs run. `idempotency_backend`
+    decides where delivery-ID claims live. Multi-process Redis queue deployments
+    normally need both set to Redis-backed values.
+    """
+
     trigger_tag: str = "pdf:sign"
     require_tag: bool = True
     acknowledge_on_success: bool = True
     delivery_id_ttl_seconds: int = Field(default=3600, ge=0)
     execution_backend: str = "inprocess"  # inprocess|redis_queue
-    # Durable idempotency (PRD §8.2): "memory" (default) or "redis"
+    # Delivery-ID dedupe store: "memory" (default, process-local) or "redis".
     idempotency_backend: str = "memory"
     redis_url: str | None = None
     queue_stream: str = "zammad:jobs"
@@ -77,7 +84,7 @@ class WorkflowSettings(_BaseSection):
 class FieldsSettings(_BaseSection):
     archive_path: str = "archive_path"
     archive_user_mode: str = "archive_user_mode"
-    # Custom field name for archive_user in fixed mode (Bug #1/#6).
+    # Custom field read only when archive_user_mode is "fixed".
     archive_user: str = "archive_user"
 
 
@@ -87,7 +94,7 @@ class StoragePathPolicySanitizeSettings(_BaseSection):
 
 
 class StoragePathPolicySettings(_BaseSection):
-    # None = no allowlist (all paths allowed); [] = no path allowed (Bug #30).
+    # None = no allowlist (all paths allowed); [] = explicit deny-all policy.
     allow_prefixes: list[str] | None = None
     sanitize: StoragePathPolicySanitizeSettings = Field(
         default_factory=StoragePathPolicySanitizeSettings
@@ -113,9 +120,9 @@ class PdfSettings(_BaseSection):
     locale: str = "de_DE"
     timezone: str = "Europe/Berlin"
     max_articles: int = Field(default=250, ge=0)
-    # fail = raise when over limit; cap_and_continue = truncate and warn (Bug #4/#10).
+    # fail = reject over-limit tickets; cap_and_continue = truncate article list and warn.
     article_limit_mode: str = "fail"
-    # Optional attachment binary inclusion (PRD §8.2)
+    # Optional binary attachment export. Default PDF snapshots keep attachment metadata only.
     include_attachment_binary: bool = False
     max_attachment_bytes_per_file: int = Field(default=10 * 1024 * 1024, ge=0)  # 10 MiB
     max_total_attachment_bytes: int = Field(default=50 * 1024 * 1024, ge=0)  # 50 MiB
@@ -210,7 +217,7 @@ class BodySizeLimitSettings(_BaseSection):
 
 class WebhookHardeningSettings(_BaseSection):
     # When true and a secret is set: requests without signature are allowed (e.g. for testing).
-    # When no secret: allow_unsigned is ignored; use allow_unsigned_when_no_secret (Bug #12).
+    # When no secret: allow_unsigned is ignored; use allow_unsigned_when_no_secret.
     allow_unsigned: bool = False
     # Explicit opt-in to allow /ingest when no HMAC secret is configured (insecure; dev/local only).
     allow_unsigned_when_no_secret: bool = False

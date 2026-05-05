@@ -104,9 +104,9 @@ In `inprocess` mode operators can re-trigger by saving the ticket or reapplying 
   - `idempotency_backend=memory`: in-memory only (restart clears dedupe history)
   - `idempotency_backend=redis`: durable across process restarts and multi-worker deployments
 
-### Workflow and idempotency limitations (Bugs #32–#37)
+### Known workflow and idempotency limitations
 
-Operators should be aware of the following; some are documented only, others are inherent to the current design:
+Operators should be aware of the following; some are documented-only recovery constraints, others are inherent to the current tag-driven design:
 
 - **In-flight lock is process-local:** Per-ticket concurrency is in-memory. Multiple processes or replicas can process the same ticket concurrently; use a single instance or accept possible tag races when scaling out.
 - **should_process:** The gate skips when the “done” tag (`pdf:signed`) is present. Tickets in `pdf:processing` or `pdf:error` can be considered eligible depending on `require_tag` and tag state; a second worker may start if in-flight state is not shared.

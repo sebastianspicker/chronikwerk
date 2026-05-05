@@ -26,7 +26,7 @@ def _test_settings(storage_root: str) -> Settings:
 def test_audit_sidecar_written_next_to_pdf_and_matches_sha256(tmp_path, monkeypatch) -> None:
     settings = _test_settings(str(tmp_path))
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {
         "ticket": {"id": 123},

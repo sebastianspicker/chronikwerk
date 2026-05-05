@@ -51,7 +51,7 @@ def success_note_html(
 
 
 def error_code_and_hint(exc: BaseException) -> tuple[str, str]:
-    """Return (stable_code, short_hint) for permanent failures (Bug #7)."""
+    """Return (stable_code, short_hint) for permanent failures."""
     msg = str(exc).strip().lower()
     if "archive_path" in msg and "missing" in msg:
         return ("missing_archive_path", "Set custom_fields.archive_path on the ticket.")

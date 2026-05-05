@@ -82,7 +82,7 @@ def _expected_pdf_path(
 def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = _settings(str(tmp_path), fsync=False)
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     def _fsync(_: int) -> None:
         raise AssertionError("os.fsync must not be called when storage.fsync=false")
@@ -105,7 +105,7 @@ def test_storage_atomic_write_can_be_disabled(
 ) -> None:
     settings = _settings(str(tmp_path), atomic_write=False)
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     import tempfile
 

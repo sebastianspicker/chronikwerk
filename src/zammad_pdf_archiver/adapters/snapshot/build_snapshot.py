@@ -35,7 +35,7 @@ class ZammadSnapshotClient(Protocol):
 
 
 class ZammadAttachmentClient(Protocol):
-    """Client that can fetch attachment binary (for optional PRD §8.2 inclusion)."""
+    """Client that can fetch attachment binaries for optional filesystem export."""
 
     async def get_attachment_content(
         self, ticket_id: int, article_id: int, attachment_id: int
@@ -115,8 +115,7 @@ def _article_to_snapshot(article: ZammadArticle) -> Article:
             if body_html:
                 body_text = _strip_html_to_text(body_html)
             else:
-                # Bug #P1-1: If sanitization failed, never fallback to raw body as HTML.
-                # Fallback to stripped text from raw for body_text; body_html stays empty.
+                # Sanitizer failure is fail-closed for HTML; keep only a text fallback.
                 body_text = _strip_html_to_text(body_raw)
         else:
             body_text = body_raw
@@ -204,7 +203,7 @@ async def enrich_attachment_content(
     max_attachment_bytes_per_file: int,
     max_total_attachment_bytes: int,
 ) -> Snapshot:
-    """Fetch attachment binaries and set AttachmentMeta.content when within limits (PRD §8.2)."""
+    """Fetch attachment binaries and set AttachmentMeta.content when within configured limits."""
     if not _attachment_enrichment_enabled(
         include_attachment_binary=include_attachment_binary,
         max_total_attachment_bytes=max_total_attachment_bytes,

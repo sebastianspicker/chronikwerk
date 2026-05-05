@@ -83,7 +83,7 @@ signing:
 ```bash
 SIGNING_ENABLED=true
 SIGNING_PFX_PATH=/run/secrets/signing.pfx
-SIGNING_PFX_PASSWORD=change-me
+SIGNING_PFX_PASSWORD=CHANGE_ME
 TSA_ENABLED=true
 TSA_URL=https://tsa.example.local/rfc3161
 TSA_TIMEOUT_SECONDS=10
