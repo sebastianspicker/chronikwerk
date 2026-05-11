@@ -121,14 +121,14 @@ def test_api_error_basic() -> None:
 def test_api_error_with_hint() -> None:
     resp = api_error(400, "Bad input", hint="Check the payload")
     import json
-    body = json.loads(resp.body)
+    body = json.loads(bytes(resp.body))
     assert "Check the payload" in body.get("hint", "")
 
 
 def test_api_error_with_request_id() -> None:
     resp = api_error(422, "Validation failed", request_id="req-abc")
     import json
-    body = json.loads(resp.body)
+    body = json.loads(bytes(resp.body))
     assert body.get("request_id") == "req-abc"
 
 
