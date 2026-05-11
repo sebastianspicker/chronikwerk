@@ -6,7 +6,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
@@ -274,19 +274,30 @@ class TestGetQueueStats:
 
 
 # ===========================================================================
-# 5. RedisQueueManager
+# 5. Public worker lifecycle
 # ===========================================================================
 
 
-class TestRedisQueueManager:
-    def test_start_worker_creates_task(self, monkeypatch, tmp_path) -> None:
+class TestPublicWorkerLifecycle:
+    def test_start_queue_worker_returns_none_for_inprocess(self, tmp_path) -> None:
+        settings = make_settings(
+            str(tmp_path),
+            overrides={"workflow": {"execution_backend": "inprocess"}},
+        )
+
+        async def _run() -> None:
+            redis_queue._worker_task = None  # noqa: SLF001
+            redis_queue._worker_stop_event = None  # noqa: SLF001
+            assert await redis_queue.start_queue_worker(settings) is None
+
+        asyncio.run(_run())
+
+    def test_start_queue_worker_creates_task(self, monkeypatch, tmp_path) -> None:
         settings = _make_redis_settings(tmp_path)
 
-        sentinel_task = MagicMock(spec=asyncio.Task)
-        sentinel_task.done.return_value = False
-
         async def _run() -> asyncio.Task[None] | None:
-            mgr = redis_queue.RedisQueueManager()
+            redis_queue._worker_task = None  # noqa: SLF001
+            redis_queue._worker_stop_event = None  # noqa: SLF001
 
             async def _fake_worker_loop(s: Any, e: Any) -> None:  # noqa: ARG001
                 try:
@@ -295,20 +306,20 @@ class TestRedisQueueManager:
                     return
 
             monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
-            task = await mgr.start_worker(settings)
+            task = await redis_queue.start_queue_worker(settings)
             assert task is not None
             assert isinstance(task, asyncio.Task)
-            # Cleanup
-            await mgr.stop_all(timeout=0.1)
+            await redis_queue.stop_queue_worker(settings, timeout=0.1)
             return task
 
         asyncio.run(_run())
 
-    def test_stop_worker_signals_stop(self, monkeypatch, tmp_path) -> None:
+    def test_stop_queue_worker_signals_stop(self, monkeypatch, tmp_path) -> None:
         settings = _make_redis_settings(tmp_path)
 
         async def _run() -> None:
-            mgr = redis_queue.RedisQueueManager()
+            redis_queue._worker_task = None  # noqa: SLF001
+            redis_queue._worker_stop_event = None  # noqa: SLF001
             stop_observed = False
 
             async def _fake_worker_loop(s: Any, stop_event: asyncio.Event) -> None:  # noqa: ARG001
@@ -317,17 +328,20 @@ class TestRedisQueueManager:
                 stop_observed = True
 
             monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
-            await mgr.start_worker(settings)
-            await mgr.stop_worker(settings, timeout=2.0)
+            await redis_queue.start_queue_worker(settings)
+            await redis_queue.stop_queue_worker(settings, timeout=2.0)
             assert stop_observed
+            assert redis_queue._worker_task is None  # noqa: SLF001
+            assert redis_queue._worker_stop_event is None  # noqa: SLF001
 
         asyncio.run(_run())
 
-    def test_start_worker_reuses_existing(self, monkeypatch, tmp_path) -> None:
+    def test_start_queue_worker_reuses_existing(self, monkeypatch, tmp_path) -> None:
         settings = _make_redis_settings(tmp_path)
 
         async def _run() -> None:
-            mgr = redis_queue.RedisQueueManager()
+            redis_queue._worker_task = None  # noqa: SLF001
+            redis_queue._worker_stop_event = None  # noqa: SLF001
 
             async def _fake_worker_loop(s: Any, e: Any) -> None:  # noqa: ARG001
                 try:
@@ -336,46 +350,12 @@ class TestRedisQueueManager:
                     return
 
             monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
-            task1 = await mgr.start_worker(settings)
-            task2 = await mgr.start_worker(settings)
+            task1 = await redis_queue.start_queue_worker(settings)
+            task2 = await redis_queue.start_queue_worker(settings)
             assert task1 is task2
-            await mgr.stop_all(timeout=0.1)
+            await redis_queue.stop_queue_worker(settings, timeout=0.1)
 
         asyncio.run(_run())
-
-
-# ===========================================================================
-# 6. Public API wrappers
-# ===========================================================================
-
-
-class TestPublicAPIWrappers:
-    def test_start_queue_worker_delegates(self, monkeypatch, tmp_path) -> None:
-        settings = _make_redis_settings(tmp_path)
-        calls: list[Any] = []
-
-        async def _fake_start(self: Any, s: Any) -> None:  # noqa: ARG001
-            calls.append(s)
-            return None
-
-        monkeypatch.setattr(redis_queue.RedisQueueManager, "start_worker", _fake_start)
-
-        asyncio.run(redis_queue.start_queue_worker(settings))
-        assert len(calls) == 1
-        assert calls[0] is settings
-
-    def test_stop_queue_worker_delegates(self, monkeypatch, tmp_path) -> None:
-        settings = _make_redis_settings(tmp_path)
-        calls: list[Any] = []
-
-        async def _fake_stop(self: Any, s: Any, *, timeout: float = 3.0) -> None:  # noqa: ARG001
-            calls.append((s, timeout))
-
-        monkeypatch.setattr(redis_queue.RedisQueueManager, "stop_worker", _fake_stop)
-
-        asyncio.run(redis_queue.stop_queue_worker(settings, timeout=5.0))
-        assert len(calls) == 1
-        assert calls[0] == (settings, 5.0)
 
     def test_aclose_queue_clients_delegates(self, monkeypatch) -> None:
         calls: list[bool] = []

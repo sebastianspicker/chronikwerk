@@ -56,7 +56,7 @@ def build_target_dir(
     validate_segments([user_safe], max_depth=1)
     validate_segments(segs_safe)
 
-    # Bug #30: empty list means no path allowed (allowlist is explicit).
+    # Empty list is an explicit deny-all policy; None means no allowlist was configured.
     if allow_prefixes is not None and len(allow_prefixes) == 0:
         raise ValueError("allow_prefixes is empty; no archive path allowed")
 
@@ -67,6 +67,8 @@ def build_target_dir(
             validate_segments(prefix_parts)
             allowed.append([_normalize_prefix_segment(part) for part in prefix_parts])
 
+        # Compare allow-prefixes against raw Zammad path segments, not sanitized output, so
+        # similarly sanitized but different source paths cannot bypass the configured policy.
         normalized_segments = [_normalize_prefix_segment(segment) for segment in raw_segments]
         if not any(normalized_segments[: len(prefix)] == prefix for prefix in allowed):
             raise ValueError("archive_path is not allowed by allow_prefixes policy")
@@ -121,7 +123,7 @@ def build_filename_from_pattern(
     if not rendered:
         raise ValueError("filename_pattern produced an empty filename")
 
-    # Bug #31: reject dot segments and enforce single-segment length.
+    # The filename pattern must create a filename only, never a directory or dot segment.
     if rendered in (".", ".."):
         raise ValueError("filename must not be '.' or '..'")
 

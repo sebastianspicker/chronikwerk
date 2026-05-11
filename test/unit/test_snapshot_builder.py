@@ -251,3 +251,42 @@ async def _run_enrich_fills_content() -> None:
 def test_enrich_attachment_content_fills_content_when_enabled() -> None:
     """When include_attachment_binary is True and within limits, content is set (PRD §8.2)."""
     asyncio.run(_run_enrich_fills_content())
+
+
+def test_enrich_attachment_content_stops_fetching_after_total_budget() -> None:
+    """The total attachment budget must bound downloads, not only retained content."""
+
+    class FakeAttachmentClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int]] = []
+
+        async def get_attachment_content(
+            self, ticket_id: int, article_id: int, attachment_id: int
+        ) -> bytes:
+            self.calls.append((ticket_id, article_id, attachment_id))
+            return b"x" * 9
+
+    attachments = [
+        AttachmentMeta(article_id=1, attachment_id=i, filename=f"{i}.bin", size=9)
+        for i in range(1, 6)
+    ]
+    snapshot = Snapshot(
+        ticket=TicketMeta(id=123, number="T1", title="t"),
+        articles=[Article(id=1, attachments=attachments)],
+    )
+    client = FakeAttachmentClient()
+
+    result = asyncio.run(
+        enrich_attachment_content(
+            snapshot,
+            client,
+            include_attachment_binary=True,
+            max_attachment_bytes_per_file=10,
+            max_total_attachment_bytes=10,
+        )
+    )
+
+    kept = [att for article in result.articles for att in article.attachments if att.content]
+    assert len(client.calls) == 1
+    assert len(kept) == 1
+    assert kept[0].attachment_id == 1

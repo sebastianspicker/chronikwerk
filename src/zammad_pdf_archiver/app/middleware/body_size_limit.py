@@ -3,7 +3,6 @@ from __future__ import annotations
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from zammad_pdf_archiver.adapters.http_util import drain_stream
 from zammad_pdf_archiver.app.constants import INGEST_PROTECTED_PATHS
 from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.config.settings import Settings
@@ -76,12 +75,10 @@ class BodySizeLimitMiddleware:
             return
 
         if _content_length_exceeds_limit(scope, self._max_bytes):
-            await drain_stream(receive)
             await _too_large()(scope, receive, send)
             return
 
         try:
             await self.app(scope, _limited_receive_factory(receive, self._max_bytes), send)
         except _BodyTooLarge:
-            await drain_stream(receive)
             await _too_large()(scope, receive, send)

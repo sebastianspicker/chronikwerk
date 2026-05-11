@@ -1,4 +1,4 @@
-"""Safe URL fetcher for WeasyPrint: blocks file:// outside template root (Bug #18)."""
+"""Safe URL fetcher for WeasyPrint: blocks file:// outside the template root."""
 
 from __future__ import annotations
 

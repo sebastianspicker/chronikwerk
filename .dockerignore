@@ -50,6 +50,14 @@ Makefile
 # Pre-commit
 .pre-commit-config.yaml
 
-# Local audit / codex
+# Local automation and audit artifacts
+.agents
 .claude
 .codex
+.kilo
+audit
+plans
+deprecated/local-agent-harness
+docs/agent
+docs/source-audit
+scripts/topology_inventory.sh

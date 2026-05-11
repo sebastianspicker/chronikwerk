@@ -24,7 +24,7 @@ ALLOWED_TEMPLATE_NAMES: frozenset[str] = frozenset({"default", "minimal", "compa
 def validate_template_name(template_name: str) -> str:
     """
     Validate and normalize template name. Raises ValueError if empty, contains path
-    separators/traversal, or is not in allowlist (Bug #38). Returns stripped name.
+    separators/traversal, or is not in the template allowlist. Returns stripped name.
     """
     if not isinstance(template_name, str):
         raise ValueError("template_name must be a string")
@@ -104,8 +104,8 @@ def render_html(
     """
     Render a Snapshot to HTML using templates/<template_name>/ticket.html.
 
-    Jinja context is restricted to a minimal whitelist (Bug #39): only snapshot,
-    ticket, and articles are passed; no config, request, or full object graph.
+    Jinja context is restricted to a minimal whitelist: only snapshot, ticket, and
+    articles are passed; no config, request, or full object graph.
     """
     env = _env_for(template_name, templates_root=templates_root)
     template = env.get_template(f"{template_name}/{_TEMPLATE_FILE}")

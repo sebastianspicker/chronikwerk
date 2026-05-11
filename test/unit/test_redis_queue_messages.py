@@ -13,10 +13,14 @@ import pytest
 
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
-from zammad_pdf_archiver.app.jobs.redis_queue import (
-    _decode_envelope,
+from zammad_pdf_archiver.app.jobs._queue_stream import (
+    _ack_and_delete,
     _extract_claimed_messages,
     _extract_stream_messages,
+    _push_dlq,
+)
+from zammad_pdf_archiver.app.jobs._queue_types import (
+    _decode_envelope,
     _QueueEnvelope,
 )
 
@@ -325,7 +329,7 @@ class TestAckAndDelete:
         fake = _FakeRedis()
 
         asyncio.run(
-            redis_queue._ack_and_delete(
+            _ack_and_delete(
                 fake,
                 stream="zammad:jobs",
                 group="archiver",
@@ -353,7 +357,7 @@ class TestAckAndDelete:
         mock_redis.xdel = _xdel
 
         asyncio.run(
-            redis_queue._ack_and_delete(
+            _ack_and_delete(
                 mock_redis,
                 stream="s",
                 group="g",
@@ -374,7 +378,7 @@ class TestAckAndDelete:
 
         with pytest.raises(RuntimeError, match="ack failed"):
             asyncio.run(
-                redis_queue._ack_and_delete(
+                _ack_and_delete(
                     fake,
                     stream="s",
                     group="g",
@@ -406,7 +410,7 @@ class TestPushDlq:
         )
 
         asyncio.run(
-            redis_queue._push_dlq(
+            _push_dlq(
                 fake,
                 settings=settings,
                 envelope=envelope,
@@ -439,7 +443,7 @@ class TestPushDlq:
         )
 
         asyncio.run(
-            redis_queue._push_dlq(
+            _push_dlq(
                 fake,
                 settings=settings,
                 envelope=envelope,

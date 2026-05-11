@@ -143,8 +143,8 @@ Required unless overridden by explicit unsafe/test options:
 | `observability.log_level` | `INFO` | `LOG_LEVEL` | log level |
 | `observability.log_format` | `null` | `LOG_FORMAT` | `json` or `human` |
 | `observability.json_logs` | `false` | `LOG_JSON` | legacy JSON toggle |
-| `observability.metrics_enabled` | `false` | `METRICS_ENABLED`, `OBSERVABILITY_METRICS_ENABLED` | expose `/metrics` |
-| `observability.metrics_bearer_token` | `null` | `METRICS_BEARER_TOKEN` | when set, require `Authorization: Bearer <token>` for `/metrics` |
+| `observability.metrics_enabled` | `false` | `METRICS_ENABLED`, `OBSERVABILITY_METRICS_ENABLED` | expose `/metrics`; requires `observability.metrics_bearer_token` |
+| `observability.metrics_bearer_token` | `null` | `METRICS_BEARER_TOKEN` | required when metrics are enabled; requests must use `Authorization: Bearer <token>` |
 | `observability.healthz_omit_version` | `false` | `HEALTHZ_OMIT_VERSION` | omit `version` and `service` from `/healthz` response |
 
 ### `hardening.rate_limit`
@@ -169,7 +169,7 @@ Required unless overridden by explicit unsafe/test options:
 |---|---|---|---|
 | `hardening.webhook.allow_unsigned` | `false` | `HARDENING_WEBHOOK_ALLOW_UNSIGNED` | allow unsigned webhooks |
 | `hardening.webhook.allow_unsigned_when_no_secret` | `false` | `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET` | explicit opt-in for unsigned mode when no secret is configured |
-| `hardening.webhook.require_delivery_id` | `false` | `HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID` | require `X-Zammad-Delivery` header |
+| `hardening.webhook.require_delivery_id` | `true` | `HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID` | require `X-Zammad-Delivery` header |
 
 ### `hardening.transport`
 
@@ -185,7 +185,7 @@ Required unless overridden by explicit unsafe/test options:
 | Key | Default | Flat env alias | Description |
 |---|---|---|---|
 | `admin.enabled` | `false` | `ADMIN_ENABLED` | mount `/admin` UI and `/admin/api/*` endpoints |
-| `admin.bearer_token` | `null` | `ADMIN_BEARER_TOKEN` | required when `admin.enabled=true`; used for Bearer auth on admin API |
+| `admin.bearer_token` | `null` | `ADMIN_BEARER_TOKEN` | required when `admin.enabled=true`; used for Bearer admin API auth and Bearer/Basic dashboard auth |
 | `admin.history_limit` | `100` | `ADMIN_HISTORY_LIMIT` | default history page size in admin API/UI |
 
 ## 4. Non-schema Runtime Environment Keys

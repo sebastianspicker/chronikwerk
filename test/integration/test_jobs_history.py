@@ -81,7 +81,7 @@ def test_jobs_history_requires_configured_ops_token(tmp_path) -> None:
 
     response = client.get("/jobs/history")
     assert response.status_code == 503
-    assert response.json()["detail"] == "ops_token_not_configured"
+    assert response.json()["detail"] == "admin_token_not_configured"
 
 
 def test_jobs_dlq_drain_returns_503_on_backend_error(tmp_path, monkeypatch) -> None:

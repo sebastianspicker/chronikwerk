@@ -26,7 +26,8 @@ def coerce_ticket_id(value: Any) -> int | None:
 
 def extract_ticket_id(payload: dict[str, Any]) -> int | None:
     """
-    Extract and coerce ticket ID from a webhook payload (Bug #P1-4).
+    Extract and coerce the ticket ID from supported webhook payload shapes.
+
     Checks ticket_id first, then ticket.id.
     """
     # Prefer top-level ticket_id (explicit).
@@ -39,5 +40,5 @@ def extract_ticket_id(payload: dict[str, Any]) -> int | None:
     if isinstance(ticket, dict):
         return coerce_ticket_id(ticket.get("id"))
 
-    # Last resort: try coercive access on 'ticket' if it's not a dict but a scalar id
+    # Some manually generated payloads pass the ticket id as the `ticket` value itself.
     return coerce_ticket_id(ticket)

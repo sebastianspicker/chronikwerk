@@ -17,7 +17,7 @@ def _test_settings(storage_root: str) -> Settings:
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
             "storage": {"root": storage_root},
-            "observability": {"metrics_enabled": True},
+            "observability": {"metrics_enabled": True, "metrics_bearer_token": "metrics-token"},
             "hardening": {
                 "webhook": {
                     "allow_unsigned": True,
@@ -58,7 +58,7 @@ def test_metrics_endpoint_returns_prometheus_text(tmp_path) -> None:
     app = create_app(_test_settings(str(tmp_path)))
     client = TestClient(app)
 
-    resp = client.get("/metrics")
+    resp = client.get("/metrics", headers={"Authorization": "Bearer metrics-token"})
     assert resp.status_code == 200
     assert "text/plain" in resp.headers.get("content-type", "")
     assert "processed_total" in resp.text
@@ -96,11 +96,35 @@ def test_metrics_requires_bearer_when_configured(tmp_path) -> None:
     )
 
 
+def test_metrics_enabled_without_token_fails_closed_at_runtime(tmp_path) -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": str(tmp_path)},
+            "observability": {"metrics_enabled": True},
+            "hardening": {
+                "webhook": {
+                    "allow_unsigned": True,
+                    "allow_unsigned_when_no_secret": True,
+                }
+            },
+        }
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    resp = client.get("/metrics")
+
+    assert resp.status_code == 503
+    assert resp.text == "metrics_token_not_configured\n"
+
+
 def test_ingest_success_increments_processed_total(tmp_path) -> None:
     app = create_app(_test_settings(str(tmp_path)))
     client = TestClient(app)
 
-    before = _metric_value(client.get("/metrics").text, "processed_total")
+    auth = {"Authorization": "Bearer metrics-token"}
+    before = _metric_value(client.get("/metrics", headers=auth).text, "processed_total")
 
     payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -154,5 +178,5 @@ def test_ingest_success_increments_processed_total(tmp_path) -> None:
 
     assert resp.status_code == 202
 
-    after = _metric_value(client.get("/metrics").text, "processed_total")
+    after = _metric_value(client.get("/metrics", headers=auth).text, "processed_total")
     assert after == before + 1.0

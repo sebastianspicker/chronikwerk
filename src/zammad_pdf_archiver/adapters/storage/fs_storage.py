@@ -35,7 +35,7 @@ def _validate_and_prepare(target_path: Path, storage_root: Path) -> tuple[Path, 
     """Validate path safety and ensure parent directory exists. Returns (target, parent)."""
     target = Path(target_path)
     parent = target.parent
-    # Bug #13/#20: validate path and symlinks before any directory creation.
+    # Validate containment and symlink traversal before any directory creation.
     ensure_within_root(storage_root, target)
     _reject_symlinks_under_root(storage_root, parent)
     ensure_dir(parent)
@@ -52,7 +52,7 @@ def write_bytes(target_path: Path, data: bytes, *, storage_root: Path, fsync: bo
     with os.fdopen(fd, "wb") as f:
         f.write(data)
         f.flush()
-        # Bug #40: always set permissions (e.g. when overwriting existing file).
+        # Always set permissions, including when overwriting an existing file.
         os.fchmod(f.fileno(), 0o640)
         if fsync:
             os.fsync(f.fileno())
@@ -116,7 +116,7 @@ def _write_tmp_file(fd: int, data: bytes, *, fsync: bool) -> None:
     with os.fdopen(fd, "wb") as f:
         f.write(data)
         f.flush()
-        # Bug #21: set mode on fd before replace so target gets correct permissions.
+        # Set mode on the temp fd before replace so the final target gets correct permissions.
         os.fchmod(f.fileno(), 0o640)
         if fsync:
             os.fsync(f.fileno())

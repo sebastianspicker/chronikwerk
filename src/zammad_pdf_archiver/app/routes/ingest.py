@@ -50,6 +50,11 @@ class IngestPayload(BaseModel):
 
 
 def _public_payload_for_job(payload: IngestPayload, request_id: str | None) -> dict[str, Any]:
+    """Build the internal job payload for public ingest requests.
+
+    Public webhooks must not be able to set the internal force-reprocess flag; only
+    authenticated retry/admin surfaces may bypass trigger-tag and signed-tag checks.
+    """
     payload_for_job = payload.model_dump()
     payload_for_job.pop(FORCE_REPROCESS_KEY, None)
     payload_for_job[REQUEST_ID_KEY] = request_id
@@ -193,6 +198,8 @@ async def batch_ingest(
                 payload,
                 getattr(request.state, "request_id", None),
             )
+            # One delivery header represents the batch request; suffix with the item index so
+            # idempotency is still tracked per ticket payload.
             delivery_id = f"{batch_delivery_id}:{index}" if batch_delivery_id is not None else None
             assert settings is not None
             await _dispatch_ticket(

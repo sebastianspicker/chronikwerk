@@ -82,7 +82,7 @@ observability:
   log_level: "INFO"             # LOG_LEVEL
   log_format: null               # LOG_FORMAT (json|human)
   json_logs: false               # LOG_JSON (legacy)
-  metrics_enabled: false         # METRICS_ENABLED
+  metrics_enabled: false         # METRICS_ENABLED; requires metrics_bearer_token when true
   metrics_bearer_token: null     # METRICS_BEARER_TOKEN
   healthz_omit_version: false    # HEALTHZ_OMIT_VERSION
 
@@ -98,7 +98,7 @@ hardening:
   webhook:
     allow_unsigned: false        # HARDENING_WEBHOOK_ALLOW_UNSIGNED
     allow_unsigned_when_no_secret: false # HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET
-    require_delivery_id: false   # HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID
+    require_delivery_id: true    # HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID
   transport:
     trust_env: false             # HARDENING_TRANSPORT_TRUST_ENV
     allow_insecure_http: false   # HARDENING_TRANSPORT_ALLOW_INSECURE_HTTP

@@ -98,7 +98,7 @@ async def _read_body(
 ) -> tuple[list[bytes], bool]:
     """
     Read body and update MAC. Returns (chunks, disconnected).
-    If disconnected is True, client disconnected during read (Bug #28: treat as auth failure).
+    If disconnected is True, the caller treats the incomplete body as an auth failure.
     """
     chunks: list[bytes] = []
     while True:
@@ -181,7 +181,7 @@ class HmacVerifyMiddleware:
             return
 
         if not self._secret:
-            # Bug #12: require explicit allow_unsigned_when_no_secret to allow without secret.
+            # Running without a secret requires an explicit second opt-in for local/test use.
             if self._allow_unsigned and self._allow_unsigned_when_no_secret:
                 await self.app(scope, receive, send)
             else:

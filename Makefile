@@ -1,4 +1,4 @@
-.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all smoke docs-check docker-smoke qa build verify ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
+.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build verify ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -41,6 +41,9 @@ test-nfr:
 
 test-all:
 	@set -e; python -m pytest -q || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+
+test-e2e:
+	python scripts/e2e/docker_api_smoke.py
 
 test-cov:
 	python -m pytest --cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=85

@@ -36,6 +36,11 @@ Thumbs.db
 # Local runtime artifacts
 *.log
 coverage.json
+reports/
+scratch/
+tmp/
+playwright-report/
+test-results/
 
 # IDEs
 .idea/
@@ -43,9 +48,10 @@ coverage.json
 .cursor/
 .kilo/
 
-# AI development artifacts (local use)
+# Local automation and audit artifacts
 audit/
 docs/audit/
+deprecated/local-agent-harness/
 plans/
 progress.md
 .claude/

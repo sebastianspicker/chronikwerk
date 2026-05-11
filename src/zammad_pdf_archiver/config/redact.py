@@ -38,17 +38,17 @@ _COMMON_KV_SECRET_RE = re.compile(
 _COMMON_QUERY_SECRET_RE = re.compile(
     r"(?i)([?&](?:api[_-]?token|access[_-]?token|refresh[_-]?token|token|secret)=)([^&\\s]+)"
 )
-# Bug #22: JSON/dict-style quoted keys and values (e.g. {"api_token": "secret"}).
+# JSON/dict-style quoted keys and values (e.g. {"api_token": "secret"}).
 _JSON_STYLE_SECRET_RE = re.compile(
     r'(?i)"(api[_-]?token|apikey|api_key|password|secret|passwd|authorization|'
     r'webhook[_-]?hmac[_-]?secret|pfx[_-]?password|tsa[_-]?pass|redis[_-]?url)"\s*:\s*"([^"]*)"',
     re.DOTALL,
 )
-# Bug #23: env-var style lines (e.g. ZAMMAD_API_TOKEN=..., SIGNING_PFX_PASSWORD=...).
+# Env-var style lines (e.g. ZAMMAD_API_TOKEN=..., SIGNING_PFX_PASSWORD=...).
 _ENV_VAR_SECRET_RE = re.compile(
     r"(?im)^([A-Za-z_][A-Za-z0-9_]*(?:API[_-]?TOKEN|TOKEN|PASSWORD|SECRET|PASSWD|PFX_PASS|TSA_PASS|REDIS[_-]?URL)\s*=\s*)([^\s#]+)"
 )
-# Bug #42: api_key/apikey in free-form key=value (explicit pattern).
+# Explicit api_key/apikey handling for free-form key=value text.
 _API_KEY_KV_RE = re.compile(r"(?i)\b(api[_-]?key|apikey)\s*[:=]\s*([^\s,;]+)")
 # Connection-string URLs with embedded credentials (redis://:pass@host, rediss://user:pass@host).
 _CONN_URL_CRED_RE = re.compile(
@@ -77,13 +77,13 @@ def scrub_secrets_in_text(text: str) -> str:
     # Common key=value or key: value patterns.
     out = _COMMON_KV_SECRET_RE.sub(lambda m: f"{m.group(1)}={REDACTED_VALUE}", out)
 
-    # Bug #42: api_key / apikey in free-form text.
+    # api_key / apikey in free-form text.
     out = _API_KEY_KV_RE.sub(lambda m: f"{m.group(1)}={REDACTED_VALUE}", out)
 
-    # Bug #22: JSON/dict-style "key": "value".
+    # JSON/dict-style "key": "value".
     out = _JSON_STYLE_SECRET_RE.sub(lambda m: f'{m.group(1)}: "{REDACTED_VALUE}"', out)
 
-    # Bug #23: env-var style lines (e.g. ZAMMAD_API_TOKEN=...).
+    # Env-var style lines (e.g. ZAMMAD_API_TOKEN=...).
     out = _ENV_VAR_SECRET_RE.sub(lambda m: f"{m.group(1)}{REDACTED_VALUE}", out)
 
     # Query parameters.

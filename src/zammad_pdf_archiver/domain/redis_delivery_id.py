@@ -1,4 +1,4 @@
-"""Redis-backed delivery-ID store for durable idempotency (PRD §8.2).
+"""Redis-backed delivery-ID store for durable idempotency.
 Requires optional dependency: pip install zammad-pdf-archiver[redis]."""
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class RedisDeliveryIdStore:
         await redis.set(self._key(key), "1", ex=self._ttl_seconds)
 
     async def try_claim(self, key: str) -> bool:
-        """Atomically claim key (SET NX EX). True if claimed, False if seen (Bug #17)."""
+        """Atomically claim key (SET NX EX). True if claimed, False if seen."""
         redis = await self._client()
         full_key = self._key(key)
         # SET key "1" NX EX ttl: set only if not exists, with TTL; return True if key was set.

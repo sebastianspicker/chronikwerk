@@ -35,6 +35,7 @@ def _test_settings_legacy_secret(storage_root: str, *, secret: str) -> Settings:
             "server": {"webhook_shared_secret": secret},
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
             "storage": {"root": storage_root},
+            "hardening": {"webhook": {"require_delivery_id": False}},
         }
     )
 
@@ -69,6 +70,41 @@ def test_valid_signature_passes(tmp_path, monkeypatch) -> None:
     )
     assert response.status_code == 202
     assert response.json() == {"status": "accepted", "ticket_id": 123}
+
+
+def test_signed_ingest_requires_delivery_id_by_default(tmp_path, monkeypatch) -> None:
+    secret = "test-secret"
+    settings = Settings.from_mapping(
+        {
+            "zammad": {
+                "base_url": "https://zammad.example.local",
+                "api_token": "test-token",
+                "webhook_hmac_secret": secret,
+            },
+            "storage": {"root": str(tmp_path)},
+        }
+    )
+    app = create_app(settings)
+    import zammad_pdf_archiver.app.routes.ingest as ingest_route
+
+    async def _stub_process_ticket(delivery_id, payload, settings) -> None:
+        raise AssertionError("process_ticket must not run without delivery ID")
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    client = TestClient(app)
+
+    body = b'{"ticket":{"id":123}}'
+    response = client.post(
+        "/ingest",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature": _sign(body, secret),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "missing_delivery_id", "code": "missing_delivery_id"}
 
 
 def test_valid_sha256_signature_passes(tmp_path, monkeypatch) -> None:

@@ -17,7 +17,7 @@ Webhook ingestion endpoint.
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
+- `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
 #### Request body
 
@@ -41,7 +41,7 @@ Example payload:
 - `400` `{"detail":"missing_delivery_id"}`
 - `403` `{"detail":"forbidden"}`
 - `422` invalid body (e.g. missing or invalid ticket id)
-- `413` `{"detail":"request_too_large"}`
+- `413` `{"detail":"request_too_large","code":"request_too_large"}`; requests with an over-limit `Content-Length` are rejected before the application reads the body, and streaming requests stop at the first chunk that exceeds the limit.
 - `429` `{"detail":"rate_limited"}`
 - `503` `{"detail":"webhook_auth_not_configured"}`
 
@@ -58,7 +58,7 @@ Batch webhook ingestion endpoint.
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
+- `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
 #### Request body
 
@@ -79,7 +79,7 @@ When `X-Zammad-Delivery` is present, the service derives per-item delivery IDs a
 - `400` `{"detail":"missing_delivery_id"}`
 - `403` `{"detail":"forbidden"}`
 - `422` invalid body (e.g. missing or invalid ticket id in an item), or batch exceeds 100 items (`{"detail":"batch_too_large"}`)
-- `413` `{"detail":"request_too_large"}`
+- `413` `{"detail":"request_too_large","code":"request_too_large"}`; requests with an over-limit `Content-Length` are rejected before the application reads the body, and streaming requests stop at the first chunk that exceeds the limit.
 - `429` `{"detail":"rate_limited"}`
 - `503` `{"detail":"webhook_auth_not_configured"}` or `{"detail":"shutting_down"}`
 
@@ -140,7 +140,7 @@ Notes:
 #### Error responses
 
 - `401` missing/invalid bearer token
-- `503` `{"detail":"ops_token_not_configured"}` or `{"detail":"settings_not_configured"}`
+- `503` `{"detail":"admin_token_not_configured"}` or `{"detail":"settings_not_configured"}`
 
 ### `GET /jobs/queue/stats`
 
@@ -160,10 +160,28 @@ Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 }
 ```
 
+#### Response (redis queue backend)
+
+```json
+{
+  "execution_backend": "redis_queue",
+  "queue_enabled": true,
+  "stream": "zammad:jobs",
+  "group": "zammad:jobs:workers",
+  "consumer": "host-12345",
+  "queue_depth": 0,
+  "pending": 0,
+  "dlq_stream": "zammad:jobs:dlq",
+  "dlq_depth": 0,
+  "retry_max_attempts": 3
+}
+```
+
 #### Error responses
 
 - `401` missing/invalid bearer token
-- `503` `{"detail":"ops_token_not_configured"}` or queue backend unavailable (`{"status":"error","detail":"queue_unavailable"}` payload)
+- `503` `{"detail":"admin_token_not_configured"}`
+- `200` `{"status":"error","detail":"queue_unavailable"}` when the queue backend is unavailable
 
 ### `GET /jobs/history`
 
@@ -176,7 +194,7 @@ Query parameters:
 
 Error responses:
 - `401` missing/invalid bearer token
-- `503` ops token missing or history backend unavailable
+- `503` admin token missing or history backend unavailable
 
 Response:
 
@@ -201,7 +219,7 @@ Response:
 
 ### `POST /jobs/queue/dlq/drain`
 
-Drain dead-letter queue entries from Redis stream.
+Delete dead-letter queue entries from the Redis stream without replaying them.
 Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 
 Query parameters:
@@ -209,7 +227,7 @@ Query parameters:
 
 Error responses:
 - `401` missing/invalid bearer token
-- `503` ops token missing or DLQ backend unavailable
+- `503` admin token missing or DLQ backend unavailable
 
 Response:
 
@@ -217,23 +235,6 @@ Response:
 {
   "status": "ok",
   "drained": 12
-}
-```
-
-#### Response (redis queue backend)
-
-```json
-{
-  "execution_backend": "redis_queue",
-  "queue_enabled": true,
-  "stream": "zammad:jobs",
-  "group": "zammad:jobs:workers",
-  "consumer": "host-12345",
-  "queue_depth": 0,
-  "pending": 0,
-  "dlq_stream": "zammad:jobs:dlq",
-  "dlq_depth": 0,
-  "retry_max_attempts": 3
 }
 ```
 
@@ -293,14 +294,18 @@ Notes:
 
 ### `GET /metrics`
 
-Only mounted when `observability.metrics_enabled=true`. When `METRICS_BEARER_TOKEN` is set, requests must include `Authorization: Bearer <token>`; otherwise `401` is returned.
+Only mounted when `observability.metrics_enabled=true`. `METRICS_BEARER_TOKEN` is required whenever metrics are enabled. Requests must include `Authorization: Bearer <token>`; missing or invalid tokens return `401`. A metrics route constructed without a configured token returns `503` instead of exposing metrics.
 
 Response format:
 - Prometheus text exposition (`text/plain`)
 
 ### `GET /admin`
 
-Returns a lightweight admin dashboard HTML shell.
+Returns a lightweight admin dashboard HTML shell. Requires `admin.enabled=true` and either:
+- `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
+- HTTP Basic auth; the username is ignored and the password must equal `ADMIN_BEARER_TOKEN`
+
+Missing or invalid dashboard auth returns `401` with `WWW-Authenticate: Basic realm="zammad-pdf-archiver-admin"`.
 
 ### Admin API (`/admin/api/*`)
 

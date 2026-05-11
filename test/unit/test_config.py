@@ -545,8 +545,7 @@ def test_rate_limit_burst_upper_bound() -> None:
         )
 
 
-def test_metrics_without_token_is_allowed() -> None:
-    """When metrics_enabled=True but no bearer token is set, validation still passes."""
+def test_metrics_enabled_requires_bearer_token() -> None:
     settings = Settings.from_mapping(
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
@@ -561,7 +560,10 @@ def test_metrics_without_token_is_allowed() -> None:
         }
     )
 
-    validate_settings(settings)
+    with pytest.raises(ConfigValidationError) as exc:
+        validate_settings(settings)
+
+    assert "observability.metrics_bearer_token" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

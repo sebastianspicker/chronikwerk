@@ -41,7 +41,7 @@ def _called_tag_items(route: respx.Route) -> list[str]:
 def test_process_ticket_v01_happy_path_writes_pdf_and_updates_tags(tmp_path, monkeypatch) -> None:
     settings = _test_settings(str(tmp_path))
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     payload = {
         "ticket": {"id": 123},
         "_request_id": "req-123",
@@ -153,7 +153,7 @@ def test_process_ticket_v01_happy_path_writes_pdf_and_updates_tags(tmp_path, mon
 def test_process_ticket_v01_failure_sets_error_tag_and_posts_note(tmp_path, monkeypatch) -> None:
     settings = _test_settings(str(tmp_path))
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     payload = {
         "ticket": {"id": 123},
         "_request_id": "req-err-1",
@@ -254,7 +254,7 @@ def test_process_ticket_v01_transient_failure_keeps_trigger_and_posts_note(
 ) -> None:
     settings = _test_settings(str(tmp_path))
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     payload = {
         "ticket": {"id": 123},
         "_request_id": "req-err-transient-1",
@@ -343,7 +343,7 @@ def test_process_ticket_v01_transient_failure_keeps_trigger_and_posts_note(
 def test_process_ticket_v01_force_reprocess_overrides_done_tag(tmp_path, monkeypatch) -> None:
     settings = _test_settings(str(tmp_path))
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     payload = {
         "ticket_id": 123,
         "_request_id": "req-force-1",
@@ -405,7 +405,7 @@ def test_process_ticket_v01_invalid_archive_path_is_permanent_and_writes_no_file
 ) -> None:
     settings = _test_settings(str(tmp_path))
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     payload = {
         "ticket": {"id": 123},
         "_request_id": "req-path-invalid-1",
@@ -478,7 +478,7 @@ def test_process_ticket_v01_enforces_pdf_max_articles_setting(tmp_path, monkeypa
         }
     )
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     payload = {
         "ticket": {"id": 123},
         "_request_id": "req-max-articles-1",
@@ -573,7 +573,7 @@ def test_process_ticket_v01_pdf_max_articles_zero_disables_limit(tmp_path, monke
         }
     )
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     payload = {
         "ticket": {"id": 123},
         "_request_id": "req-max-articles-disabled",

@@ -8,10 +8,13 @@ High-level layout:
 - `src/zammad_pdf_archiver/asgi.py` – ASGI app module for `uvicorn zammad_pdf_archiver.asgi:app`
 - `src/zammad_pdf_archiver/app/` – FastAPI app wiring, middleware, routes
   - `routes/ingest.py` – `POST /ingest` webhook endpoint (always returns 202; runs best-effort processing)
+  - `routes/jobs.py` – Bearer-authenticated job status, queue stats, history, and DLQ drain endpoints
+  - `routes/admin.py` – optional admin dashboard and admin API
   - `routes/healthz.py` – `GET /healthz`
   - `routes/metrics.py` – `GET /metrics` (only mounted when enabled)
   - `middleware/` – request ID, HMAC verification, rate limit, body size limit
   - `jobs/process_ticket.py` – end-to-end ticket processing pipeline
+  - `jobs/redis_queue.py` – optional Redis stream backend for durable retries and DLQ handling
 - `src/zammad_pdf_archiver/adapters/` – external integrations and IO
   - `zammad/` – Zammad REST API client
   - `pdf/` – HTML rendering + PDF generation (WeasyPrint)
@@ -23,3 +26,4 @@ High-level layout:
 - `src/zammad_pdf_archiver/templates/` – Jinja2 PDF templates (default, minimal, compact)
 
 Operator docs live in `docs/` (start with `docs/08-operations.md`).
+Tests live in `test/static`, `test/unit`, `test/integration`, and `test/nfr`.

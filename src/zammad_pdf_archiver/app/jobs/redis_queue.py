@@ -18,13 +18,9 @@ import structlog
 
 from zammad_pdf_archiver.adapters.redis_pool import get_redis
 from zammad_pdf_archiver.app.jobs._queue_stream import (
-    _CLAIM_IDLE_MS,
     _ack_and_delete,
     _claim_stale_pending,
     _ensure_group,
-    _extract_claimed_messages,
-    _extract_stream_messages,
-    _pending_entry_field,
     _push_dlq,
     _read_new_messages,
     _read_own_pending,
@@ -33,8 +29,6 @@ from zammad_pdf_archiver.app.jobs._queue_types import (
     _as_str,
     _decode_envelope,
     _merge_min_delay,
-    _parse_float,
-    _parse_int,
     _QueueEnvelope,
 )
 from zammad_pdf_archiver.app.jobs.history import record_history_event
@@ -48,47 +42,6 @@ from zammad_pdf_archiver.observability.metrics import (
 )
 
 log = structlog.get_logger(__name__)
-
-# Re-export submodule symbols so existing callers that reference them as
-# ``redis_queue.<name>`` continue to work without modification.
-__all__ = [
-    "enqueue_ticket_job",
-    "start_queue_worker",
-    "stop_queue_worker",
-    "get_queue_stats",
-    "drain_dlq",
-    "replay_dlq",
-    "aclose_queue_clients",
-    "RedisQueueManager",
-    # submodule re-exports (accessed by tests via redis_queue.<name>)
-    "_as_str",
-    "_parse_float",
-    "_parse_int",
-    "_merge_min_delay",
-    "_QueueEnvelope",
-    "_decode_envelope",
-    "_CLAIM_IDLE_MS",
-    "_get_redis",
-    "_ensure_group",
-    "_ack_and_delete",
-    "_push_dlq",
-    "_extract_stream_messages",
-    "_extract_claimed_messages",
-    "_pending_entry_field",
-    "_claim_stale_pending",
-    "_read_own_pending",
-    "_read_new_messages",
-    "_handle_envelope",
-    "_process_messages",
-    "_retry_delay_seconds",
-    "_backend",
-    "_worker_key",
-    "_consumer_name",
-    "_pending_count",
-    "_worker_loop",
-    "record_history_event",
-    "process_ticket",
-]
 
 
 # ---------------------------------------------------------------------------
@@ -265,87 +218,15 @@ async def _process_messages(
 # ---------------------------------------------------------------------------
 
 
-class RedisQueueManager:
-    """Encapsulates worker lifecycle state for Redis-backed queue workers."""
+_worker_task: asyncio.Task[None] | None = None
+_worker_stop_event: asyncio.Event | None = None
 
-    def __init__(self) -> None:
-        self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._stops: dict[str, asyncio.Event] = {}
-
-    async def start_worker(self, settings: Settings) -> asyncio.Task[None] | None:
-        if _backend(settings) != "redis_queue":
-            return None
-
-        key = _worker_key(settings)
-        existing = self._tasks.get(key)
-        if existing is not None and not existing.done():
-            return existing
-
-        stop_event = asyncio.Event()
-        task = asyncio.create_task(
-            _worker_loop(settings, stop_event),
-            name=f"redis-queue-worker:{key}",
-        )
-        self._stops[key] = stop_event
-        self._tasks[key] = task
-        return task
-
-    async def stop_worker(self, settings: Settings, *, timeout: float = 3.0) -> None:
-        key = _worker_key(settings)
-        stop_event = self._stops.get(key)
-        task = self._tasks.get(key)
-        if stop_event is None or task is None:
-            return
-
-        stop_event.set()
-        try:
-            await asyncio.wait_for(task, timeout=timeout)
-        except TimeoutError:
-            task.cancel()
-            try:
-                await task
-            except Exception:
-                pass
-        finally:
-            self._stops.pop(key, None)
-            self._tasks.pop(key, None)
-
-    async def stop_all(self, *, timeout: float = 3.0) -> None:
-        keys = list(self._tasks.keys())
-        for key in keys:
-            stop_event = self._stops.get(key)
-            if stop_event is not None:
-                stop_event.set()
-
-        tasks = [t for t in self._tasks.values() if not t.done()]
-        if tasks:
-            _, pending = await asyncio.wait(tasks, timeout=timeout)
-            for t in pending:
-                t.cancel()
-                try:
-                    await t
-                except Exception:
-                    pass
-
-        self._tasks.clear()
-        self._stops.clear()
-
-
-_manager = RedisQueueManager()
+# Each FastAPI process owns at most one queue worker. Redis consumer groups coordinate
+# between processes; this module only tracks the process-local task and stop event.
 
 
 def _backend(settings: Settings) -> str:
     return (settings.workflow.execution_backend or "inprocess").strip().lower()
-
-
-def _worker_key(settings: Settings) -> str:
-    return "|".join(
-        [
-            settings.workflow.redis_url or "",
-            settings.workflow.queue_stream,
-            settings.workflow.queue_group,
-        ]
-    )
 
 
 def _consumer_name(settings: Settings) -> str:
@@ -433,11 +314,46 @@ async def _worker_loop(settings: Settings, stop_event: asyncio.Event) -> None:
 
 
 async def start_queue_worker(settings: Settings) -> asyncio.Task[None] | None:
-    return await _manager.start_worker(settings)
+    """Start the process-local Redis worker when redis_queue is configured."""
+    global _worker_stop_event, _worker_task
+
+    if _backend(settings) != "redis_queue":
+        return None
+
+    if _worker_task is not None and not _worker_task.done():
+        return _worker_task
+
+    _worker_stop_event = asyncio.Event()
+    _worker_task = asyncio.create_task(
+        _worker_loop(settings, _worker_stop_event),
+        name="redis-queue-worker",
+    )
+    return _worker_task
 
 
 async def stop_queue_worker(settings: Settings, *, timeout: float = 3.0) -> None:
-    await _manager.stop_worker(settings, timeout=timeout)
+    """Signal the process-local Redis worker and cancel it if graceful shutdown times out."""
+    global _worker_stop_event, _worker_task
+
+    task = _worker_task
+    stop_event = _worker_stop_event
+    if task is None or stop_event is None:
+        return
+
+    stop_event.set()
+    try:
+        await asyncio.wait_for(task, timeout=timeout)
+    except TimeoutError:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    finally:
+        _worker_task = None
+        _worker_stop_event = None
 
 
 def _pending_count(raw: Any) -> int:
@@ -490,6 +406,7 @@ async def get_queue_stats(settings: Settings) -> dict[str, Any]:
 
 
 async def drain_dlq(settings: Settings, *, limit: int = 100) -> int:
+    """Delete DLQ stream entries without replaying them."""
     if limit < 1:
         return 0
     bounded_limit = min(int(limit), 1000)

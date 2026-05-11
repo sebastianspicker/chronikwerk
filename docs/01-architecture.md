@@ -4,6 +4,15 @@
 - in-process background worker (`workflow.execution_backend=inprocess`)
 - Redis queue worker (`workflow.execution_backend=redis_queue`)
 
+## Entry Points
+
+- `zammad_pdf_archiver.runtime:main` is the packaged service entry point. It loads settings, configures logging, creates the app, and runs Uvicorn.
+- `zammad_pdf_archiver.asgi:app` is the ASGI import path for process managers that run Uvicorn/Gunicorn themselves.
+- `zammad_pdf_archiver.cli:main` provides operator diagnostics: config validation, redacted config dump, deprecated-env inspection, queue stats, DLQ drain, and queue history.
+- `src/zammad_pdf_archiver/app/routes/ingest.py` accepts webhook payloads, strips public-only fields, and dispatches work to the configured backend.
+- `src/zammad_pdf_archiver/app/jobs/process_ticket.py` owns one ticket archival job from Zammad fetch through PDF/storage/tag updates.
+- `src/zammad_pdf_archiver/app/jobs/redis_queue.py` owns Redis stream enqueueing, worker lifecycle, retry/DLQ handling, and queue diagnostics.
+
 ## Runtime Flow
 
 ```mermaid
@@ -84,15 +93,15 @@ State details:
 Code:
 - `src/zammad_pdf_archiver/app/server.py`
 - `src/zammad_pdf_archiver/app/routes/ingest.py`
+- `src/zammad_pdf_archiver/app/routes/jobs.py`
+- `src/zammad_pdf_archiver/app/routes/admin.py`
 - `src/zammad_pdf_archiver/app/middleware/`
-- `src/zammad_pdf_archiver/app/jobs/process_ticket.py`
-- `src/zammad_pdf_archiver/app/jobs/async_retry.py`
 
 Responsibilities:
 - expose HTTP endpoints
 - enforce ingress hardening (HMAC, body size, rate limit, request ID)
-- schedule asynchronous background processing
-- provide exponential-backoff retry helper for transient failures
+- schedule asynchronous background processing through either `inprocess` tasks or Redis stream jobs
+- expose operator status/history/DLQ surfaces behind Bearer auth
 
 ### Zammad adapter
 
@@ -164,6 +173,14 @@ Responsibilities:
 - transient vs permanent error semantics
 - in-memory TTL dedupe by delivery ID
 - audit sidecar checksum and metadata model
+
+### Verification layout
+
+Tests are split by intent:
+- `test/static/` checks repository invariants such as mypy-clean source selection.
+- `test/unit/` covers pure logic and adapter helpers without a running service.
+- `test/integration/` exercises FastAPI routes and end-to-end ticket-processing paths with fakes.
+- `test/nfr/` protects non-functional requirements such as docs, hardening, deployment, and design constraints.
 
 ## Related ADRs
 

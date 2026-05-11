@@ -6,17 +6,18 @@ import os
 import socket
 
 from test.support.settings_factory import make_settings
-from zammad_pdf_archiver.app.jobs.redis_queue import (
+from zammad_pdf_archiver.app.jobs._queue_stream import _pending_entry_field
+from zammad_pdf_archiver.app.jobs._queue_types import (
     _as_str,
-    _backend,
-    _consumer_name,
     _merge_min_delay,
     _parse_float,
     _parse_int,
+)
+from zammad_pdf_archiver.app.jobs.redis_queue import (
+    _backend,
+    _consumer_name,
     _pending_count,
-    _pending_entry_field,
     _retry_delay_seconds,
-    _worker_key,
 )
 
 # ---------------------------------------------------------------------------
@@ -55,43 +56,6 @@ class TestBackend:
             },
         )
         assert _backend(settings) == "redis_queue"
-
-
-# ---------------------------------------------------------------------------
-# _worker_key
-# ---------------------------------------------------------------------------
-
-
-class TestWorkerKey:
-    def test_returns_pipe_delimited_string(self, tmp_path) -> None:
-        settings = make_settings(
-            str(tmp_path),
-            overrides={
-                "workflow": {
-                    "execution_backend": "redis_queue",
-                    "redis_url": "redis://localhost/0",
-                    "queue_stream": "my:stream",
-                    "queue_group": "my:group",
-                }
-            },
-        )
-        key = _worker_key(settings)
-        assert key == "redis://localhost/0|my:stream|my:group"
-
-    def test_empty_redis_url_is_blank(self, tmp_path) -> None:
-        settings = make_settings(
-            str(tmp_path),
-            overrides={
-                "workflow": {
-                    "execution_backend": "inprocess",
-                    "redis_url": None,
-                    "queue_stream": "s",
-                    "queue_group": "g",
-                }
-            },
-        )
-        key = _worker_key(settings)
-        assert key == "|s|g"
 
 
 # ---------------------------------------------------------------------------

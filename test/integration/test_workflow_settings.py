@@ -85,7 +85,7 @@ def _mock_tag_routes() -> tuple[respx.Route, respx.Route]:
 def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"trigger_tag": "pdf:archive"})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-1"}
 
@@ -130,7 +130,7 @@ def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
 def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"require_tag": False})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-2"}
 
@@ -167,7 +167,7 @@ def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
 def test_workflow_acknowledge_on_success_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"acknowledge_on_success": False})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-3"}
 

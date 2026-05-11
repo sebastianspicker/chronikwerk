@@ -1,44 +1,21 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
-
 from fastapi import APIRouter, HTTPException, Request
 
 from zammad_pdf_archiver.app.jobs.history import read_history
 from zammad_pdf_archiver.app.jobs.redis_queue import drain_dlq, get_queue_stats
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down
 from zammad_pdf_archiver.app.jobs.ticket_stores import is_ticket_in_flight
-from zammad_pdf_archiver.app.responses import settings_or_503
-from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.app.responses import settings_or_503, verify_bearer_auth
 
 router = APIRouter()
-
-
-def _verify_ops_bearer(request: Request, settings: Settings) -> None:
-    token = settings.admin.bearer_token
-    expected = token.get_secret_value().encode("utf-8") if token is not None else b""
-    if not expected:
-        raise HTTPException(status_code=503, detail="ops_token_not_configured")
-
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or len(auth) < 8:
-        raise HTTPException(status_code=401, detail="unauthorized")
-
-    provided = auth[7:].strip().encode("utf-8")
-    # Hash both tokens with SHA-256 before comparing to normalise length and
-    # prevent timing-based length leaks.
-    expected_hash = hashlib.sha256(expected).digest()
-    provided_hash = hashlib.sha256(provided).digest()
-    if not hmac.compare_digest(expected_hash, provided_hash):
-        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 @router.get("/jobs/queue/stats")
 async def get_queue_status(request: Request) -> dict[str, bool | int | str]:
     """Return current queue statistics for the configured execution backend."""
     settings = settings_or_503(request)
-    _verify_ops_bearer(request, settings)
+    verify_bearer_auth(request, settings)
     try:
         stats = await get_queue_stats(settings)
     except Exception:
@@ -59,7 +36,7 @@ async def get_job_history(
 ) -> dict[str, int | str | list[dict[str, object]]]:
     """Return recent job history events, optionally filtered by ticket ID."""
     settings = settings_or_503(request)
-    _verify_ops_bearer(request, settings)
+    verify_bearer_auth(request, settings)
 
     bounded_limit = max(1, min(int(limit), 5000))
     try:
@@ -75,9 +52,9 @@ async def get_job_history(
 
 @router.post("/jobs/queue/dlq/drain")
 async def drain_queue_dlq(request: Request, limit: int = 100) -> dict[str, int | str]:
-    """Drain up to limit messages from the dead-letter queue back into the main queue."""
+    """Delete up to limit messages from the dead-letter queue without replaying them."""
     settings = settings_or_503(request)
-    _verify_ops_bearer(request, settings)
+    verify_bearer_auth(request, settings)
     bounded_limit = max(1, min(int(limit), 1000))
     try:
         drained = await drain_dlq(settings, limit=bounded_limit)
@@ -90,7 +67,7 @@ async def drain_queue_dlq(request: Request, limit: int = 100) -> dict[str, int |
 async def get_job_status(request: Request, ticket_id: int) -> dict[str, bool | int]:
     """Return the in-flight status and shutdown state for a specific ticket ID."""
     settings = settings_or_503(request)
-    _verify_ops_bearer(request, settings)
+    verify_bearer_auth(request, settings)
     return {
         "ticket_id": ticket_id,
         "in_flight": is_ticket_in_flight(ticket_id),
