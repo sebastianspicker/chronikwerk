@@ -36,7 +36,8 @@ class AttachmentMeta(_SnapshotModel):
     filename: str | None = None
     size: int | None = None
     content_type: str | None = None
-    content: bytes | None = None  # optional binary (PRD §8.2); set when include_attachment_binary
+    # Optional binary payload, set only when pdf.include_attachment_binary is enabled.
+    content: bytes | None = None
 
 
 class Article(_SnapshotModel):

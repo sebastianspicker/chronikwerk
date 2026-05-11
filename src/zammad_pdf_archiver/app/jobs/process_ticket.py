@@ -76,14 +76,6 @@ class ProcessTicketResult:
     message: str = ""
 
 
-def _now_utc() -> datetime:
-    return now_utc()
-
-
-def _format_timestamp_utc(dt: datetime) -> str:
-    return format_timestamp_utc(dt)
-
-
 async def _record_history(
     ctx: _TicketJobContext,
     *,
@@ -170,23 +162,13 @@ async def process_ticket(
         request_id=request_id,
     )
 
-    bound = _bound_context(ctx)
-    with structlog.contextvars.bound_contextvars(**bound):
-        return await _process_with_ticket_lock(ctx, payload=payload)
-
-
-def _bound_context(ctx: _TicketJobContext) -> dict[str, object]:
-    """Build structlog context vars for the current ticket job."""
     bound: dict[str, object] = {"ticket_id": ctx.ticket_id}
     if ctx.delivery_id:
         bound["delivery_id"] = ctx.delivery_id
     if ctx.request_id:
         bound["request_id"] = ctx.request_id
-    return bound
-
-
-def _force_reprocess_requested(payload: dict[str, Any]) -> bool:
-    return payload.get(FORCE_REPROCESS_KEY) is True
+    with structlog.contextvars.bound_contextvars(**bound):
+        return await _process_with_ticket_lock(ctx, payload=payload)
 
 
 async def _process_with_ticket_lock(
@@ -195,7 +177,27 @@ async def _process_with_ticket_lock(
     payload: dict[str, Any],
 ) -> ProcessTicketResult:
     """Acquire an exclusive lock for the ticket, then run the processing pipeline."""
-    acquired = await try_acquire_ticket(ctx.settings, ctx.ticket_id)
+    try:
+        acquired = await try_acquire_ticket(ctx.settings, ctx.ticket_id)
+    except TransientError as exc:
+        failed_total.inc()
+        log.warning(
+            "process_ticket.ticket_lock_unavailable",
+            ticket_id=ctx.ticket_id,
+            delivery_id=ctx.delivery_id,
+        )
+        await _record_history(
+            ctx,
+            status="failed_transient",
+            classification="Transient",
+            message=str(exc),
+        )
+        return ProcessTicketResult(
+            status="failed_transient",
+            ticket_id=ctx.ticket_id,
+            classification="Transient",
+            message=str(exc),
+        )
     if not acquired:
         return await _skip_in_flight(ctx)
 
@@ -246,7 +248,7 @@ async def _process_ticket_with_client(
     settings = ctx.settings
     trigger_tag = str(settings.workflow.trigger_tag).strip() or TRIGGER_TAG
     require_trigger_tag = bool(settings.workflow.require_tag)
-    force_reprocess = _force_reprocess_requested(payload)
+    force_reprocess = payload.get(FORCE_REPROCESS_KEY) is True
 
     async with AsyncZammadClient(
         base_url=str(settings.zammad.base_url),
@@ -329,7 +331,7 @@ async def _run_ticket_pipeline(
     )
 
     segments = parse_archive_path_segments(custom_fields.get(settings.fields.archive_path))
-    now = _now_utc()
+    now = now_utc()
     storage_paths = compute_storage_paths(
         storage_root=settings.storage.root,
         username=username,
@@ -422,7 +424,7 @@ async def _acknowledge_success_if_enabled(
             sha256_hex=sha256_hex,
             request_id=ctx.request_id,
             delivery_id=ctx.delivery_id,
-            timestamp_utc=_format_timestamp_utc(now),
+            timestamp_utc=format_timestamp_utc(now),
         ),
     )
 
@@ -446,7 +448,7 @@ async def _handle_ticket_pipeline_exception(
     """Classify the exception, post an error note to the ticket, and update tags."""
     failed_total.inc()
     classified = classify(exc)
-    classification_label = _classification_label(classified)
+    classification_label = "Transient" if isinstance(classified, TransientError) else "Permanent"
     msg = concise_exc_message(exc)
     action = action_hint(exc, classified=classified) if classified is not None else ""
     code, hint = _error_code_hint(exc, classified=classified)
@@ -497,12 +499,6 @@ async def _handle_ticket_pipeline_exception(
     )
 
 
-def _classification_label(classified: TransientError | PermanentError | None) -> str:
-    """Map a classified error to its human-readable label for notes and metrics."""
-    is_transient = classified is not None and isinstance(classified, TransientError)
-    return "Transient" if is_transient else "Permanent"
-
-
 def _error_code_hint(
     exc: BaseException, *, classified: TransientError | PermanentError | None
 ) -> tuple[str, str]:
@@ -522,7 +518,7 @@ async def _post_error_note(
     code: str,
     hint: str,
 ) -> None:
-    now = _now_utc()
+    now = now_utc()
     try:
         await client.create_internal_article(
             ctx.ticket_id,
@@ -533,7 +529,7 @@ async def _post_error_note(
                 action=action,
                 request_id=ctx.request_id,
                 delivery_id=ctx.delivery_id,
-                timestamp_utc=_format_timestamp_utc(now),
+                timestamp_utc=format_timestamp_utc(now),
                 code=code,
                 hint=hint,
             ),

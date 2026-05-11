@@ -134,6 +134,17 @@ flowchart LR
 Detailed architecture and state diagrams:
 - [`docs/01-architecture.md`](docs/01-architecture.md)
 
+## Repository Map
+
+- `src/zammad_pdf_archiver/runtime.py` and `asgi.py` load settings and create the FastAPI app.
+- `src/zammad_pdf_archiver/app/routes/` contains the HTTP surfaces: ingest, retry/jobs, admin, health, and metrics.
+- `src/zammad_pdf_archiver/app/jobs/` contains the asynchronous ticket-processing flow, Redis queue backend, history stream, and shutdown tracking.
+- `src/zammad_pdf_archiver/adapters/` contains external IO: Zammad REST, snapshot building, PDF rendering, signing/TSA, Redis, and filesystem storage.
+- `src/zammad_pdf_archiver/domain/` contains pure policy and data-model code: tag state, ticket IDs, path safety, audit records, and idempotency.
+- `src/zammad_pdf_archiver/config/` contains settings, env/YAML loading, legacy env aliases, and cross-field validation.
+- `scripts/` contains CI, ops, demo, and manual Docker E2E helpers.
+- `test/static`, `test/unit`, `test/integration`, and `test/nfr` mirror the verification layers used by CI.
+
 ## High-Level Behavior
 
 ```mermaid
@@ -240,7 +251,7 @@ make demo-down     # tear down
 | `GET` | `/jobs/{ticket_id}` | Bearer | Job status for a ticket |
 | `GET` | `/jobs/queue/stats` | Bearer | Queue statistics |
 | `GET` | `/jobs/history` | Bearer | Processing history |
-| `POST` | `/jobs/queue/dlq/drain` | Bearer | Drain dead-letter queue |
+| `POST` | `/jobs/queue/dlq/drain` | Bearer | Delete dead-letter queue entries |
 | `GET` | `/admin` | Bearer or Basic | Admin dashboard (optional) |
 | `GET` | `/admin/api/*` | Bearer | Admin API (optional) |
 | `GET` | `/healthz` | -- | Health check (supports `?deep=true`) |
@@ -296,7 +307,8 @@ make test          # pytest (all tests)
 make test-fast     # static + unit tests only
 make qa            # full QA: lint + mypy + all test suites
 make verify        # QA + sdist/wheel build
-make smoke         # smoke test (requires running service)
+make smoke         # repo structure smoke check
+make test-e2e      # manual Docker Compose API E2E lane
 make dev           # Docker Compose dev stack (hot-reload)
 ```
 

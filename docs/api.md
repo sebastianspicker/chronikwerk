@@ -17,7 +17,7 @@ Webhook ingestion endpoint.
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
+- `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
 #### Request body
 
@@ -58,7 +58,7 @@ Batch webhook ingestion endpoint.
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
+- `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
 #### Request body
 
@@ -140,7 +140,7 @@ Notes:
 #### Error responses
 
 - `401` missing/invalid bearer token
-- `503` `{"detail":"ops_token_not_configured"}` or `{"detail":"settings_not_configured"}`
+- `503` `{"detail":"admin_token_not_configured"}` or `{"detail":"settings_not_configured"}`
 
 ### `GET /jobs/queue/stats`
 
@@ -160,10 +160,28 @@ Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 }
 ```
 
+#### Response (redis queue backend)
+
+```json
+{
+  "execution_backend": "redis_queue",
+  "queue_enabled": true,
+  "stream": "zammad:jobs",
+  "group": "zammad:jobs:workers",
+  "consumer": "host-12345",
+  "queue_depth": 0,
+  "pending": 0,
+  "dlq_stream": "zammad:jobs:dlq",
+  "dlq_depth": 0,
+  "retry_max_attempts": 3
+}
+```
+
 #### Error responses
 
 - `401` missing/invalid bearer token
-- `503` `{"detail":"ops_token_not_configured"}` or queue backend unavailable (`{"status":"error","detail":"queue_unavailable"}` payload)
+- `503` `{"detail":"admin_token_not_configured"}`
+- `200` `{"status":"error","detail":"queue_unavailable"}` when the queue backend is unavailable
 
 ### `GET /jobs/history`
 
@@ -176,7 +194,7 @@ Query parameters:
 
 Error responses:
 - `401` missing/invalid bearer token
-- `503` ops token missing or history backend unavailable
+- `503` admin token missing or history backend unavailable
 
 Response:
 
@@ -201,7 +219,7 @@ Response:
 
 ### `POST /jobs/queue/dlq/drain`
 
-Drain dead-letter queue entries from Redis stream.
+Delete dead-letter queue entries from the Redis stream without replaying them.
 Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 
 Query parameters:
@@ -209,7 +227,7 @@ Query parameters:
 
 Error responses:
 - `401` missing/invalid bearer token
-- `503` ops token missing or DLQ backend unavailable
+- `503` admin token missing or DLQ backend unavailable
 
 Response:
 
@@ -217,23 +235,6 @@ Response:
 {
   "status": "ok",
   "drained": 12
-}
-```
-
-#### Response (redis queue backend)
-
-```json
-{
-  "execution_backend": "redis_queue",
-  "queue_enabled": true,
-  "stream": "zammad:jobs",
-  "group": "zammad:jobs:workers",
-  "consumer": "host-12345",
-  "queue_depth": 0,
-  "pending": 0,
-  "dlq_stream": "zammad:jobs:dlq",
-  "dlq_depth": 0,
-  "retry_max_attempts": 3
 }
 ```
 

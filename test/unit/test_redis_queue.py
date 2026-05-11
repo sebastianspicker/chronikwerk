@@ -7,6 +7,7 @@ import pytest
 
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
+from zammad_pdf_archiver.app.jobs._queue_types import _QueueEnvelope
 from zammad_pdf_archiver.app.jobs.process_ticket import ProcessTicketResult
 
 
@@ -121,7 +122,7 @@ def test_handle_envelope_transient_requeues(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
     monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _stub_enqueue_ticket_job)
-    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+    envelope = _QueueEnvelope(
         message_id="1-0",
         payload={"ticket_id": 123},
         delivery_id="d-1",
@@ -193,7 +194,7 @@ def test_handle_envelope_transient_requeues_and_deletes_original_when_ack_fails(
     monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
     monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _stub_enqueue_ticket_job)
     fake.xack = _failing_xack  # type: ignore[method-assign]
-    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+    envelope = _QueueEnvelope(
         message_id="1-0",
         payload={"ticket_id": 123},
         delivery_id="d-1",
@@ -232,7 +233,7 @@ def test_handle_envelope_permanent_moves_to_dlq(monkeypatch, tmp_path) -> None:
         )
 
     monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
-    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+    envelope = _QueueEnvelope(
         message_id="2-0",
         payload={"ticket_id": 321},
         delivery_id="d-2",
@@ -291,7 +292,7 @@ def test_handle_envelope_not_before_is_deferred_without_reenqueue(monkeypatch, t
         raise AssertionError("process_ticket should not run before not_before_ts")
 
     monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
-    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+    envelope = _QueueEnvelope(
         message_id="3-0",
         payload={"ticket_id": 123},
         delivery_id="d-3",
@@ -300,7 +301,7 @@ def test_handle_envelope_not_before_is_deferred_without_reenqueue(monkeypatch, t
         last_error="tmp",
     )
 
-    defer_seconds = redis_queue.asyncio.run(  # noqa: SLF001
+    defer_seconds = redis_queue.asyncio.run(
         redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)
     )
 
@@ -364,7 +365,7 @@ def test_claim_stale_pending_reassigns_messages() -> None:
             return [(message_id, {"payload_json": "{}"}) for message_id in message_ids]
 
     fake = _ClaimRedis()
-    messages = redis_queue.asyncio.run(  # noqa: SLF001
+    messages = redis_queue.asyncio.run(
         redis_queue._claim_stale_pending(
             fake,
             stream="stream-1",
@@ -411,7 +412,7 @@ def test_handle_envelope_retry_exhausted_moves_to_dlq(monkeypatch, tmp_path) -> 
         return ProcessTicketResult(status="failed_transient", ticket_id=42, message="transient")
 
     monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
-    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+    envelope = _QueueEnvelope(
         message_id="1-0",
         payload={"ticket_id": 42},
         delivery_id="dlv1",
@@ -437,7 +438,7 @@ def test_handle_envelope_success_acks_and_increments(monkeypatch, tmp_path) -> N
         return ProcessTicketResult(status="ok", ticket_id=99, message="done")
 
     monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
-    envelope = redis_queue._QueueEnvelope(  # noqa: SLF001
+    envelope = _QueueEnvelope(
         message_id="5-0",
         payload={"ticket_id": 99},
         delivery_id="d-5",
@@ -482,88 +483,41 @@ def test_process_messages_exception_is_caught(monkeypatch, tmp_path) -> None:
     assert result is None
 
 
-def test_stop_worker_no_task_returns_immediately(tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
-    )
-    manager = redis_queue.RedisQueueManager()
-    redis_queue.asyncio.run(manager.stop_worker(settings))  # should not raise
-
-
-def test_stop_worker_timeout_cancels_task(tmp_path) -> None:
+def test_stop_queue_worker_no_task_returns_immediately(tmp_path) -> None:
     settings = make_settings(
         str(tmp_path),
         overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
     )
 
     async def run() -> None:
-        manager = redis_queue.RedisQueueManager()
-        key = redis_queue._worker_key(settings)  # noqa: SLF001
+        redis_queue._worker_task = None  # noqa: SLF001
+        redis_queue._worker_stop_event = None  # noqa: SLF001
+        await redis_queue.stop_queue_worker(settings)
+
+    redis_queue.asyncio.run(run())
+
+
+def test_stop_queue_worker_timeout_cancels_task(tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}},
+    )
+
+    async def run() -> None:
         stop_event = redis_queue.asyncio.Event()
 
         async def _forever() -> None:
             await redis_queue.asyncio.sleep(999)
 
         task = redis_queue.asyncio.create_task(_forever())
-        manager._tasks[key] = task  # noqa: SLF001
-        manager._stops[key] = stop_event  # noqa: SLF001
+        redis_queue._worker_task = task  # noqa: SLF001
+        redis_queue._worker_stop_event = stop_event  # noqa: SLF001
 
-        try:
-            await manager.stop_worker(settings, timeout=0.01)
-        except BaseException:  # noqa: BLE001
-            pass
+        await redis_queue.stop_queue_worker(settings, timeout=0.01)
         assert task.done()
-
-    redis_queue.asyncio.run(run())
-
-
-def test_stop_all_with_no_workers() -> None:
-    async def run() -> None:
-        manager = redis_queue.RedisQueueManager()
-        await manager.stop_all()
-
-    redis_queue.asyncio.run(run())
-
-
-def test_stop_all_cancels_slow_tasks() -> None:
-    async def run() -> None:
-        manager = redis_queue.RedisQueueManager()
-        key = "test-key"
-        stop_event = redis_queue.asyncio.Event()
-
-        async def _forever() -> None:
-            await redis_queue.asyncio.sleep(999)
-
-        task = redis_queue.asyncio.create_task(_forever())
-        manager._tasks[key] = task  # noqa: SLF001
-        manager._stops[key] = stop_event  # noqa: SLF001
-
-        try:
-            await manager.stop_all(timeout=0.01)
-        except BaseException:  # noqa: BLE001
-            pass
-        assert task.done()
-
-    redis_queue.asyncio.run(run())
-
-
-def test_stop_all_key_without_stop_event() -> None:
-    """stop_all skips signalling for keys that have a task but no stop event."""
-
-    async def run() -> None:
-        manager = redis_queue.RedisQueueManager()
-        key = "orphan-key"
-
-        async def _quick() -> None:
-            pass
-
-        task = redis_queue.asyncio.create_task(_quick())
-        manager._tasks[key] = task  # noqa: SLF001
-        # intentionally no entry in _stops
-
-        await manager.stop_all()
-        assert not manager._tasks  # noqa: SLF001
+        assert stop_event.is_set()
+        assert redis_queue._worker_task is None  # noqa: SLF001
+        assert redis_queue._worker_stop_event is None  # noqa: SLF001
 
     redis_queue.asyncio.run(run())
 

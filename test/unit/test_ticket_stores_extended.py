@@ -10,6 +10,7 @@ import pytest
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.jobs.shutdown import clear_shutting_down, set_shutting_down
 from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.domain.errors import TransientError
 from zammad_pdf_archiver.domain.idempotency import InMemoryTTLSet
 from zammad_pdf_archiver.domain.redis_delivery_id import RedisDeliveryIdStore
 
@@ -164,7 +165,7 @@ class TestTryAcquireTicket:
         asyncio.run(_run())
 
     def test_acquire_ticket_distributed_failure(self) -> None:
-        """When Redis raises, fallback to local lock succeeds (logs warning)."""
+        """When Redis raises, fail closed and release the process-local lock."""
         settings = _make_settings(backend="redis", redis_url="redis://localhost:6379/0")
 
         mock_store = AsyncMock()
@@ -176,9 +177,9 @@ class TestTryAcquireTicket:
                 "_get_ticket_lock_store",
                 return_value=mock_store,
             ):
-                acquired = await ticket_stores.try_acquire_ticket(settings, 99)
-            assert acquired is True
-            assert ticket_stores.is_ticket_in_flight(99)
+                with pytest.raises(TransientError, match="Redis ticket lock unavailable"):
+                    await ticket_stores.try_acquire_ticket(settings, 99)
+            assert not ticket_stores.is_ticket_in_flight(99)
 
         asyncio.run(_run())
 

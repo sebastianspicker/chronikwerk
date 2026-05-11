@@ -9,6 +9,7 @@ Thanks for contributing to **zammad-pdf-archiver**.
 3. Run local checks:
    - `make lint`
    - `make test`
+   - `make qa`
 4. Open a pull request with:
    - a clear problem statement / intent
    - any operational impact documented in `docs/08-operations.md` and/or `docs/09-security.md`
@@ -26,9 +27,8 @@ Goal: reproducible releases (sdist/wheel) and optionally Docker images.
 See `docs/release-checklist.md` for the step-by-step release procedure.
 
 1. Local checks:
-   - `make lint`
-   - `make test`
-   - optional: `mypy src`
+   - `make qa`
+   - `make verify`
 2. Version + changelog:
    - update `CHANGELOG.md`
    - update version in `pyproject.toml`

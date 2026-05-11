@@ -126,7 +126,7 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         return False
 
     def _is_allowed_tag(self, tag: str) -> bool:
-        # Bug #P2-7: Limit nesting depth to prevent resource exhaustion.
+        # Keep malformed or intentionally deep fragments from creating excessive parser output.
         return tag in _ALLOWED_TAGS and len(self._open) < 50
 
     def _clean_attrs(self, tag: str, attrs: list[tuple[str, str | None]]) -> list[tuple[str, str]]:

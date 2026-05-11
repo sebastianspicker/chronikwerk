@@ -47,7 +47,7 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
 
     ticket_stores.reset_for_tests()
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -161,7 +161,7 @@ def test_e2e_smoke_ingest_duplicate_delivery_id_is_idempotent(tmp_path, monkeypa
 
     ticket_stores.reset_for_tests()
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")

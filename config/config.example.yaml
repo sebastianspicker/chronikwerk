@@ -98,7 +98,7 @@ hardening:
   webhook:
     allow_unsigned: false        # HARDENING_WEBHOOK_ALLOW_UNSIGNED
     allow_unsigned_when_no_secret: false # HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET
-    require_delivery_id: false   # HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID
+    require_delivery_id: true    # HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID
   transport:
     trust_env: false             # HARDENING_TRANSPORT_TRUST_ENV
     allow_insecure_http: false   # HARDENING_TRANSPORT_ALLOW_INSECURE_HTTP

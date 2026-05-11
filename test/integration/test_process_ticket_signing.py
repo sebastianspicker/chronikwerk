@@ -93,7 +93,7 @@ def test_process_ticket_signing_writes_signed_pdf_and_audit_fingerprint(
     settings = _test_settings(str(tmp_path), pfx_path=pfx_path, password="secret")
 
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {
         "ticket": {"id": 123},
@@ -196,7 +196,7 @@ def test_process_ticket_signing_with_unreachable_tsa_is_transient_and_keeps_trig
     )
 
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {
         "ticket": {"id": 123},
@@ -292,7 +292,7 @@ def test_process_ticket_signing_with_invalid_pfx_password_is_permanent_and_drops
     settings = _test_settings(str(tmp_path), pfx_path=pfx_path, password="wrong-password")
 
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {
         "ticket": {"id": 123},
@@ -383,7 +383,7 @@ def test_process_ticket_signing_with_tsa_http_503_is_transient_and_keeps_trigger
     )
 
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {
         "ticket": {"id": 123},
