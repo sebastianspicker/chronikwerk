@@ -222,7 +222,7 @@ class WebhookHardeningSettings(_BaseSection):
     # Explicit opt-in to allow /ingest when no HMAC secret is configured (insecure; dev/local only).
     allow_unsigned_when_no_secret: bool = False
     # When enabled, /ingest requires X-Zammad-Delivery and the replay TTL must be > 0.
-    require_delivery_id: bool = False
+    require_delivery_id: bool = True
     # When True, reject SHA-1 HMAC signatures (only allow SHA-256+).
     webhook_reject_sha1: bool = False
 

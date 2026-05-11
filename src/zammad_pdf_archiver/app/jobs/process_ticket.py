@@ -177,7 +177,27 @@ async def _process_with_ticket_lock(
     payload: dict[str, Any],
 ) -> ProcessTicketResult:
     """Acquire an exclusive lock for the ticket, then run the processing pipeline."""
-    acquired = await try_acquire_ticket(ctx.settings, ctx.ticket_id)
+    try:
+        acquired = await try_acquire_ticket(ctx.settings, ctx.ticket_id)
+    except TransientError as exc:
+        failed_total.inc()
+        log.warning(
+            "process_ticket.ticket_lock_unavailable",
+            ticket_id=ctx.ticket_id,
+            delivery_id=ctx.delivery_id,
+        )
+        await _record_history(
+            ctx,
+            status="failed_transient",
+            classification="Transient",
+            message=str(exc),
+        )
+        return ProcessTicketResult(
+            status="failed_transient",
+            ticket_id=ctx.ticket_id,
+            classification="Transient",
+            message=str(exc),
+        )
     if not acquired:
         return await _skip_in_flight(ctx)
 

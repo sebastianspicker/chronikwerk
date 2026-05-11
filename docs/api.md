@@ -17,7 +17,7 @@ Webhook ingestion endpoint.
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
+- `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
 #### Request body
 
@@ -58,7 +58,7 @@ Batch webhook ingestion endpoint.
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
+- `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
 #### Request body
 

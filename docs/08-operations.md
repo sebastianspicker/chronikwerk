@@ -38,7 +38,7 @@ This runbook is for deployment, monitoring, troubleshooting, and recovery.
 Common ingest error responses:
 - `403` invalid/missing HMAC signature when signed mode is active
 - `503` no webhook auth configured and unsigned mode disabled
-- `400` missing delivery header when `require_delivery_id=true`
+- `400` missing delivery header when `require_delivery_id=true` (default)
 - `413` request exceeds configured body size; over-limit `Content-Length` is rejected before body reads, and streaming bodies stop at the first over-limit chunk
 - `422` invalid body (e.g. missing or invalid ticket id)
 - `429` request rate-limited

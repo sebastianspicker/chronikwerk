@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import re
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any, Protocol
@@ -211,34 +209,13 @@ async def enrich_attachment_content(
         return snapshot
 
     ticket_id = snapshot.ticket.id
-    semaphore = asyncio.Semaphore(5)  # Limit concurrency to avoid overloading Zammad
-
-    async def _fetch_one(
-        article_id: int, att: AttachmentMeta
-    ) -> tuple[int, int | None, bytes | None]:
-        if att.attachment_id is None:
-            return article_id, None, None
-
-        # Pre-check size if available to avoid useless downloads
-        if att.size is not None and att.size > max_attachment_bytes_per_file:
-            return article_id, att.attachment_id, None
-
-        async with semaphore:
-            try:
-                raw = await client.get_attachment_content(ticket_id, article_id, att.attachment_id)
-                if len(raw) > max_attachment_bytes_per_file:
-                    return article_id, att.attachment_id, None
-                return article_id, att.attachment_id, raw
-            except Exception:
-                return article_id, att.attachment_id, None
-
-    targets = _attachment_fetch_targets(snapshot, fetch_one=_fetch_one)
-
-    if not targets:
-        return snapshot
-
-    results = await asyncio.gather(*targets)
-    content_map = _attachment_content_map(results)
+    content_map = await _fetch_attachment_content_with_budget(
+        snapshot=snapshot,
+        client=client,
+        ticket_id=ticket_id,
+        max_attachment_bytes_per_file=max_attachment_bytes_per_file,
+        max_total_attachment_bytes=max_total_attachment_bytes,
+    )
     return _snapshot_with_attachment_content(
         snapshot=snapshot,
         content_map=content_map,
@@ -255,28 +232,44 @@ def _attachment_enrichment_enabled(
     return include_attachment_binary and max_total_attachment_bytes > 0
 
 
-def _attachment_fetch_targets(
-    snapshot: Snapshot,
+async def _fetch_attachment_content_with_budget(
     *,
-    fetch_one: Callable[[int, AttachmentMeta], Awaitable[tuple[int, int | None, bytes | None]]],
-) -> list[Awaitable[tuple[int, int | None, bytes | None]]]:
-    """Build a list of coroutines to fetch each attachment, ready for asyncio.gather."""
-    targets: list[Awaitable[tuple[int, int | None, bytes | None]]] = []
+    snapshot: Snapshot,
+    client: ZammadAttachmentClient,
+    ticket_id: int,
+    max_attachment_bytes_per_file: int,
+    max_total_attachment_bytes: int,
+) -> dict[tuple[int, int], bytes]:
+    """Fetch attachment binaries without exceeding the configured total byte budget."""
+    content_map: dict[tuple[int, int], bytes] = {}
+    total_so_far = 0
     for article in snapshot.articles:
         for att in article.attachments:
-            targets.append(fetch_one(article.id, att))
-    return targets
+            if att.attachment_id is None:
+                continue
 
+            remaining_budget = max_total_attachment_bytes - total_so_far
+            if remaining_budget <= 0:
+                return content_map
 
-def _attachment_content_map(
-    results: list[tuple[int, int | None, bytes | None]],
-) -> dict[tuple[int, int], bytes]:
-    out: dict[tuple[int, int], bytes] = {}
-    for article_id, attachment_id, content in results:
-        if attachment_id is None or content is None:
-            continue
-        out[(article_id, attachment_id)] = content
-    return out
+            if att.size is not None and att.size > max_attachment_bytes_per_file:
+                continue
+            if att.size is not None and att.size > remaining_budget:
+                return content_map
+
+            try:
+                raw = await client.get_attachment_content(ticket_id, article.id, att.attachment_id)
+            except Exception:
+                continue
+            if len(raw) > max_attachment_bytes_per_file:
+                continue
+            if len(raw) > remaining_budget:
+                return content_map
+
+            content_map[(article.id, att.attachment_id)] = raw
+            total_so_far += len(raw)
+
+    return content_map
 
 
 def _snapshot_with_attachment_content(

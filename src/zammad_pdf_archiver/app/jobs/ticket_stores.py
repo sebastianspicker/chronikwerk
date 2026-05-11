@@ -4,6 +4,7 @@ import structlog
 
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down
 from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.domain.errors import TransientError
 from zammad_pdf_archiver.domain.idempotency import DeliveryIdStore, InMemoryTTLSet
 from zammad_pdf_archiver.domain.redis_delivery_id import RedisDeliveryIdStore
 from zammad_pdf_archiver.observability.metrics import ticket_lock_redis_failures_total
@@ -94,12 +95,14 @@ async def try_acquire_ticket(settings: Settings, ticket_id: int) -> bool:
                         _IN_FLIGHT_TICKETS.discard(ticket_id)
                     return False
             except Exception:
-                # If Redis fails, we fall back to local lock only.
+                async with _IN_FLIGHT_TICKETS_GUARD:
+                    _IN_FLIGHT_TICKETS.discard(ticket_id)
                 ticket_lock_redis_failures_total.inc()
                 log.error(
-                    "process_ticket.redis_lock_failed_fallback_to_local",
+                    "process_ticket.redis_lock_failed",
                     ticket_id=ticket_id,
                 )
+                raise TransientError("Redis ticket lock unavailable") from None
 
     return True
 
