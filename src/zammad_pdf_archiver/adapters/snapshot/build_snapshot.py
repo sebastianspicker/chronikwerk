@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any, Protocol
 
+import structlog
+
 from zammad_pdf_archiver.adapters.zammad.models import Article as ZammadArticle
 from zammad_pdf_archiver.adapters.zammad.models import TagList
 from zammad_pdf_archiver.adapters.zammad.models import Ticket as ZammadTicket
@@ -17,6 +19,8 @@ from zammad_pdf_archiver.domain.snapshot_models import (
     TicketMeta,
 )
 from zammad_pdf_archiver.domain.ticket_utils import ticket_custom_fields
+
+log = structlog.get_logger(__name__)
 
 _HTML_TAG_HINT_RE = re.compile(
     r"<\s*(?:p|div|br|span|a|ul|ol|li|pre|code|blockquote|table|tr|td|th|strong|em|b|i|u)\b",
@@ -260,6 +264,13 @@ async def _fetch_attachment_content_with_budget(
             try:
                 raw = await client.get_attachment_content(ticket_id, article.id, att.attachment_id)
             except Exception:
+                log.warning(
+                    "attachment_fetch_failed",
+                    ticket_id=ticket_id,
+                    article_id=article.id,
+                    attachment_id=att.attachment_id,
+                    exc_info=True,
+                )
                 continue
             if len(raw) > max_attachment_bytes_per_file:
                 continue
