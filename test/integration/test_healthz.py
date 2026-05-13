@@ -31,6 +31,19 @@ def test_healthz_ok(tmp_path) -> None:
     assert response.headers.get("X-Request-Id")
 
 
+def test_healthz_without_settings_omits_version() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "service" not in body
+    assert "version" not in body
+
+
 def test_deep_healthz_does_not_leak_path(tmp_path) -> None:
     """GET /healthz?deep=true must never expose the filesystem path."""
     app = create_app(_test_settings(str(tmp_path)))

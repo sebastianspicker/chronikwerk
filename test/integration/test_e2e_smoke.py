@@ -45,7 +45,7 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
 
     import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
 
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
@@ -159,7 +159,7 @@ def test_e2e_smoke_ingest_duplicate_delivery_id_is_idempotent(tmp_path, monkeypa
 
     import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
 
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
@@ -239,7 +239,7 @@ def test_e2e_smoke_batch_duplicate_delivery_id_is_idempotent(tmp_path, monkeypat
     settings = load_settings()
     app = create_app(settings)
 
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
 
     payloads = [
         {"ticket": {"id": 101}, "user": {"login": "agent-101"}},

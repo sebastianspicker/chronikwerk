@@ -90,6 +90,7 @@ class TestDecodeEnvelope:
             "delivery_id": "d-abc",
             "attempt": "0",
             "not_before_ts": "0.0",
+            "enqueued_at": "123.4",
         }
         env = _decode_envelope("100-0", raw)
 
@@ -100,6 +101,7 @@ class TestDecodeEnvelope:
         assert env.attempt == 0
         assert env.not_before_ts == 0.0
         assert env.last_error is None
+        assert env.enqueued_at == "123.4"
 
     def test_decode_missing_payload(self) -> None:
         """When payload_json is absent, default '{}' yields an empty dict."""
@@ -111,7 +113,7 @@ class TestDecodeEnvelope:
 
     def test_decode_invalid_json(self) -> None:
         raw: dict[Any, Any] = {"payload_json": "NOT-JSON{{{"}
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(ValueError, match="Invalid JSON in queue payload_json"):
             _decode_envelope("300-0", raw)
 
     def test_decode_payload_not_object(self) -> None:
@@ -317,6 +319,7 @@ class TestEnqueueTicketJob:
 
         _, fields = fake.xadds[0]
         assert len(fields["last_error"]) == 500
+        assert fields["last_error_truncated"] == "1"
 
 
 # ===================================================================
@@ -407,6 +410,7 @@ class TestPushDlq:
             attempt=5,
             not_before_ts=0.0,
             last_error="some error",
+            enqueued_at="123.4",
         )
 
         asyncio.run(
@@ -427,6 +431,7 @@ class TestPushDlq:
         assert fields["attempt"] == "5"
         assert fields["reason"] == "retry_exhausted"
         assert fields["error"] == "still failing"
+        assert fields["enqueued_at"] == "123.4"
         assert "failed_at" in fields
 
     def test_push_dlq_without_error_message(self, tmp_path) -> None:

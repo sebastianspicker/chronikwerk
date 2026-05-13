@@ -418,6 +418,38 @@ def test_main_show_deprecated_subcommand(monkeypatch, capsys) -> None:
     assert "No deprecated environment variables" in capsys.readouterr().out
 
 
+def test_main_version_prints_package_version(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["zammad-pdf-archiver", "--version"])
+
+    import pytest
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 0
+    assert cli.__version__ in capsys.readouterr().out
+
+
+def test_main_config_option_passes_path(monkeypatch, tmp_path) -> None:
+    settings = make_settings(str(tmp_path))
+    config_path = tmp_path / "config.yaml"
+    seen: dict[str, object] = {}
+
+    def _load_settings(*, config_path=None):
+        seen["config_path"] = config_path
+        return settings
+
+    monkeypatch.setattr(cli, "load_settings", _load_settings)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["zammad-pdf-archiver", "--config", str(config_path), "validate-config"],
+    )
+
+    assert cli.main() == 0
+    assert seen["config_path"] == str(config_path)
+
+
 # ---------------------------------------------------------------------------
 # _cli_command decorator edge cases
 # ---------------------------------------------------------------------------
