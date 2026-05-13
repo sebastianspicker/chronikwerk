@@ -66,37 +66,41 @@ async def _push_dlq(
         "reason": reason,
         "failed_at": str(time.time()),
     }
+    if envelope.enqueued_at:
+        fields["enqueued_at"] = envelope.enqueued_at
     if error_message:
         fields["error"] = error_message[:500]
     await redis.xadd(settings.workflow.queue_dlq_stream, fields)
     queue_dlq_total.inc()
 
 
-def _extract_stream_messages(records: Any) -> list[tuple[Any, Any]]:
+def _parse_stream_entries(records: Any, *, nested: bool) -> list[tuple[Any, Any]]:
     out: list[tuple[Any, Any]] = []
     if not isinstance(records, list):
         return out
 
-    for record in records:
-        if not isinstance(record, (list, tuple)) or len(record) != 2:
-            continue
-        _stream_name, messages = record
-        if not isinstance(messages, list):
-            continue
-        for message in messages:
-            if isinstance(message, (list, tuple)) and len(message) == 2:
-                out.append((message[0], message[1]))
-    return out
+    entries = records
+    if nested:
+        entries = []
+        for record in records:
+            if not isinstance(record, (list, tuple)) or len(record) != 2:
+                continue
+            _stream_name, messages = record
+            if isinstance(messages, list):
+                entries.extend(messages)
 
-
-def _extract_claimed_messages(records: Any) -> list[tuple[Any, Any]]:
-    out: list[tuple[Any, Any]] = []
-    if not isinstance(records, list):
-        return out
-    for message in records:
+    for message in entries:
         if isinstance(message, (list, tuple)) and len(message) == 2:
             out.append((message[0], message[1]))
     return out
+
+
+def _extract_stream_messages(records: Any) -> list[tuple[Any, Any]]:
+    return _parse_stream_entries(records, nested=True)
+
+
+def _extract_claimed_messages(records: Any) -> list[tuple[Any, Any]]:
+    return _parse_stream_entries(records, nested=False)
 
 
 def _pending_entry_field(entry: Any, key: str) -> Any:
