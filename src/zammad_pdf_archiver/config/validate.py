@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import structlog
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from zammad_pdf_archiver.config.settings import Settings, TransportHardeningSettings
 
@@ -90,7 +90,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_redis_url(settings, issues)
     _validate_admin_settings(settings, issues)
     _validate_metrics_settings(settings, issues)
-    _warn_multi_worker_without_redis(settings)
+    _validate_multi_worker_without_redis(settings, issues)
 
     if issues:
         raise ConfigValidationError(issues)
@@ -117,19 +117,16 @@ def _validate_primary_transport(
     transport: TransportHardeningSettings,
     issues: list[ConfigValidationIssue],
 ) -> None:
-    if (
-        str(settings.zammad.base_url).lower().startswith("http://")
-        and not transport.allow_insecure_http
-    ):
-        issues.append(
-            ConfigValidationIssue(
-                path="zammad.base_url",
-                message=(
-                    "Plain HTTP upstream is not allowed by default. "
-                    "Use https:// or set hardening.transport.allow_insecure_http=true."
-                ),
-            )
-        )
+    _validate_url_security(
+        url=str(settings.zammad.base_url),
+        path="zammad.base_url",
+        transport=transport,
+        issues=issues,
+        insecure_message=(
+            "Plain HTTP upstream is not allowed by default. "
+            "Use https:// or set hardening.transport.allow_insecure_http=true."
+        ),
+    )
 
     if not settings.zammad.verify_tls and not transport.allow_insecure_tls:
         issues.append(
@@ -142,9 +139,25 @@ def _validate_primary_transport(
             )
         )
 
+def _validate_url_security(
+    *,
+    url: str,
+    path: str,
+    transport: TransportHardeningSettings,
+    issues: list[ConfigValidationIssue],
+    insecure_message: str,
+) -> None:
+    if url.lower().startswith("http://") and not transport.allow_insecure_http:
+        issues.append(
+            ConfigValidationIssue(
+                path=path,
+                message=insecure_message,
+            )
+        )
+
     _validate_upstream_host(
-        url=str(settings.zammad.base_url),
-        path="zammad.base_url",
+        url=url,
+        path=path,
         allow_local_upstreams=transport.allow_local_upstreams,
         issues=issues,
     )
@@ -173,7 +186,7 @@ def _validate_delivery_id_requirement(
     settings: Settings, issues: list[ConfigValidationIssue]
 ) -> None:
     if settings.hardening.webhook.require_delivery_id:
-        if int(settings.workflow.delivery_id_ttl_seconds) <= 0:
+        if settings.workflow.delivery_id_ttl_seconds <= 0:
             issues.append(
                 ConfigValidationIssue(
                     path="workflow.delivery_id_ttl_seconds",
@@ -194,23 +207,31 @@ def _validate_tsa_transport(
     # If timestamping is enabled, enforce secure transport for the TSA as well.
     if settings.signing.timestamp.enabled:
         tsa_url = settings.signing.timestamp.rfc3161.tsa_url
-        if tsa_url is not None and str(tsa_url).lower().startswith("http://"):
-            if not transport.allow_insecure_http:
-                issues.append(
-                    ConfigValidationIssue(
-                        path="signing.timestamp.rfc3161.tsa_url",
-                        message=(
-                            "Plain HTTP TSA URL is not allowed by default. "
-                            "Use https:// or set hardening.transport.allow_insecure_http=true."
-                        ),
-                    )
+        if tsa_url is None:
+            issues.append(
+                ConfigValidationIssue(
+                    path="signing.timestamp.rfc3161.tsa_url",
+                    message="signing.timestamp.enabled=true requires rfc3161.tsa_url to be set.",
                 )
+            )
         if tsa_url is not None:
-            _validate_upstream_host(
+            _validate_url_security(
                 url=str(tsa_url),
                 path="signing.timestamp.rfc3161.tsa_url",
-                allow_local_upstreams=transport.allow_local_upstreams,
+                transport=transport,
                 issues=issues,
+                insecure_message=(
+                    "Plain HTTP TSA URL is not allowed by default. "
+                    "Use https:// or set hardening.transport.allow_insecure_http=true."
+                ),
+            )
+        ca_bundle_path = settings.signing.timestamp.rfc3161.ca_bundle_path
+        if ca_bundle_path is not None and not ca_bundle_path.is_file():
+            issues.append(
+                ConfigValidationIssue(
+                    path="signing.timestamp.rfc3161.ca_bundle_path",
+                    message="TSA CA bundle path must point to a readable file.",
+                )
             )
 
 
@@ -234,44 +255,56 @@ def _validate_redis_url(settings: Settings, issues: list[ConfigValidationIssue])
 
 def _validate_admin_settings(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     if settings.admin.enabled:
-        token = settings.admin.bearer_token
-        token_value = token.get_secret_value().strip() if token is not None else ""
-        if not token_value:
-            issues.append(
-                ConfigValidationIssue(
-                    path="admin.bearer_token",
-                    message=(
-                        "admin.enabled=true requires admin.bearer_token (set ADMIN_BEARER_TOKEN)."
-                    ),
-                )
-            )
+        _validate_token_required(
+            settings.admin.bearer_token,
+            path="admin.bearer_token",
+            message="admin.enabled=true requires admin.bearer_token (set ADMIN_BEARER_TOKEN).",
+            issues=issues,
+        )
 
 
 def _validate_metrics_settings(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     if settings.observability.metrics_enabled:
-        token = settings.observability.metrics_bearer_token
-        token_value = token.get_secret_value().strip() if token is not None else ""
-        if not token_value:
-            issues.append(
-                ConfigValidationIssue(
-                    path="observability.metrics_bearer_token",
-                    message=(
-                        "observability.metrics_enabled=true requires "
-                        "observability.metrics_bearer_token (set METRICS_BEARER_TOKEN)."
-                    ),
-                )
-            )
+        _validate_token_required(
+            settings.observability.metrics_bearer_token,
+            path="observability.metrics_bearer_token",
+            message=(
+                "observability.metrics_enabled=true requires "
+                "observability.metrics_bearer_token (set METRICS_BEARER_TOKEN)."
+            ),
+            issues=issues,
+        )
 
 
-def _warn_multi_worker_without_redis(settings: Settings) -> None:
-    """Emit a startup warning when multiple workers may be configured without Redis
-    coordination, which can lead to duplicate ticket processing due to the
-    non-atomic tag state machine (see state_machine.py)."""
+def _validate_token_required(
+    token: SecretStr | None,
+    *,
+    path: str,
+    message: str,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    token_value = token.get_secret_value().strip() if token is not None else ""
+    if not token_value:
+        issues.append(ConfigValidationIssue(path=path, message=message))
+
+
+def _validate_multi_worker_without_redis(
+    settings: Settings, issues: list[ConfigValidationIssue]
+) -> None:
+    """Reject Redis queue execution without Redis-backed idempotency coordination."""
     execution = (settings.workflow.execution_backend or "").strip().lower()
     idempotency = (settings.workflow.idempotency_backend or "").strip().lower()
     if execution == "redis_queue" and idempotency != "redis":
-        log.warning(
-            "Multi-worker execution_backend='redis_queue' without "
-            "idempotency_backend='redis' may cause duplicate ticket processing. "
-            "Set idempotency_backend='redis' for safe multi-instance deployments."
+        log.error(
+            "Unsafe queue configuration: execution_backend='redis_queue' requires "
+            "idempotency_backend='redis'."
+        )
+        issues.append(
+            ConfigValidationIssue(
+                path="workflow.idempotency_backend",
+                message=(
+                    "execution_backend='redis_queue' requires idempotency_backend='redis' "
+                    "to avoid duplicate ticket processing across workers."
+                ),
+            )
         )

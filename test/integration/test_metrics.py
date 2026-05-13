@@ -61,7 +61,7 @@ def test_metrics_endpoint_returns_prometheus_text(tmp_path) -> None:
     resp = client.get("/metrics", headers={"Authorization": "Bearer metrics-token"})
     assert resp.status_code == 200
     assert "text/plain" in resp.headers.get("content-type", "")
-    assert "processed_total" in resp.text
+    assert "zammad_archiver_processed_total" in resp.text
 
 
 def test_metrics_endpoint_is_not_exposed_when_disabled(tmp_path) -> None:
@@ -116,7 +116,10 @@ def test_metrics_enabled_without_token_fails_closed_at_runtime(tmp_path) -> None
     resp = client.get("/metrics")
 
     assert resp.status_code == 503
-    assert resp.text == "metrics_token_not_configured\n"
+    assert resp.json() == {
+        "detail": "metrics_token_not_configured",
+        "code": "metrics_token_not_configured",
+    }
 
 
 def test_ingest_success_increments_processed_total(tmp_path) -> None:
@@ -124,7 +127,10 @@ def test_ingest_success_increments_processed_total(tmp_path) -> None:
     client = TestClient(app)
 
     auth = {"Authorization": "Bearer metrics-token"}
-    before = _metric_value(client.get("/metrics", headers=auth).text, "processed_total")
+    before = _metric_value(
+        client.get("/metrics", headers=auth).text,
+        "zammad_archiver_processed_total",
+    )
 
     payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -178,5 +184,8 @@ def test_ingest_success_increments_processed_total(tmp_path) -> None:
 
     assert resp.status_code == 202
 
-    after = _metric_value(client.get("/metrics", headers=auth).text, "processed_total")
+    after = _metric_value(
+        client.get("/metrics", headers=auth).text,
+        "zammad_archiver_processed_total",
+    )
     assert after == before + 1.0

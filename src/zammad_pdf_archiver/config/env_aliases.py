@@ -7,15 +7,6 @@ import warnings
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-# Mapping of deprecated env vars to their canonical names
-_DEPRECATED_ALIASES: dict[str, str] = {
-    "ZAMMAD_URL": "ZAMMAD_BASE_URL",
-    "TEMPLATE_VARIANT": "PDF_TEMPLATE_VARIANT",
-    "RENDER_LOCALE": "PDF_LOCALE",
-    "RENDER_TIMEZONE": "PDF_TIMEZONE",
-    "OBSERVABILITY_METRICS_ENABLED": "METRICS_ENABLED",
-}
-
 
 def _warn_deprecated_env_var(old_name: str, new_name: str) -> None:
     warnings.warn(
@@ -174,6 +165,12 @@ _DEPRECATED_VALUE_MAPPINGS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         ("observability", "metrics_enabled"),
     ),
 )
+
+# Mapping of deprecated env vars to their canonical names, derived from the
+# runtime alias table used by settings loading.
+_DEPRECATED_ALIASES: dict[str, str] = {
+    old_name: new_name for old_name, new_name, _path in _DEPRECATED_VALUE_MAPPINGS
+}
 
 
 def get_flat_env_settings_source() -> dict[str, Any]:

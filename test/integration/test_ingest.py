@@ -322,7 +322,7 @@ def test_retry_with_invalid_token(tmp_path) -> None:
 
 
 def test_jobs_endpoint_reports_in_flight_status(tmp_path) -> None:
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
     settings = _test_settings_with_admin(str(tmp_path))
     app = create_app(settings)
     client = TestClient(app)
@@ -338,7 +338,7 @@ def test_jobs_endpoint_reports_in_flight_status(tmp_path) -> None:
         assert response.json() == {"ticket_id": 404, "in_flight": True, "shutting_down": False}
     finally:
         asyncio.run(ticket_stores.release_ticket(settings, 404))
-        ticket_stores.reset_for_tests()
+        ticket_stores._reset_for_tests()
 
 
 def test_ingest_uses_redis_queue_dispatch_when_enabled(tmp_path, monkeypatch) -> None:

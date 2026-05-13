@@ -84,46 +84,64 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
         except httpx.RequestError as exc:
             raise TransientError("Error communicating with RFC3161 TSA") from exc
 
-        if 500 <= response.status_code <= 599:
-            raise TransientError(f"RFC3161 TSA returned HTTP {response.status_code}")
+        tsa_resp = _load_timestamp_response(response)
+        _validate_timestamp_status(tsa_resp)
+        _validate_timestamp_nonce(req, tsa_resp)
+        return tsa_resp
 
-        if response.status_code != 200:
-            raise PermanentError(f"RFC3161 TSA returned HTTP {response.status_code}")
 
-        content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip()
-        if content_type.lower() != "application/timestamp-reply":
-            raise PermanentError("RFC3161 TSA response is malformed (unexpected Content-Type)")
+def _load_timestamp_response(response: httpx.Response) -> tsp.TimeStampResp:
+    if 500 <= response.status_code <= 599:
+        raise TransientError(f"RFC3161 TSA returned HTTP {response.status_code}")
 
-        try:
-            tsa_resp = tsp.TimeStampResp.load(response.content)
-        except Exception as exc:  # noqa: BLE001 - parse errors are not retryable
-            raise PermanentError("RFC3161 TSA response is not a valid TimeStampResp") from exc
+    if response.status_code != 200:
+        raise PermanentError(f"RFC3161 TSA returned HTTP {response.status_code}")
 
-        # Validate the TSA response status before returning.
+    content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip()
+    if content_type.lower() != "application/timestamp-reply":
+        raise PermanentError("RFC3161 TSA response is malformed (unexpected Content-Type)")
+
+    try:
+        return tsp.TimeStampResp.load(response.content)
+    except Exception as exc:  # noqa: BLE001 - parse errors are not retryable
+        raise PermanentError("RFC3161 TSA response is not a valid TimeStampResp") from exc
+
+
+def _validate_timestamp_status(tsa_resp: tsp.TimeStampResp) -> None:
+    try:
         status_info = tsa_resp["status"]
         status_value = status_info["status"].native
-        _ACCEPTED_STATUSES = {"granted", "granted_with_mods"}
-        if status_value not in _ACCEPTED_STATUSES:
-            status_string = ""
-            try:
-                status_string = status_info["status_string"].native or ""
-            except Exception:
-                pass
-            raise PermanentError(
-                f"RFC3161 TSA rejected the request: status={status_value!r}"
-                f"{f' ({status_string})' if status_string else ''}"
-            )
+    except Exception as exc:
+        raise PermanentError("RFC3161 TSA response missing status field") from exc
+    accepted_statuses = {"granted", "granted_with_mods"}
+    if status_value in accepted_statuses:
+        return
 
-        # Verify that the nonce in the response matches the one we sent.
+    status_string = ""
+    try:
+        status_string = status_info["status_string"].native or ""
+    except Exception:
+        pass
+    raise PermanentError(
+        f"RFC3161 TSA rejected the request: status={status_value!r}"
+        f"{f' ({status_string})' if status_string else ''}"
+    )
+
+
+def _validate_timestamp_nonce(req: tsp.TimeStampReq, tsa_resp: tsp.TimeStampResp) -> None:
+    try:
         req_nonce = req["nonce"].native if req["nonce"].contents is not None else None
-        tst_info = tsa_resp["time_stamp_token"]["content"]["encap_content_info"]["content"].parsed
+        token_content = tsa_resp["time_stamp_token"]["content"]
+        tst_info = token_content["encap_content_info"]["content"].parsed
         resp_nonce = tst_info["nonce"].native if tst_info["nonce"].contents is not None else None
-        if req_nonce is not None and req_nonce != resp_nonce:
-            raise PermanentError(
-                f"RFC3161 TSA response nonce mismatch: expected {req_nonce}, got {resp_nonce}"
-            )
-
-        return tsa_resp
+    except Exception as exc:
+        raise PermanentError("RFC3161 TSA response missing timestamp token fields") from exc
+    if req_nonce is not None and resp_nonce is None:
+        raise PermanentError("RFC3161 TSA response missing nonce")
+    if req_nonce is not None and req_nonce != resp_nonce:
+        raise PermanentError(
+            f"RFC3161 TSA response nonce mismatch: expected {req_nonce}, got {resp_nonce}"
+        )
 
 
 def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> TimeStamper:

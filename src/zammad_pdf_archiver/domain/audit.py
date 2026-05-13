@@ -45,16 +45,16 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
             return cert.fingerprint(hashes.SHA256()).hex()
 
         cert_path = signing_settings.pades.cert_path
-        if cert_path is not None:
-            raw = Path(cert_path).read_bytes()
-            if raw.lstrip().startswith(b"-----BEGIN"):
-                cert = x509.load_pem_x509_certificate(raw)
-            else:
-                cert = x509.load_der_x509_certificate(raw)
-            return cert.fingerprint(hashes.SHA256()).hex()
+        if cert_path is None:
+            return None
+        raw = Path(cert_path).read_bytes()
+        if raw.lstrip().startswith(b"-----BEGIN"):
+            cert = x509.load_pem_x509_certificate(raw)
+        else:
+            cert = x509.load_der_x509_certificate(raw)
+        return cert.fingerprint(hashes.SHA256()).hex()
     except Exception:
         return None
-    return None
 
 
 def _get_fingerprint(signing_settings: SigningSettings) -> str | None:

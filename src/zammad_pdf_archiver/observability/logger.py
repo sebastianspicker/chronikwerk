@@ -11,8 +11,25 @@ from structlog.stdlib import ProcessorFormatter
 
 from zammad_pdf_archiver.config.redact import redact_settings_dict, scrub_secrets_in_text
 
+_SENSITIVE_EVENT_KEY_FRAGMENTS = (
+    "authorization",
+    "password",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "exception",
+    "redis_url",
+)
+
 
 def _scrub_event_dict(_: Any, __: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    if not any(
+        fragment in str(key).lower()
+        for key in event_dict
+        for fragment in _SENSITIVE_EVENT_KEY_FRAGMENTS
+    ):
+        return event_dict
     return redact_settings_dict(event_dict)
 
 

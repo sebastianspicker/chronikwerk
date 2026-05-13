@@ -38,11 +38,25 @@ def test_nfr8_jobs_auth_docs_match_routes() -> None:
 
     assert "`GET /jobs/{ticket_id}` (requires Bearer token via `ADMIN_BEARER_TOKEN`)" in readme
     assert "`GET /jobs/queue/stats` (requires Bearer token via `ADMIN_BEARER_TOKEN`)" in readme
-    assert "### `GET /jobs/{ticket_id}`" in api
-    assert "### `GET /jobs/queue/stats`" in api
-    assert api.count("Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.") >= 4
+    for endpoint in [
+        "GET /jobs/{ticket_id}",
+        "GET /jobs/queue/stats",
+        "GET /jobs/history",
+        "POST /jobs/queue/dlq/drain",
+    ]:
+        heading = f"### `{endpoint}`"
+        assert heading in api, f"Missing API docs for {endpoint}"
+        section = api.split(heading, 1)[1].split("\n### `", 1)[0]
+        assert "Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`." in section
     assert "- `GET /jobs/{ticket_id}`" in operations
     assert "- `GET /jobs/queue/stats`" in operations
+    for endpoint in [
+        "GET /jobs/{ticket_id}",
+        "GET /jobs/queue/stats",
+        "GET /jobs/history",
+        "POST /jobs/queue/dlq/drain",
+    ]:
+        assert f"- `{endpoint}`" in operations
     assert operations.count("requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`") >= 4
     assert "/jobs/{ticket_id}" in security
     assert "/jobs/queue/stats" in security

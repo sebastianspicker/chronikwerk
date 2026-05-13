@@ -86,6 +86,7 @@ body {
 
 .meta-item--wide dt {
   width: 160px;
+  flex-basis: 160px;
 }
 
 .article {

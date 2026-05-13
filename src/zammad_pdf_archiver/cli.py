@@ -12,14 +12,23 @@ from collections.abc import Callable
 
 import structlog
 
+from zammad_pdf_archiver._version import __version__
 from zammad_pdf_archiver.app.jobs.history import read_history
 from zammad_pdf_archiver.app.jobs.redis_queue import drain_dlq, get_queue_stats
 from zammad_pdf_archiver.config.env_aliases import _DEPRECATED_ALIASES
 from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.config.redact import redact_settings_dict
+from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import ConfigValidationError
 
 log = structlog.get_logger(__name__)
+
+
+def _load_settings_for_cli(args: argparse.Namespace) -> Settings:
+    config_path = getattr(args, "config", None)
+    if config_path is None:
+        return load_settings()
+    return load_settings(config_path=config_path)
 
 
 def _missing_config_path_from_error(error: ConfigValidationError) -> str | None:
@@ -69,16 +78,13 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
         2: Configuration file not found (when CONFIG_PATH is set)
     """
     try:
-        settings = load_settings()
+        settings = _load_settings_for_cli(args)
         print("✓ Configuration is valid")
         print(f"  - Zammad URL: {settings.zammad.base_url}")
         print(f"  - Storage root: {settings.storage.root}")
         print(f"  - Signing enabled: {settings.signing.enabled}")
         print(f"  - Metrics enabled: {settings.observability.metrics_enabled}")
         return 0
-    except FileNotFoundError as e:
-        print(f"✗ Configuration file not found: {e}", file=sys.stderr)
-        return 2
     except ConfigValidationError as e:
         if missing_path := _missing_config_path_from_error(e):
             print(f"✗ Configuration file not found: {missing_path}", file=sys.stderr)
@@ -93,7 +99,7 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
 @_cli_command("Failed to load configuration", catch=(ConfigValidationError, ValueError, OSError))
 def cmd_dump_config(args: argparse.Namespace) -> int:
     """Dump current configuration as JSON (with secrets redacted)."""
-    settings = load_settings()
+    settings = _load_settings_for_cli(args)
     # Convert to dict and redact
     data = settings.model_dump(mode="json")
     redacted = redact_settings_dict(data)
@@ -129,7 +135,7 @@ def cmd_show_deprecated(args: argparse.Namespace) -> int:
 )
 def cmd_queue_stats(args: argparse.Namespace) -> int:
     """Show queue stats as JSON for operational diagnostics."""
-    settings = load_settings()
+    settings = _load_settings_for_cli(args)
     stats = asyncio.run(get_queue_stats(settings))
     print(json.dumps(stats, indent=2, default=str))
     return 0
@@ -147,7 +153,7 @@ def cmd_queue_drain_dlq(args: argparse.Namespace) -> int:
         )
         return 1
 
-    drained = asyncio.run(drain_dlq(settings, limit=int(args.limit)))
+    drained = asyncio.run(drain_dlq(settings, limit=args.limit))
     print(json.dumps({"status": "ok", "drained": drained}, indent=2))
     return 0
 
@@ -157,7 +163,7 @@ def cmd_queue_drain_dlq(args: argparse.Namespace) -> int:
 )
 def cmd_queue_history(args: argparse.Namespace) -> int:
     """Show queue history events as JSON."""
-    settings = load_settings()
+    settings = _load_settings_for_cli(args)
     backend = (settings.workflow.execution_backend or "inprocess").strip().lower()
     if backend != "redis_queue" and not settings.workflow.redis_url:
         payload = {"status": "ok", "count": 0, "items": []}
@@ -167,7 +173,7 @@ def cmd_queue_history(args: argparse.Namespace) -> int:
     items = asyncio.run(
         read_history(
             settings,
-            limit=int(args.limit),
+            limit=args.limit,
             ticket_id=getattr(args, "ticket_id", None),
         )
     )
@@ -181,6 +187,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="zammad-pdf-archiver",
         description="Zammad PDF Archiver CLI utilities",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        default=None,
+        help="Path to YAML config file (overrides CONFIG_PATH)",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 

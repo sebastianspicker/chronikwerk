@@ -286,6 +286,9 @@ class AsyncZammadClient:
             raise NotFoundError(f"Zammad resource not found (status=404) at {url}")
         if status == 429:
             raise RateLimitError(f"Zammad rate limit (status=429) at {url}")
+        if 300 <= status < 400:
+            location = response.headers.get("Location", "")
+            raise ClientError(f"Unexpected redirect {status} from Zammad at {url}: {location}")
         if status >= 500:
             raise ServerError(f"Zammad server error (status={status}) at {url}")
         if status >= 400:

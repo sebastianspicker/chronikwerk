@@ -4,6 +4,8 @@ import re
 import unicodedata
 from pathlib import Path
 
+import structlog
+
 from zammad_pdf_archiver.domain.path_policy import (
     ensure_within_root,
     sanitize_segment,
@@ -11,6 +13,7 @@ from zammad_pdf_archiver.domain.path_policy import (
 )
 
 _PREFIX_SPLIT_RE = re.compile(r"[>/]")
+log = structlog.get_logger(__name__)
 
 
 def _parse_prefix_segments(prefix: str) -> list[str]:
@@ -150,6 +153,8 @@ def build_filename(
     if title_optional:
         title_safe = sanitize_segment(title_optional)
         # Keep filenames bounded; callers can store full titles elsewhere.
+        if len(title_safe) > 80:
+            log.debug("storage.filename_title_truncated", original_len=len(title_safe))
         title_safe = title_safe[:80]
         if title_safe:
             parts.append(title_safe)

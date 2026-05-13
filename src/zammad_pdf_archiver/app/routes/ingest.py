@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, HTTPException, Path, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import JSONResponse
 
@@ -47,6 +47,16 @@ class IngestPayload(BaseModel):
 
     def resolved_ticket_id(self) -> int | None:
         return extract_ticket_id(self.model_dump())
+
+
+class IngestAcceptedResponse(BaseModel):
+    status: str
+    ticket_id: int | None
+
+
+class BatchIngestAcceptedResponse(BaseModel):
+    status: str
+    count: int
 
 
 def _public_payload_for_job(payload: IngestPayload, request_id: str | None) -> dict[str, Any]:
@@ -130,7 +140,7 @@ async def _dispatch_ticket(
     track_task(task)
 
 
-@router.post("/ingest", status_code=202)
+@router.post("/ingest", status_code=202, response_model=IngestAcceptedResponse)
 async def ingest_webhook(
     request: Request,
     payload: IngestPayload,
@@ -149,12 +159,13 @@ async def ingest_webhook(
         )
 
     if ticket_id is not None:
+        if settings is None:
+            raise HTTPException(status_code=503, detail="settings_not_configured")
         delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
         payload_for_job = _public_payload_for_job(
             payload,
             getattr(request.state, "request_id", None),
         )
-        assert settings is not None
         await _dispatch_ticket(
             delivery_id=delivery_id,
             payload_for_job=payload_for_job,
@@ -164,7 +175,7 @@ async def ingest_webhook(
     return JSONResponse(status_code=202, content={"status": "accepted", "ticket_id": ticket_id})
 
 
-@router.post("/ingest/batch", status_code=202)
+@router.post("/ingest/batch", status_code=202, response_model=BatchIngestAcceptedResponse)
 async def batch_ingest(
     request: Request,
     payloads: list[IngestPayload],
@@ -194,6 +205,8 @@ async def batch_ingest(
     for index, payload in enumerate(payloads):
         ticket_id = payload.resolved_ticket_id()
         if ticket_id is not None:
+            if settings is None:
+                raise HTTPException(status_code=503, detail="settings_not_configured")
             payload_for_job = _public_payload_for_job(
                 payload,
                 getattr(request.state, "request_id", None),
@@ -201,7 +214,6 @@ async def batch_ingest(
             # One delivery header represents the batch request; suffix with the item index so
             # idempotency is still tracked per ticket payload.
             delivery_id = f"{batch_delivery_id}:{index}" if batch_delivery_id is not None else None
-            assert settings is not None
             await _dispatch_ticket(
                 delivery_id=delivery_id,
                 payload_for_job=payload_for_job,

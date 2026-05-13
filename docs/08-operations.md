@@ -67,7 +67,7 @@ Primary signals:
 - structured service logs (`request_id`, `ticket_id`, optional `delivery_id`)
 - ticket internal notes (`PDF archived...` / `PDF archiver error...`)
 - ticket tags (`pdf:sign`, `pdf:processing`, `pdf:signed`, `pdf:error`)
-- metrics (`processed_total`, `failed_total`, timing histograms, and queue metrics when enabled)
+- metrics (`zammad_archiver_processed_total`, `zammad_archiver_failed_total`, timing histograms, and queue metrics when enabled)
 
 ## 4. Processing and Idempotency Behavior
 

@@ -45,7 +45,7 @@ def _resolve_config_path(config_path: str | Path | None) -> tuple[Path | None, b
 def _load_yaml_config(path: Path) -> dict[str, Any]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except OSError as exc:
+    except (OSError, yaml.YAMLError) as exc:
         raise ConfigValidationError(
             [ConfigValidationIssue(path=str(path), message=f"Unable to read config file: {exc}")]
         ) from exc

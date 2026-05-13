@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+CustomFieldValue = str | int | float | bool | list[str] | None
 
 
 class _SnapshotModel(BaseModel):
@@ -27,7 +28,7 @@ class TicketMeta(_SnapshotModel):
     customer: PartyRef | None = None
     owner: PartyRef | None = None
     tags: list[str] = Field(default_factory=list)
-    custom_fields: dict[str, Any] = Field(default_factory=dict)
+    custom_fields: dict[str, CustomFieldValue] = Field(default_factory=dict)
 
 
 class AttachmentMeta(_SnapshotModel):
