@@ -18,6 +18,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import structlog
+
+log = structlog.get_logger(__name__)
+
 _LOCK = asyncio.Lock()
 _CLIENTS: dict[str, Any] = {}
 
@@ -75,9 +79,9 @@ async def get_redis(redis_url: str) -> Any:
 async def close_all() -> None:
     """Close all cached Redis clients. Safe to call during shutdown."""
     async with _LOCK:
-        for client in _CLIENTS.values():
+        for redis_url, client in _CLIENTS.items():
             try:
                 await client.aclose()
             except Exception:
-                pass
+                log.warning("redis_pool.close_failed", redis_url=redis_url, exc_info=True)
         _CLIENTS.clear()
