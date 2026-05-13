@@ -12,6 +12,7 @@ from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_patt
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.domain.audit import build_audit_record
 
 
 def _test_settings(storage_root: str) -> Settings:
@@ -118,3 +119,23 @@ def test_audit_sidecar_written_next_to_pdf_and_matches_sha256(tmp_path, monkeypa
         posted = json.loads(article_route.calls[0].request.content.decode("utf-8"))
         assert sha256_hex in posted["body"]
         assert str(expected_sidecar_path) in posted["body"]
+
+
+def test_audit_sidecar_schema_core_fields_are_json_serializable() -> None:
+    record = build_audit_record(
+        ticket_id=123,
+        ticket_number="20240123",
+        title="Example Ticket",
+        created_at=datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC),
+        storage_path="/archive/Ticket-20240123.pdf",
+        sha256="a" * 64,
+    )
+
+    encoded = json.dumps(record, sort_keys=True)
+    decoded = json.loads(encoded)
+
+    assert decoded["ticket_id"] == 123
+    assert decoded["ticket_number"] == "20240123"
+    assert decoded["sha256"] == "a" * 64
+    assert decoded["signing"] == {"enabled": False, "tsa_used": False}
+    assert decoded["service"]["name"] == "zammad-pdf-archiver"

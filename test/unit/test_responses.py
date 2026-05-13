@@ -9,7 +9,12 @@ from fastapi import Request
 from starlette.datastructures import State
 
 from test.support.settings_factory import make_settings
-from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_auth
+from zammad_pdf_archiver.app.responses import (
+    api_error,
+    constant_time_token_match,
+    settings_or_503,
+    verify_bearer_auth,
+)
 from zammad_pdf_archiver.config.settings import Settings
 
 
@@ -78,6 +83,11 @@ def test_settings_or_503_raises_503_when_no_state_attr() -> None:
 # ---------------------------------------------------------------------------
 # verify_bearer_auth
 # ---------------------------------------------------------------------------
+
+
+def test_constant_time_token_match_normalizes_input_lengths() -> None:
+    assert constant_time_token_match(b"secret-token", b"secret-token") is True
+    assert constant_time_token_match(b"secret-token", b"short") is False
 
 
 def test_verify_bearer_auth_raises_503_when_no_token_configured(tmp_path) -> None:

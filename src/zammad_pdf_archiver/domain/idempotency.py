@@ -4,6 +4,9 @@ import time
 from collections.abc import Callable
 from typing import Protocol
 
+_CLEANUP_INTERVAL_MIN_S = 1.0
+_CLEANUP_INTERVAL_MAX_S = 60.0
+
 
 class DeliveryIdStore(Protocol):
     """Protocol for delivery-ID idempotency (in-memory or durable e.g. Redis)."""
@@ -18,6 +21,10 @@ class DeliveryIdStore(Protocol):
 
     async def try_claim(self, key: str) -> bool:
         """Atomically claim key if not yet seen. True if claimed, False if seen."""
+        ...
+
+    async def release(self, key: str) -> None:
+        """Release a previously claimed key."""
         ...
 
 
@@ -41,7 +48,9 @@ class InMemoryTTLSet:
         if now < self._next_evict_at:
             return
         self._evict_expired_at(now)
-        interval = min(60.0, max(1.0, self._ttl_seconds))
+        # Bound cleanup frequency so very short TTLs do not evict on every call,
+        # while long TTLs still purge stale entries at least once per minute.
+        interval = min(_CLEANUP_INTERVAL_MAX_S, max(_CLEANUP_INTERVAL_MIN_S, self._ttl_seconds))
         self._next_evict_at = now + interval
 
     def _seen_sync(self, key: str) -> bool:
@@ -74,6 +83,10 @@ class InMemoryTTLSet:
             return False
         self._add_sync(key)
         return True
+
+    async def release(self, key: str) -> None:
+        """Release a previously claimed key."""
+        self._expires_at_by_key.pop(key, None)
 
     def evict_expired(self) -> None:
         """Remove all expired keys from the set."""

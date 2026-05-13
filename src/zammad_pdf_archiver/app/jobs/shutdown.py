@@ -1,7 +1,9 @@
 import asyncio
+import threading
 
 _SHUTTING_DOWN = False
 _TASKS: set[asyncio.Task] = set()
+_TASKS_GUARD = threading.RLock()
 
 
 def is_shutting_down() -> bool:
@@ -12,29 +14,39 @@ def is_shutting_down() -> bool:
 def set_shutting_down() -> None:
     """Mark the application as shutting down to stop new work from being accepted."""
     global _SHUTTING_DOWN
-    _SHUTTING_DOWN = True
+    with _TASKS_GUARD:
+        _SHUTTING_DOWN = True
 
 
 def clear_shutting_down() -> None:
     global _SHUTTING_DOWN
-    _SHUTTING_DOWN = False
+    with _TASKS_GUARD:
+        _SHUTTING_DOWN = False
 
 
 def track_task(task: asyncio.Task) -> None:
     """Register a background task so it is awaited during graceful shutdown."""
     if task.done():
         return
-    _TASKS.add(task)
-    task.add_done_callback(_TASKS.discard)
+    with _TASKS_GUARD:
+        _TASKS.add(task)
+    task.add_done_callback(_discard_task)
+
+
+def _discard_task(task: asyncio.Task) -> None:
+    with _TASKS_GUARD:
+        _TASKS.discard(task)
 
 
 async def wait_for_tasks(timeout: float = 1.0) -> None:
     """Await all tracked background tasks, cancelling any that exceed the timeout."""
-    if not _TASKS:
-        return
     running_loop = asyncio.get_running_loop()
-    loop_tasks = {t for t in _TASKS if not t.done() and t.get_loop() is running_loop}
-    _TASKS.difference_update({t for t in _TASKS if t.done() or t.get_loop() is not running_loop})
+    with _TASKS_GUARD:
+        if not _TASKS:
+            return
+        all_loop_tasks = asyncio.all_tasks(running_loop)
+        loop_tasks = {t for t in _TASKS if not t.done() and t in all_loop_tasks}
+        _TASKS.difference_update({t for t in _TASKS if t.done() or t not in all_loop_tasks})
     if not loop_tasks:
         return
     try:
@@ -43,4 +55,5 @@ async def wait_for_tasks(timeout: float = 1.0) -> None:
         for task in loop_tasks:
             task.cancel()
     finally:
-        _TASKS.difference_update(loop_tasks)
+        with _TASKS_GUARD:
+            _TASKS.difference_update(loop_tasks)

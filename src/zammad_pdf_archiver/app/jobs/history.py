@@ -123,29 +123,34 @@ async def read_history(
         return []
 
     bounded_limit = max(1, min(int(limit), 5000))
-    # Over-fetch when filtering by ticket_id to avoid empty pages on sparse streams.
-    fetch_count = bounded_limit if ticket_id is None else min(bounded_limit * 8, 10_000)
+    fetch_count = bounded_limit if ticket_id is None else min(max(bounded_limit, 100), 1000)
 
-    try:
-        entries = await redis.xrevrange(
-            settings.workflow.history_stream,
-            max="+",
-            min="-",
-            count=fetch_count,
-        )
-    except Exception:
-        log.warning("history.read_failed")
-        return []
-
+    max_id = "+"
     out: list[dict[str, Any]] = []
-    for message_id, raw_fields in entries:
-        fields = {str(k): v for k, v in raw_fields.items()}
-        item = _normalize_entry(str(message_id), fields)
-        if ticket_id is not None and item["ticket_id"] != ticket_id:
-            continue
-        out.append(item)
-        if len(out) >= bounded_limit:
+    while len(out) < bounded_limit:
+        try:
+            entries = await redis.xrevrange(
+                settings.workflow.history_stream,
+                max=max_id,
+                min="-",
+                count=fetch_count,
+            )
+        except Exception:
+            log.warning("history.read_failed")
+            return []
+        if not entries:
             break
+
+        for message_id, raw_fields in entries:
+            fields = {str(k): v for k, v in raw_fields.items()}
+            item = _normalize_entry(str(message_id), fields)
+            if ticket_id is None or item["ticket_id"] == ticket_id:
+                out.append(item)
+                if len(out) >= bounded_limit:
+                    break
+        if ticket_id is None or len(entries) < fetch_count:
+            break
+        max_id = f"({entries[-1][0]}"
 
     return out
 

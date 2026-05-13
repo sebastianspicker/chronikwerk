@@ -94,7 +94,7 @@ async def _record_history(
             request_id=ctx.request_id,
         )
     except Exception:
-        log.debug("process_ticket.history_record_failed", status=status, ticket_id=ctx.ticket_id)
+        log.warning("process_ticket.history_record_failed", status=status, ticket_id=ctx.ticket_id)
 
 
 async def _apply_done_with_backoff(

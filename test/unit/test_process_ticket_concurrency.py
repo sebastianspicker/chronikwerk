@@ -28,7 +28,7 @@ def _settings(storage_root: Path) -> Settings:
 def test_process_ticket_serializes_same_ticket_concurrent_runs(
     monkeypatch, tmp_path: Path
 ) -> None:
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
 
     class _FakeClient:
         _tags: set[str] = {"pdf:sign"}

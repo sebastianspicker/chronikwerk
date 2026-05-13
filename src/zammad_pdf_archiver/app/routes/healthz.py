@@ -63,7 +63,7 @@ async def healthz(request: Request, deep: bool = False) -> dict[str, object]:
         "time": datetime.now(UTC).isoformat(),
     }
     settings = getattr(request.app.state, "settings", None)
-    if settings is None or not settings.observability.healthz_omit_version:
+    if settings is not None and not settings.observability.healthz_omit_version:
         out["service"] = "zammad-pdf-archiver"
         out["version"] = _service_version()
 

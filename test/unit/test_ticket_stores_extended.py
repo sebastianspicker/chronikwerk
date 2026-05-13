@@ -50,10 +50,10 @@ def _make_settings(
 @pytest.fixture(autouse=True)
 def _reset_stores():
     """Ensure clean module-level state before and after every test."""
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
     clear_shutting_down()
     yield
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
     clear_shutting_down()
 
 

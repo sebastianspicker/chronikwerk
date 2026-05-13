@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import time as _time
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -258,13 +258,12 @@ def store_ticket_files(
     sha256_hex = compute_sha256(pdf_bytes)
     size_bytes = len(pdf_bytes)
 
-    temp_archive_root = (
-        paths.target_path.parent / f".tmp-archiving-{ticket_id}-{uuid.uuid4().hex[:8]}"
+    ensure_dir(paths.target_path.parent)
+    temp_archive_root = Path(
+        tempfile.mkdtemp(prefix=f".tmp-archiving-{ticket_id}-", dir=paths.target_path.parent)
     )
 
     try:
-        ensure_dir(temp_archive_root)
-
         # 1. Write attachment binaries into temp dir.
         attachments_dir = paths.target_path.parent / "attachments"
         attachment_entries = _write_attachments(

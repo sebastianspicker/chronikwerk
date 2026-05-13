@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import structlog
 from jinja2 import (
     Environment,
     FileSystemLoader,
@@ -17,6 +19,7 @@ from jinja2.loaders import BaseLoader
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
 _TEMPLATE_FILE = "ticket.html"
+log = structlog.get_logger(__name__)
 
 ALLOWED_TEMPLATE_NAMES: frozenset[str] = frozenset({"default", "minimal", "compact"})
 
@@ -83,14 +86,15 @@ def _register_filters(env: Environment) -> None:
 
 
 def _format_datetime(value: Any, *, tz_name: str, fmt: str) -> str:
-    if not value or not hasattr(value, "strftime"):
+    if not isinstance(value, datetime):
         return str(value) if value is not None else "—"
     try:
         target_tz = ZoneInfo(tz_name)
         localized = value.astimezone(target_tz)
         return localized.strftime(fmt)
     except Exception:
-        return value.strftime(fmt) if hasattr(value, "strftime") else str(value)
+        log.warning("datetime_format_failed", raw=str(value), timezone=tz_name, exc_info=True)
+        return value.strftime(fmt)
 
 
 def render_html(

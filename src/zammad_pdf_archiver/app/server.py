@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI, Request
 from starlette.responses import Response
 
@@ -32,6 +33,8 @@ from zammad_pdf_archiver.app.routes.ingest import router as ingest_router
 from zammad_pdf_archiver.app.routes.jobs import router as jobs_router
 from zammad_pdf_archiver.config.settings import Settings
 
+log = structlog.get_logger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -53,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 async def _global_exception_handler(request: Request, exc: Exception) -> Response:
     request_id = getattr(request.state, "request_id", None)
+    log.exception("unhandled_exception", path=request.url.path, request_id=request_id)
     headers = {_REQUEST_ID_HEADER: request_id} if request_id else None
     return api_error(
         500,

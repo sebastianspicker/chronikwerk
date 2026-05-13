@@ -13,6 +13,7 @@ import httpx
 
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
+from zammad_pdf_archiver.observability.metrics import tsa_failure_total
 
 # Interval (seconds) between certificate expiry re-checks for cached signers.
 _CERT_CHECK_INTERVAL_SECONDS = 3600
@@ -186,6 +187,8 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
         writer = IncrementalPdfFileWriter(io.BytesIO(bytes(pdf_bytes)))
         pdf_signer.sign_pdf(writer, output=out)
     except (TransientError, PermanentError):
+        if signing.timestamp.enabled:
+            tsa_failure_total.inc()
         raise
     except Exception as exc:
         # P2-3: Classify by exception type instead of string matching.
@@ -194,8 +197,12 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
             exc,
             (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
         ):
+            if signing.timestamp.enabled:
+                tsa_failure_total.inc()
             raise TransientError("Failed to sign PDF due to temporary (TSA) network issue") from exc
 
         # Mapping remaining pyHanko errors to PermanentError for callers.
+        if signing.timestamp.enabled:
+            tsa_failure_total.inc()
         raise PermanentError("Failed to sign PDF") from exc
     return out.getvalue()

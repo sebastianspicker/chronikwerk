@@ -4,6 +4,7 @@ import hashlib
 import hmac
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import unquote
 
 import structlog
 from starlette.datastructures import Headers
@@ -20,9 +21,17 @@ _log = structlog.get_logger(__name__)
 _SIGNATURE_HEADER = "X-Hub-Signature"
 
 _ALL_ALGORITHMS: dict[str, tuple[int, Any]] = {
-    "sha1": (hashlib.sha1().digest_size, hashlib.sha1),
-    "sha256": (hashlib.sha256().digest_size, hashlib.sha256),
+    "sha1": (20, hashlib.sha1),
+    "sha256": (32, hashlib.sha256),
 }
+
+
+def _normalized_protected_path(path: object) -> str:
+    raw = str(path or "")
+    decoded = unquote(raw)
+    if decoded != "/" and decoded.endswith("/"):
+        decoded = decoded.rstrip("/")
+    return decoded
 
 
 def _build_allowed_algorithms(*, reject_sha1: bool) -> dict[str, tuple[int, Any]]:
@@ -168,7 +177,8 @@ class HmacVerifyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if scope.get("method") != "POST" or scope.get("path") not in INGEST_PROTECTED_PATHS:
+        protected_path = _normalized_protected_path(scope.get("path"))
+        if scope.get("method") != "POST" or protected_path not in INGEST_PROTECTED_PATHS:
             await self.app(scope, receive, send)
             return
 

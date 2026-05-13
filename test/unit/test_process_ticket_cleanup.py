@@ -30,7 +30,7 @@ def _settings(storage_root: Path) -> Settings:
 def test_process_ticket_does_not_do_redundant_processing_tag_cleanup(
     monkeypatch, tmp_path: Path
 ) -> None:
-    ticket_stores.reset_for_tests()
+    ticket_stores._reset_for_tests()
 
     class _FakeClient:
         def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002

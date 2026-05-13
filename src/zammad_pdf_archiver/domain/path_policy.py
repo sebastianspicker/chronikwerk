@@ -4,7 +4,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-_ALLOWED_SEGMENT_RE = re.compile(r"[A-Za-z0-9._-]")
+_ALLOWED_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 _WHITESPACE_RE = re.compile(r"\s+")
 _MULTI_UNDERSCORE_RE = re.compile(r"_+")
 
@@ -42,7 +42,7 @@ def sanitize_segment(seg: str) -> str:
 
     out_chars: list[str] = []
     for ch in normalized:
-        if _ALLOWED_SEGMENT_RE.fullmatch(ch) is not None:
+        if ch in _ALLOWED_CHARS:
             out_chars.append(ch)
         else:
             out_chars.append("_")

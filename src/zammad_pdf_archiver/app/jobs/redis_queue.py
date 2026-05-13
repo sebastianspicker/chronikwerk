@@ -37,6 +37,7 @@ from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.observability.metrics import (
     queue_enqueued_total,
     queue_failed_total,
+    queue_pending_count,
     queue_processed_total,
     queue_retried_total,
 )
@@ -82,6 +83,8 @@ async def enqueue_ticket_job(
     }
     if last_error:
         fields["last_error"] = last_error[:500]
+        if len(last_error) > 500:
+            fields["last_error_truncated"] = "1"
     message_id = await redis.xadd(settings.workflow.queue_stream, fields)
     queue_enqueued_total.inc()
     return _as_str(message_id)
@@ -220,6 +223,7 @@ async def _process_messages(
 
 _worker_task: asyncio.Task[None] | None = None
 _worker_stop_event: asyncio.Event | None = None
+_worker_lifecycle_guard = asyncio.Lock()
 
 # Each FastAPI process owns at most one queue worker. Redis consumer groups coordinate
 # between processes; this module only tracks the process-local task and stop event.
@@ -320,27 +324,29 @@ async def start_queue_worker(settings: Settings) -> asyncio.Task[None] | None:
     if _backend(settings) != "redis_queue":
         return None
 
-    if _worker_task is not None and not _worker_task.done():
-        return _worker_task
+    async with _worker_lifecycle_guard:
+        if _worker_task is not None and not _worker_task.done():
+            return _worker_task
 
-    _worker_stop_event = asyncio.Event()
-    _worker_task = asyncio.create_task(
-        _worker_loop(settings, _worker_stop_event),
-        name="redis-queue-worker",
-    )
-    return _worker_task
+        _worker_stop_event = asyncio.Event()
+        _worker_task = asyncio.create_task(
+            _worker_loop(settings, _worker_stop_event),
+            name="redis-queue-worker",
+        )
+        return _worker_task
 
 
 async def stop_queue_worker(settings: Settings, *, timeout: float = 3.0) -> None:
     """Signal the process-local Redis worker and cancel it if graceful shutdown times out."""
     global _worker_stop_event, _worker_task
 
-    task = _worker_task
-    stop_event = _worker_stop_event
-    if task is None or stop_event is None:
-        return
+    async with _worker_lifecycle_guard:
+        task = _worker_task
+        stop_event = _worker_stop_event
+        if task is None or stop_event is None:
+            return
+        stop_event.set()
 
-    stop_event.set()
     try:
         await asyncio.wait_for(task, timeout=timeout)
     except TimeoutError:
@@ -352,8 +358,10 @@ async def stop_queue_worker(settings: Settings, *, timeout: float = 3.0) -> None
         except Exception:
             pass
     finally:
-        _worker_task = None
-        _worker_stop_event = None
+        async with _worker_lifecycle_guard:
+            if _worker_task is task:
+                _worker_task = None
+                _worker_stop_event = None
 
 
 def _pending_count(raw: Any) -> int:
@@ -388,6 +396,8 @@ async def get_queue_stats(settings: Settings) -> dict[str, Any]:
     queue_depth = int(await redis.xlen(stream))
     dlq_depth = int(await redis.xlen(dlq_stream))
     pending_raw = await redis.xpending(stream, group)
+    pending = _pending_count(pending_raw)
+    queue_pending_count.set(pending)
 
     return {
         "execution_backend": execution_backend,
@@ -396,7 +406,7 @@ async def get_queue_stats(settings: Settings) -> dict[str, Any]:
         "group": group,
         "consumer": _consumer_name(settings),
         "queue_depth": queue_depth,
-        "pending": _pending_count(pending_raw),
+        "pending": pending,
         "dlq_stream": dlq_stream,
         "dlq_depth": dlq_depth,
         "retry_max_attempts": settings.workflow.queue_retry_max_attempts,
@@ -418,8 +428,6 @@ async def drain_dlq(settings: Settings, *, limit: int = 100) -> int:
         return 0
 
     ids = [_as_str(entry_id) for entry_id, _ in entries]
-    if not ids:
-        return 0
 
     pipeline = redis.pipeline(transaction=False)
     for entry_id in ids:

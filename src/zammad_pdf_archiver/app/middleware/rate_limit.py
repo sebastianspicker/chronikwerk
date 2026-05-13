@@ -12,7 +12,9 @@ from zammad_pdf_archiver.config.settings import Settings
 
 _METRICS_PATH = "/metrics"
 
-# Eviction tuning for the in-memory token-bucket store.
+# Eviction tuning for the in-memory token-bucket store. The headroom keeps the
+# dictionary below the hard cap after a burst of new client keys without sorting
+# every bucket on the hot path.
 _EVICTION_HEADROOM = 200  # extra entries to evict below max_entries
 _EVICTION_BATCH_CAP = 2000  # max entries to evict in one pass
 

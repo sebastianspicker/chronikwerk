@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hmac
-
 from fastapi import APIRouter, Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
+from zammad_pdf_archiver.app.responses import constant_time_token_match
 from zammad_pdf_archiver.observability.metrics import render_latest
 
 router = APIRouter()
@@ -19,11 +18,13 @@ def _metrics_unauthorized() -> Response:
     )
 
 
-def _metrics_token_not_configured() -> Response:
-    return Response(
-        content="metrics_token_not_configured\n",
+def _metrics_token_not_configured() -> JSONResponse:
+    return JSONResponse(
         status_code=503,
-        media_type="text/plain",
+        content={
+            "detail": "metrics_token_not_configured",
+            "code": "metrics_token_not_configured",
+        },
     )
 
 
@@ -42,7 +43,7 @@ def metrics(request: Request) -> Response:
     if not auth.startswith("Bearer ") or len(auth) < 8:
         return _metrics_unauthorized()
     provided = auth[7:].strip().encode("utf-8")
-    if not hmac.compare_digest(expected, provided):
+    if not constant_time_token_match(expected, provided):
         return _metrics_unauthorized()
     payload, content_type = render_latest()
     return Response(content=payload, headers={"Content-Type": content_type})

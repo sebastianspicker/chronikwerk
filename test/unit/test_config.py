@@ -226,26 +226,24 @@ def test_pdf_attachment_binary_settings_loaded() -> None:
 
 
 def test_validate_settings_rejects_invalid_log_level() -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": "/mnt/archive"},
-            "observability": {"log_level": "VERBOSE"},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": True,
-                }
-            },
-        }
-    )
-
-    with pytest.raises(ConfigValidationError) as exc:
-        validate_settings(settings)
+    with pytest.raises(ValidationError) as exc:
+        Settings.from_mapping(
+            {
+                "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+                "storage": {"root": "/mnt/archive"},
+                "observability": {"log_level": "VERBOSE"},
+                "hardening": {
+                    "webhook": {
+                        "allow_unsigned": True,
+                        "allow_unsigned_when_no_secret": True,
+                    }
+                },
+            }
+        )
 
     msg = str(exc.value)
     assert "observability.log_level" in msg
-    assert "Unsupported log level" in msg
+    assert "CRITICAL" in msg
 
 
 def test_validate_settings_requires_webhook_secret_by_default() -> None:
@@ -488,6 +486,7 @@ def test_validate_settings_accepts_valid_redis_url() -> None:
             },
             "workflow": {
                 "execution_backend": "redis_queue",
+                "idempotency_backend": "redis",
                 "redis_url": "redis://redis.local:6379/0",
             },
         }
@@ -509,6 +508,7 @@ def test_validate_settings_accepts_rediss_url() -> None:
             },
             "workflow": {
                 "execution_backend": "redis_queue",
+                "idempotency_backend": "redis",
                 "redis_url": "rediss://redis.local:6380/0",
             },
         }
@@ -612,6 +612,26 @@ def test_require_delivery_id_with_zero_ttl_raises(tmp_path: Path) -> None:
         validate_settings(settings)
 
 
+def test_redis_queue_requires_redis_idempotency_backend(tmp_path: Path) -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://z.example.local", "api_token": "t"},
+            "storage": {"root": str(tmp_path)},
+            "hardening": {
+                "webhook": {"allow_unsigned": True, "allow_unsigned_when_no_secret": True}
+            },
+            "workflow": {
+                "execution_backend": "redis_queue",
+                "idempotency_backend": "memory",
+                "redis_url": "redis://localhost/0",
+            },
+        }
+    )
+
+    with pytest.raises(ConfigValidationError, match="idempotency_backend='redis'"):
+        validate_settings(settings)
+
+
 # ---------------------------------------------------------------------------
 # TSA transport validation
 # ---------------------------------------------------------------------------
@@ -661,3 +681,17 @@ def test_localhost_tsa_url_raises_without_allow_local(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigValidationError, match="local.*upstream|tsa_url"):
         validate_settings(settings)
+
+
+def test_timestamp_enabled_requires_tsa_url(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="tsa_url is missing"):
+        Settings.from_mapping(
+            {
+                "zammad": {"base_url": "https://z.example.local", "api_token": "t"},
+                "storage": {"root": str(tmp_path)},
+                "hardening": {
+                    "webhook": {"allow_unsigned": True, "allow_unsigned_when_no_secret": True}
+                },
+                "signing": {"timestamp": {"enabled": True}},
+            }
+        )

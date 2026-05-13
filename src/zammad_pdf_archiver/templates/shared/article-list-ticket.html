@@ -59,7 +59,7 @@
         <ul class="attachment-list">
           {% for att in article.attachments %}
           <li class="attachment-item">
-            <span class="attachment-name">{{ att.filename if att.filename else "Unnamed file" }}</span>
+            <span class="attachment-name">{{ att.filename | e if att.filename else "Unnamed file" }}</span>
             <span class="attachment-meta">
               {% if att.content_type %}{{ att.content_type }}{% endif %}
               {% if att.size %}{% if att.content_type %} · {% endif %}{{ att.size }} B{% endif %}

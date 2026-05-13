@@ -75,7 +75,7 @@ async def build_and_render_pdf(
     render_start = perf_counter()
     pdf_bytes = render_pdf(
         snapshot,
-        settings.pdf.template,
+        settings.pdf.template_variant,
         max_articles=settings.pdf.max_articles,
         locale=settings.pdf.locale,
         timezone=settings.pdf.timezone,

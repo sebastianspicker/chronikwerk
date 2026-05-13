@@ -17,7 +17,7 @@ class RedisDeliveryIdStore:
         self,
         redis_url: str,
         ttl_seconds: int,
-        prefix: str = "zammad:delivery_id:",
+        prefix: str = _REDIS_PREFIX,
     ) -> None:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be > 0 for Redis store")

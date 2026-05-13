@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0-rc.2] - 2026-04-09
+## [0.2.0rc2] - 2026-04-09
 
 ### Added
 - Coverage threshold enforcement in CI (76% minimum with branch coverage)

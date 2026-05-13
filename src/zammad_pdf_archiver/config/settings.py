@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic.networks import AnyHttpUrl
@@ -127,10 +127,6 @@ class PdfSettings(_BaseSection):
     max_attachment_bytes_per_file: int = Field(default=10 * 1024 * 1024, ge=0)  # 10 MiB
     max_total_attachment_bytes: int = Field(default=50 * 1024 * 1024, ge=0)  # 50 MiB
 
-    @property
-    def template(self) -> str:
-        return self.template_variant
-
 
 class SigningPadesSettings(_BaseSection):
     cert_path: Path | None = None
@@ -180,7 +176,7 @@ class SigningSettings(_BaseSection):
 
 
 class ObservabilitySettings(_BaseSection):
-    log_level: str = "INFO"
+    log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
     log_format: str | None = None  # json|human (overrides LOG_FORMAT/env when set)
     json_logs: bool = False
     metrics_enabled: bool = False
@@ -198,6 +194,13 @@ class ObservabilitySettings(_BaseSection):
         if normalized in {"json", "human"}:
             return normalized
         raise ValueError("observability.log_format must be 'json' or 'human'")
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _normalize_log_level(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
 
 
 class RateLimitSettings(_BaseSection):
@@ -279,18 +282,6 @@ class Settings(BaseSettings):
         Useful in tests where we want to pass nested dicts and keep mypy happy.
         """
 
-        class _InitOnlySettings(Settings):
-            @classmethod
-            def settings_customise_sources(
-                cls,
-                settings_cls: type[BaseSettings],
-                init_settings: PydanticBaseSettingsSource,
-                env_settings: PydanticBaseSettingsSource,
-                dotenv_settings: PydanticBaseSettingsSource,
-                file_secret_settings: PydanticBaseSettingsSource,
-            ) -> tuple[PydanticBaseSettingsSource, ...]:
-                return (init_settings,)
-
         return _InitOnlySettings(**dict(data))
 
     @classmethod
@@ -309,3 +300,16 @@ class Settings(BaseSettings):
             dotenv_settings,
             file_secret_settings,
         )
+
+
+class _InitOnlySettings(Settings):
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)

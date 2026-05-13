@@ -7,7 +7,10 @@ from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.errors import TransientError
 from zammad_pdf_archiver.domain.idempotency import DeliveryIdStore, InMemoryTTLSet
 from zammad_pdf_archiver.domain.redis_delivery_id import RedisDeliveryIdStore
-from zammad_pdf_archiver.observability.metrics import ticket_lock_redis_failures_total
+from zammad_pdf_archiver.observability.metrics import (
+    ticket_lock_redis_failures_total,
+    tickets_in_flight,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -17,6 +20,8 @@ _STORE_GUARD = asyncio.Lock()
 
 _IN_FLIGHT_TICKETS: set[int] = set()
 _IN_FLIGHT_TICKETS_GUARD = asyncio.Lock()
+# Lock order for related ticket state is always _STORE_GUARD, then
+# _IN_FLIGHT_TICKETS_GUARD. Do not acquire these locks in the reverse order.
 _TICKET_LOCK_PREFIX = "zammad:ticket_lock:"
 _TICKET_LOCK_TTL = 1800  # 30 minutes — long enough for slow PDF rendering and signing
 
@@ -77,38 +82,37 @@ def _get_ticket_lock_store(settings: Settings) -> RedisDeliveryIdStore | None:
 
 
 async def try_acquire_ticket(settings: Settings, ticket_id: int) -> bool:
-    # 1. Local process lock (prevent intra-process races)
-    async with _IN_FLIGHT_TICKETS_GUARD:
-        if ticket_id in _IN_FLIGHT_TICKETS:
-            return False
-        _IN_FLIGHT_TICKETS.add(ticket_id)
-
-    # 2. Distributed lock (if enabled)
     async with _STORE_GUARD:
+        async with _IN_FLIGHT_TICKETS_GUARD:
+            if ticket_id in _IN_FLIGHT_TICKETS:
+                return False
+            _IN_FLIGHT_TICKETS.add(ticket_id)
+            tickets_in_flight.set(len(_IN_FLIGHT_TICKETS))
+
         store = _get_ticket_lock_store(settings)
-        if store is not None:
-            try:
+        try:
+            if store is not None:
                 claimed = await store.try_claim(str(ticket_id))
                 if not claimed:
-                    # Release local lock if distributed lock failed
                     async with _IN_FLIGHT_TICKETS_GUARD:
                         _IN_FLIGHT_TICKETS.discard(ticket_id)
+                        tickets_in_flight.set(len(_IN_FLIGHT_TICKETS))
                     return False
-            except Exception:
-                async with _IN_FLIGHT_TICKETS_GUARD:
-                    _IN_FLIGHT_TICKETS.discard(ticket_id)
-                ticket_lock_redis_failures_total.inc()
-                log.error(
-                    "process_ticket.redis_lock_failed",
-                    ticket_id=ticket_id,
-                )
-                raise TransientError("Redis ticket lock unavailable") from None
+        except Exception:
+            async with _IN_FLIGHT_TICKETS_GUARD:
+                _IN_FLIGHT_TICKETS.discard(ticket_id)
+                tickets_in_flight.set(len(_IN_FLIGHT_TICKETS))
+            ticket_lock_redis_failures_total.inc()
+            log.error(
+                "process_ticket.redis_lock_failed",
+                ticket_id=ticket_id,
+            )
+            raise TransientError("Redis ticket lock unavailable") from None
 
     return True
 
 
 async def release_ticket(settings: Settings, ticket_id: int) -> None:
-    # 1. Distributed lock
     async with _STORE_GUARD:
         store = _get_ticket_lock_store(settings)
         if store is not None:
@@ -117,9 +121,9 @@ async def release_ticket(settings: Settings, ticket_id: int) -> None:
             except Exception:
                 log.warning("process_ticket.redis_unlock_failed", ticket_id=ticket_id)
 
-    # 2. Local process lock
-    async with _IN_FLIGHT_TICKETS_GUARD:
-        _IN_FLIGHT_TICKETS.discard(ticket_id)
+        async with _IN_FLIGHT_TICKETS_GUARD:
+            _IN_FLIGHT_TICKETS.discard(ticket_id)
+            tickets_in_flight.set(len(_IN_FLIGHT_TICKETS))
 
 
 async def aclose_stores() -> None:
@@ -133,19 +137,23 @@ async def aclose_stores() -> None:
         _REDIS_STORES.clear()
         _DELIVERY_ID_SETS.clear()
 
-    async with _IN_FLIGHT_TICKETS_GUARD:
-        _IN_FLIGHT_TICKETS.clear()
+        async with _IN_FLIGHT_TICKETS_GUARD:
+            _IN_FLIGHT_TICKETS.clear()
+            tickets_in_flight.set(0)
 
 
-def reset_for_tests() -> None:
+def _reset_for_tests() -> None:
     """
     Clear in-memory caches used by idempotency and local in-flight guards.
 
     Intended for tests that need deterministic start state.
     """
+    if _STORE_GUARD.locked() or _IN_FLIGHT_TICKETS_GUARD.locked():
+        raise RuntimeError("ticket store reset requested while store locks are held")
     _DELIVERY_ID_SETS.clear()
     _REDIS_STORES.clear()
     _IN_FLIGHT_TICKETS.clear()
+    tickets_in_flight.set(0)
 
 
 def is_ticket_in_flight(ticket_id: int) -> bool:

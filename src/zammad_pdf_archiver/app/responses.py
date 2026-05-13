@@ -11,6 +11,13 @@ from starlette.responses import JSONResponse
 from zammad_pdf_archiver.config.settings import Settings
 
 
+def constant_time_token_match(expected: bytes, provided: bytes) -> bool:
+    """Compare tokens after SHA-256 length normalisation."""
+    expected_hash = hashlib.sha256(expected).digest()
+    provided_hash = hashlib.sha256(provided).digest()
+    return hmac.compare_digest(expected_hash, provided_hash)
+
+
 def settings_or_503(request: Request) -> Settings:
     """Extract Settings from app state or raise HTTP 503."""
     settings: Settings | None = getattr(request.app.state, "settings", None)
@@ -35,11 +42,7 @@ def verify_bearer_auth(request: Request, settings: Settings) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
     provided = auth[7:].strip().encode("utf-8")
-    # Hash both tokens with SHA-256 before comparing to normalise length and
-    # prevent timing-based length leaks.
-    expected_hash = hashlib.sha256(expected).digest()
-    provided_hash = hashlib.sha256(provided).digest()
-    if not hmac.compare_digest(expected_hash, provided_hash):
+    if not constant_time_token_match(expected, provided):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
