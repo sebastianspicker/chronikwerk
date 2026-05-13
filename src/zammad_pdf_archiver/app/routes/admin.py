@@ -3,8 +3,6 @@ from __future__ import annotations
 import base64
 import binascii
 import functools
-import hashlib
-import hmac
 import pathlib
 
 import structlog
@@ -18,7 +16,11 @@ from zammad_pdf_archiver.app.jobs.redis_queue import (
     get_queue_stats,
     replay_dlq,
 )
-from zammad_pdf_archiver.app.responses import settings_or_503, verify_bearer_auth
+from zammad_pdf_archiver.app.responses import (
+    constant_time_token_match,
+    settings_or_503,
+    verify_bearer_auth,
+)
 from zammad_pdf_archiver.app.routes.ingest import _dispatch_ticket
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import (
@@ -35,7 +37,7 @@ _DASHBOARD_PATH = (
 _ADMIN_BASIC_CHALLENGE = 'Basic realm="zammad-pdf-archiver-admin"'
 
 
-@functools.lru_cache(maxsize=1)
+@functools.cache
 def _read_dashboard_html() -> str:
     return _DASHBOARD_PATH.read_text(encoding="utf-8")
 
@@ -62,12 +64,6 @@ def _admin_token_bytes(settings: Settings) -> bytes:
     return expected
 
 
-def _token_matches(expected: bytes, provided: bytes) -> bool:
-    expected_hash = hashlib.sha256(expected).digest()
-    provided_hash = hashlib.sha256(provided).digest()
-    return hmac.compare_digest(expected_hash, provided_hash)
-
-
 def _verify_admin_dashboard_auth(request: Request, settings: Settings) -> None:
     if not settings.admin.enabled:
         raise HTTPException(status_code=404, detail="admin_disabled")
@@ -75,7 +71,7 @@ def _verify_admin_dashboard_auth(request: Request, settings: Settings) -> None:
     expected = _admin_token_bytes(settings)
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer ") and len(auth) >= 8:
-        if _token_matches(expected, auth[7:].strip().encode("utf-8")):
+        if constant_time_token_match(expected, auth[7:].strip().encode("utf-8")):
             return
         raise _dashboard_auth_error()
 
@@ -85,8 +81,8 @@ def _verify_admin_dashboard_auth(request: Request, settings: Settings) -> None:
         except (binascii.Error, UnicodeDecodeError):
             raise _dashboard_auth_error() from None
 
-        _username, separator, password = decoded.partition(":")
-        if separator and _token_matches(expected, password.encode("utf-8")):
+        _, separator, password = decoded.partition(":")
+        if separator and constant_time_token_match(expected, password.encode("utf-8")):
             return
 
     raise _dashboard_auth_error()
