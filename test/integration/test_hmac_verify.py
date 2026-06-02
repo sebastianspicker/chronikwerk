@@ -6,6 +6,7 @@ import hmac
 import pytest
 from fastapi.testclient import TestClient
 
+import zammad_pdf_archiver.app.routes.ingest as ingest_route
 from test.support.checks import check
 from test.support.credentials import fake_credential
 from test.support.settings_factory import make_settings
@@ -62,28 +63,65 @@ def _sign(body: bytes, secret: str, *, algorithm: str = "sha1") -> str:
     return f"sha1={digest}"
 
 
-def test_valid_signature_passes(tmp_path, monkeypatch) -> None:
-    secret = fake_credential("test-secret")
-    app = create_app(_test_settings(str(tmp_path), secret=secret))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
+def _client_with_accepting_ingest(settings: Settings, monkeypatch) -> TestClient:
     async def _stub_process_ticket(delivery_id, payload, settings) -> None:
         return None
 
     monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    return TestClient(create_app(settings))
 
-    body = b'{"ticket":{"id":123}}'
-    response = client.post(
-        "/ingest",
+
+def _client_with_rejected_ingest(settings: Settings, monkeypatch, message: str) -> TestClient:
+    async def _stub_process_ticket(_delivery_id, _payload, _settings) -> None:
+        raise AssertionError(message)
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    return TestClient(create_app(settings))
+
+
+def _post_with_signature(
+    client: TestClient,
+    path: str,
+    body: bytes,
+    signature: str,
+):
+    return client.post(
+        path,
         content=body,
         headers={
             "Content-Type": "application/json",
-            "X-Hub-Signature": _sign(body, secret),
+            "X-Hub-Signature": signature,
         },
     )
+
+
+def _check_signed_post_accepted(
+    client: TestClient,
+    path: str,
+    body: bytes,
+    signature: str,
+    expected_json: dict[str, object],
+) -> None:
+    response = _post_with_signature(client, path, body, signature)
     check(not not response.status_code == 202, "assertion failed")
-    check(not not response.json() == {"status": "accepted", "ticket_id": 123}, "assertion failed")
+    check(not not response.json() == expected_json, "assertion failed")
+
+
+def test_valid_signature_passes(tmp_path, monkeypatch) -> None:
+    secret = fake_credential("test-secret")
+    client = _client_with_accepting_ingest(
+        _test_settings(str(tmp_path), secret=secret),
+        monkeypatch,
+    )
+
+    body = b'{"ticket":{"id":123}}'
+    _check_signed_post_accepted(
+        client,
+        "/ingest",
+        body,
+        _sign(body, secret),
+        {"status": "accepted", "ticket_id": 123},
+    )
 
 
 def test_signed_ingest_requires_delivery_id_by_default(tmp_path, monkeypatch) -> None:
@@ -98,24 +136,14 @@ def test_signed_ingest_requires_delivery_id_by_default(tmp_path, monkeypatch) ->
             "storage": {"root": str(tmp_path)},
         }
     )
-    app = create_app(settings)
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:
-        raise AssertionError("process_ticket must not run without delivery ID")
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client = _client_with_rejected_ingest(
+        settings,
+        monkeypatch,
+        "process_ticket must not run without delivery ID",
+    )
 
     body = b'{"ticket":{"id":123}}'
-    response = client.post(
-        "/ingest",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature": _sign(body, secret),
-        },
-    )
+    response = _post_with_signature(client, "/ingest", body, _sign(body, secret))
 
     check(not not response.status_code == 400, "assertion failed")
     check(
@@ -126,26 +154,19 @@ def test_signed_ingest_requires_delivery_id_by_default(tmp_path, monkeypatch) ->
 
 def test_valid_sha256_signature_passes(tmp_path, monkeypatch) -> None:
     secret = fake_credential("test-secret")
-    app = create_app(_test_settings(str(tmp_path), secret=secret))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:
-        return None
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client = _client_with_accepting_ingest(
+        _test_settings(str(tmp_path), secret=secret),
+        monkeypatch,
+    )
 
     body = b'{"ticket":{"id":456}}'
-    response = client.post(
+    _check_signed_post_accepted(
+        client,
         "/ingest",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature": _sign(body, secret, algorithm="sha256"),
-        },
+        body,
+        _sign(body, secret, algorithm="sha256"),
+        {"status": "accepted", "ticket_id": 456},
     )
-    check(not not response.status_code == 202, "assertion failed")
-    check(not not response.json() == {"status": "accepted", "ticket_id": 456}, "assertion failed")
 
 
 def test_invalid_signature_is_rejected(tmp_path) -> None:
@@ -154,14 +175,7 @@ def test_invalid_signature_is_rejected(tmp_path) -> None:
     client = TestClient(app)
 
     body = b'{"ticket_id":123}'
-    response = client.post(
-        "/ingest",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature": _sign(body, "wrong-secret"),
-        },
-    )
+    response = _post_with_signature(client, "/ingest", body, _sign(body, "wrong-secret"))
     check(not not response.status_code == 403, "assertion failed")
     check(not not response.headers.get("X-Request-Id"), "assertion failed")
 
@@ -214,14 +228,7 @@ def test_allow_unsigned_without_no_secret_opt_in_still_fails_closed(tmp_path) ->
 def test_missing_signature_is_allowed_only_when_allow_unsigned_enabled(
     tmp_path, monkeypatch
 ) -> None:
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:  # noqa: ANN001, ARG001
-        return None
-
-    app = create_app(_test_settings_unsigned_ok(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client = _client_with_accepting_ingest(_test_settings_unsigned_ok(str(tmp_path)), monkeypatch)
 
     response = client.post("/ingest", json={"ticket": {"id": 1}})
     check(not not response.status_code == 202, "assertion failed")
@@ -242,39 +249,21 @@ def test_malformed_signature_is_rejected(tmp_path, signature: str) -> None:
     client = TestClient(app)
 
     body = b'{"ticket":{"id":123}}'
-    response = client.post(
-        "/ingest",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature": signature,
-        },
-    )
+    response = _post_with_signature(client, "/ingest", body, signature)
     check(not not response.status_code == 403, "assertion failed")
 
 
 def test_signature_must_match_request_body_bytes(tmp_path, monkeypatch) -> None:
     secret = fake_credential("test-secret")
-    app = create_app(_test_settings(str(tmp_path), secret=secret))
-
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    async def _stub_process_ticket(_delivery_id, _payload, _settings) -> None:
-        raise AssertionError("process_ticket must not run when signature verification fails")
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client = _client_with_rejected_ingest(
+        _test_settings(str(tmp_path), secret=secret),
+        monkeypatch,
+        "process_ticket must not run when signature verification fails",
+    )
 
     body = b'{"ticket":{"id":123}}'
     wrong_body = body + b" "
-    response = client.post(
-        "/ingest",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature": _sign(wrong_body, secret),
-        },
-    )
+    response = _post_with_signature(client, "/ingest", body, _sign(wrong_body, secret))
     check(not not response.status_code == 403, "assertion failed")
 
 
@@ -296,26 +285,19 @@ def test_default_app_fails_closed_without_settings() -> None:
 
 def test_valid_signature_passes_with_legacy_shared_secret(tmp_path, monkeypatch) -> None:
     secret = fake_credential("legacy-secret")
-    app = create_app(_test_settings_legacy_secret(str(tmp_path), secret=secret))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:
-        return None
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client = _client_with_accepting_ingest(
+        _test_settings_legacy_secret(str(tmp_path), secret=secret),
+        monkeypatch,
+    )
 
     body = b'{"ticket":{"id":123}}'
-    response = client.post(
+    _check_signed_post_accepted(
+        client,
         "/ingest",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature": _sign(body, secret),
-        },
+        body,
+        _sign(body, secret),
+        {"status": "accepted", "ticket_id": 123},
     )
-    check(not not response.status_code == 202, "assertion failed")
-    check(not not response.json() == {"status": "accepted", "ticket_id": 123}, "assertion failed")
 
 
 def test_batch_missing_signature_is_rejected_when_secret_configured(tmp_path) -> None:
@@ -330,23 +312,16 @@ def test_batch_missing_signature_is_rejected_when_secret_configured(tmp_path) ->
 
 def test_batch_valid_signature_passes(tmp_path, monkeypatch) -> None:
     secret = fake_credential("test-secret")
-    app = create_app(_test_settings(str(tmp_path), secret=secret))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:
-        return None
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client = _client_with_accepting_ingest(
+        _test_settings(str(tmp_path), secret=secret),
+        monkeypatch,
+    )
 
     body = b'[{"ticket":{"id":123}}]'
-    response = client.post(
+    _check_signed_post_accepted(
+        client,
         "/ingest/batch",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature": _sign(body, secret),
-        },
+        body,
+        _sign(body, secret),
+        {"status": "accepted", "count": 1},
     )
-    check(not not response.status_code == 202, "assertion failed")
-    check(not not response.json() == {"status": "accepted", "count": 1}, "assertion failed")
