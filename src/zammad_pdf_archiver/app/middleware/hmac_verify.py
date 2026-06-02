@@ -4,7 +4,6 @@ import hashlib
 import hmac
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import unquote
 
 import structlog
 from starlette.datastructures import Headers
@@ -12,7 +11,8 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from zammad_pdf_archiver.adapters.http_util import drain_stream
-from zammad_pdf_archiver.app.constants import DELIVERY_ID_HEADER, INGEST_PROTECTED_PATHS
+from zammad_pdf_archiver.app.constants import DELIVERY_ID_HEADER
+from zammad_pdf_archiver.app.protected_paths import is_ingest_protected_path
 from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.config.settings import Settings
 
@@ -24,20 +24,6 @@ _ALL_ALGORITHMS: dict[str, tuple[int, Any]] = {
     "sha1": (20, hashlib.sha1),
     "sha256": (32, hashlib.sha256),
 }
-
-
-def _normalized_protected_path(path: object) -> str:
-    raw = str(path or "")
-    decoded = unquote(raw)
-    if decoded != "/" and decoded.endswith("/"):
-        decoded = decoded.rstrip("/")
-    return decoded
-
-
-def _build_allowed_algorithms(*, reject_sha1: bool) -> dict[str, tuple[int, Any]]:
-    if reject_sha1:
-        return {k: v for k, v in _ALL_ALGORITHMS.items() if k != "sha1"}
-    return dict(_ALL_ALGORITHMS)
 
 
 def _secret_bytes(settings: Settings | None) -> bytes | None:
@@ -71,6 +57,27 @@ def _service_misconfigured() -> JSONResponse:
 
 def _missing_delivery_id() -> JSONResponse:
     return api_error(400, "missing_delivery_id", code="missing_delivery_id")
+
+
+async def _send_json_response(
+    response: JSONResponse, scope: Scope, receive: Receive, send: Send
+) -> None:
+    await response(scope, receive, send)
+
+
+async def _drain_and_send(
+    response: JSONResponse, scope: Scope, receive: Receive, send: Send
+) -> None:
+    await drain_stream(receive)
+    await _send_json_response(response, scope, receive, send)
+
+
+def _requires_hmac_verification(scope: Scope) -> bool:
+    return (
+        scope["type"] == "http"
+        and scope.get("method") == "POST"
+        and is_ingest_protected_path(scope.get("path"))
+    )
 
 
 def _parse_signature(
@@ -152,9 +159,12 @@ class HmacVerifyMiddleware:
             self._allow_unsigned = webhook.allow_unsigned
             self._allow_unsigned_when_no_secret = webhook.allow_unsigned_when_no_secret
             self._require_delivery_id = webhook.require_delivery_id
-            self._allowed_algorithms = _build_allowed_algorithms(
-                reject_sha1=webhook.webhook_reject_sha1,
-            )
+            if webhook.webhook_reject_sha1:
+                self._allowed_algorithms = {
+                    key: value for key, value in _ALL_ALGORITHMS.items() if key != "sha1"
+                }
+            else:
+                self._allowed_algorithms = dict(_ALL_ALGORITHMS)
         else:
             self._allow_unsigned = False
             self._allow_unsigned_when_no_secret = False
@@ -173,54 +183,69 @@ class HmacVerifyMiddleware:
             )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        protected_path = _normalized_protected_path(scope.get("path"))
-        if scope.get("method") != "POST" or protected_path not in INGEST_PROTECTED_PATHS:
+        if not _requires_hmac_verification(scope):
             await self.app(scope, receive, send)
             return
 
         headers = Headers(scope=scope)
 
-        # Require non-empty delivery id (missing or blank header → 400).
-        if self._require_delivery_id and not (headers.get(DELIVERY_ID_HEADER) or "").strip():
-            await drain_stream(receive)
-            await _missing_delivery_id()(scope, receive, send)
+        if await self._reject_missing_delivery_id(headers, scope, receive, send):
             return
 
         if not self._secret:
-            # Running without a secret requires an explicit second opt-in for local/test use.
-            if self._allow_unsigned and self._allow_unsigned_when_no_secret:
-                await self.app(scope, receive, send)
-            else:
-                await _service_misconfigured()(scope, receive, send)
+            await self._handle_missing_secret(scope, receive, send)
             return
 
-        signature_raw = headers.get(_SIGNATURE_HEADER)
-        if not signature_raw:
-            await drain_stream(receive)
-            await _forbidden()(scope, receive, send)
-            return
-
-        parsed = _parse_signature(signature_raw, self._allowed_algorithms)
-        if parsed is None:
-            await drain_stream(receive)
-            await _forbidden()(scope, receive, send)
-            return
-
-        signature, digest_ctor, algo_name = parsed
-        self._warn_sha1_deprecation(algo_name)
-        mac = hmac.new(self._secret, digestmod=digest_ctor)
-        chunks, disconnected = await _read_body(receive, on_chunk=mac.update)
-        if disconnected:
-            await _forbidden()(scope, receive, send)
-            return
-
-        expected = mac.digest()
-        if not hmac.compare_digest(signature, expected):
-            await _forbidden()(scope, receive, send)
+        chunks = await self._verified_body_chunks(self._secret, headers, scope, receive, send)
+        if chunks is None:
             return
 
         await self.app(scope, _replay_receive(chunks), send)
+
+    async def _reject_missing_delivery_id(
+        self, headers: Headers, scope: Scope, receive: Receive, send: Send
+    ) -> bool:
+        if not self._require_delivery_id:
+            return False
+
+        if (headers.get(DELIVERY_ID_HEADER) or "").strip():
+            return False
+
+        await _drain_and_send(_missing_delivery_id(), scope, receive, send)
+        return True
+
+    async def _handle_missing_secret(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Running without a secret requires an explicit second opt-in for local/test use.
+        if self._allow_unsigned and self._allow_unsigned_when_no_secret:
+            await self.app(scope, receive, send)
+            return
+
+        await _send_json_response(_service_misconfigured(), scope, receive, send)
+
+    async def _verified_body_chunks(
+        self, secret: bytes, headers: Headers, scope: Scope, receive: Receive, send: Send
+    ) -> list[bytes] | None:
+        signature_raw = headers.get(_SIGNATURE_HEADER)
+        if not signature_raw:
+            await _drain_and_send(_forbidden(), scope, receive, send)
+            return None
+
+        parsed = _parse_signature(signature_raw, self._allowed_algorithms)
+        if parsed is None:
+            await _drain_and_send(_forbidden(), scope, receive, send)
+            return None
+
+        signature, digest_ctor, algo_name = parsed
+        self._warn_sha1_deprecation(algo_name)
+        mac = hmac.new(secret, digestmod=digest_ctor)
+        chunks, disconnected = await _read_body(receive, on_chunk=mac.update)
+        if disconnected:
+            await _send_json_response(_forbidden(), scope, receive, send)
+            return None
+
+        expected = mac.digest()
+        if not hmac.compare_digest(signature, expected):
+            await _send_json_response(_forbidden(), scope, receive, send)
+            return None
+
+        return chunks

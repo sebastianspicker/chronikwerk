@@ -7,16 +7,11 @@ from time import monotonic
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from zammad_pdf_archiver.app.constants import INGEST_PROTECTED_PATHS
+from zammad_pdf_archiver.app.protected_paths import normalized_protected_path
 from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.config.settings import Settings
 
 _METRICS_PATH = "/metrics"
-
-# Eviction tuning for the in-memory token-bucket store. The headroom keeps the
-# dictionary below the hard cap after a burst of new client keys without sorting
-# every bucket on the hot path.
-_EVICTION_HEADROOM = 200  # extra entries to evict below max_entries
-_EVICTION_BATCH_CAP = 2000  # max entries to evict in one pass
 
 
 @dataclass
@@ -45,25 +40,12 @@ class _InMemoryTokenBucketLimiter:
         """Return True if the request for key is within the rate limit, False otherwise."""
         now = float(self._now())
         async with self._lock:
-            if len(self._buckets) > self._max_entries:
-                # Pop the first few entries (oldest inserted) to avoid an O(N log N) sort.
-                to_evict_count = len(self._buckets) - self._max_entries + _EVICTION_HEADROOM
-                to_evict_count = min(to_evict_count, _EVICTION_BATCH_CAP)
-
-                # Collect keys first to avoid "dictionary changed size during iteration"
-                it = iter(self._buckets)
-                keys_to_remove = []
-                for _ in range(to_evict_count):
-                    try:
-                        keys_to_remove.append(next(it))
-                    except StopIteration:
-                        break
-
-                for k in keys_to_remove:
-                    self._buckets.pop(k, None)
-
             bucket = self._buckets.get(key)
             if bucket is None:
+                if len(self._buckets) >= self._max_entries:
+                    to_evict_count = len(self._buckets) - self._max_entries + 1
+                    for evicted_key in list(self._buckets)[:to_evict_count]:
+                        self._buckets.pop(evicted_key, None)
                 bucket = _Bucket(tokens=self._burst, updated_at=now)
                 self._buckets[key] = bucket
 
@@ -146,7 +128,7 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if not self._enabled or scope.get("path") not in self._paths:
+        if not self._enabled or normalized_protected_path(scope.get("path")) not in self._paths:
             await self.app(scope, receive, send)
             return
 

@@ -50,8 +50,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings is not None:
         await stop_queue_worker(settings)
     await wait_for_tasks()
-    await aclose_stores()
-    await aclose_queue_clients()
+    store_failures = await aclose_stores()
+    queue_failures = await aclose_queue_clients()
+    if store_failures + queue_failures > 0:
+        log.warning(
+            "shutdown.redis_close_failures",
+            store_failures=store_failures,
+            queue_failures=queue_failures,
+        )
 
 
 async def _global_exception_handler(request: Request, exc: Exception) -> Response:

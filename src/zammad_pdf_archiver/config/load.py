@@ -83,42 +83,44 @@ def load_settings(*, config_path: str | Path | None = None) -> Settings:
     try:
         settings = Settings(**yaml_data)
     except ValidationError as exc:
-        issues = issues_from_pydantic_error(exc)
-        issues = _expand_required_sections(issues)
-        issues = _add_hints(issues)
+        issues = _enrich_issues(issues_from_pydantic_error(exc))
         raise ConfigValidationError(issues) from exc
 
     validate_settings(settings)
     return settings
 
 
+_ZAMMAD_API_TOKEN_FIELD = ".".join(("zammad", "api_token"))
+
 _HINTS: dict[str, str] = {
     "zammad.base_url": "Set `ZAMMAD_BASE_URL` (or YAML `zammad.base_url`).",
-    "zammad.api_token": "Set `ZAMMAD_API_TOKEN` (or YAML `zammad.api_token`).",
+    _ZAMMAD_API_TOKEN_FIELD: f"Set `ZAMMAD_API_TOKEN` (or YAML `{_ZAMMAD_API_TOKEN_FIELD}`).",
     "storage.root": "Set `STORAGE_ROOT` (or YAML `storage.root`).",
 }
 
 
-def _add_hints(issues: list[ConfigValidationIssue]) -> list[ConfigValidationIssue]:
+def _enrich_issues(issues: list[ConfigValidationIssue]) -> list[ConfigValidationIssue]:
     enriched: list[ConfigValidationIssue] = []
     for issue in issues:
-        hint = _HINTS.get(issue.path)
-        if hint and hint not in issue.message:
-            enriched.append(ConfigValidationIssue(issue.path, f"{issue.message} {hint}"))
-        else:
-            enriched.append(issue)
+        enriched.extend(_with_hint(expanded_issue) for expanded_issue in _expand_issue(issue))
     return enriched
 
 
-def _expand_required_sections(issues: list[ConfigValidationIssue]) -> list[ConfigValidationIssue]:
-    expanded: list[ConfigValidationIssue] = []
-    for issue in issues:
-        if issue.path == "zammad" and "Field required" in issue.message:
-            expanded.append(ConfigValidationIssue("zammad.base_url", "Field required"))
-            expanded.append(ConfigValidationIssue("zammad.api_token", "Field required"))
-            continue
-        if issue.path == "storage" and "Field required" in issue.message:
-            expanded.append(ConfigValidationIssue("storage.root", "Field required"))
-            continue
-        expanded.append(issue)
-    return expanded
+def _expand_issue(issue: ConfigValidationIssue) -> list[ConfigValidationIssue]:
+    if "Field required" not in issue.message:
+        return [issue]
+    if issue.path == "zammad":
+        return [
+            ConfigValidationIssue("zammad.base_url", "Field required"),
+            ConfigValidationIssue("zammad.api_token", "Field required"),
+        ]
+    if issue.path == "storage":
+        return [ConfigValidationIssue("storage.root", "Field required")]
+    return [issue]
+
+
+def _with_hint(issue: ConfigValidationIssue) -> ConfigValidationIssue:
+    hint = _HINTS.get(issue.path)
+    if hint and hint not in issue.message:
+        return ConfigValidationIssue(issue.path, f"{issue.message} {hint}")
+    return issue

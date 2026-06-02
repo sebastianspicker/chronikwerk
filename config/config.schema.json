@@ -64,21 +64,12 @@
       "required": ["root"],
       "properties": {
         "root": { "type": "string" },
-        "atomic_write": { "type": "boolean" },
         "fsync": { "type": "boolean" },
         "path_policy": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "allow_prefixes": { "type": "array", "items": { "type": "string" } },
-            "sanitize": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "replace_whitespace": { "type": "string" },
-                "strip_control_chars": { "type": "boolean" }
-              }
-            },
             "filename_pattern": { "type": "string" }
           }
         }
@@ -111,8 +102,6 @@
           "additionalProperties": false,
           "properties": {
             "cert_path": { "type": ["string", "null"] },
-            "key_path": { "type": ["string", "null"] },
-            "key_password": { "type": ["string", "null"] },
             "reason": { "type": "string" },
             "location": { "type": "string" }
           }
@@ -143,7 +132,6 @@
       "properties": {
         "log_level": { "type": "string" },
         "log_format": { "type": ["string", "null"] },
-        "json_logs": { "type": "boolean" },
         "metrics_enabled": { "type": "boolean" },
         "metrics_bearer_token": { "type": ["string", "null"] },
         "healthz_omit_version": { "type": "boolean" }
@@ -177,7 +165,8 @@
           "properties": {
             "allow_unsigned": { "type": "boolean" },
             "allow_unsigned_when_no_secret": { "type": "boolean" },
-            "require_delivery_id": { "type": "boolean" }
+            "require_delivery_id": { "type": "boolean" },
+            "webhook_reject_sha1": { "type": "boolean" }
           }
         },
         "transport": {
