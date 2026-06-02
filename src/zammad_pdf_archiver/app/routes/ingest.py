@@ -81,7 +81,7 @@ def _batch_item_delivery_id(batch_delivery_id: str | None, index: int) -> str | 
         return None
     # One delivery header represents the batch request; suffix with the item index so
     # idempotency is still tracked per ticket payload.
-    return f"{batch_delivery_id}:{index}"
+    return ":".join((batch_delivery_id, str(index)))
 
 
 def _batch_too_large_response() -> JSONResponse:

@@ -76,6 +76,61 @@ class _FakeRedis:
         pass
 
 
+class _WorkerRedis:
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, dict[str, str]]] = []
+        self.acked: list[tuple[str, str, str]] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.groups_created: list[tuple[str, str, str, bool]] = []
+
+    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
+        message_id = f"{len(self.messages) + 1}-0"
+        self.messages.append((message_id, fields))
+        return message_id
+
+    async def xgroup_create(
+        self,
+        stream: str,
+        group: str,
+        **kwargs: Any,
+    ) -> None:
+        group_id = str(kwargs["id"])
+        mkstream = bool(kwargs["mkstream"])
+        self.groups_created.append((stream, group, group_id, mkstream))
+
+    async def xpending_range(self, *args: Any) -> list[dict[str, str]]:  # noqa: ARG002
+        await asyncio.sleep(0)
+        return []
+
+    async def xreadgroup(
+        self,
+        groupname: str,  # noqa: ARG002
+        consumername: str,  # noqa: ARG002
+        streams: dict[str, str],
+        count: int = 10,
+        block: int | None = None,  # noqa: ARG002
+    ) -> list[tuple[str, list[tuple[str, dict[str, str]]]]]:
+        stream, stream_id = next(iter(streams.items()))
+        if stream_id != ">" or not self.messages:
+            await asyncio.sleep(0)
+            return []
+        messages = self.messages[:count]
+        self.messages = self.messages[count:]
+        await asyncio.sleep(0)
+        return [(stream, messages)]
+
+    async def xack(self, stream: str, group: str, message_id: str) -> int:
+        self.acked.append((stream, group, message_id))
+        return 1
+
+    async def xdel(self, stream: str, message_id: str) -> int:
+        self.deleted.append((stream, message_id))
+        return 1
+
+    async def ping(self) -> None:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -99,6 +154,13 @@ def _valid_raw_fields(ticket_id: int = 42, attempt: int = 0) -> dict[str, str]:
         "attempt": str(attempt),
         "not_before_ts": "0.0",
     }
+
+
+async def _wait_for_worker_ack(fake: _WorkerRedis) -> None:
+    for _ in range(100):
+        if fake.acked:
+            return
+        await asyncio.sleep(0.01)
 
 
 # ===========================================================================
@@ -370,61 +432,6 @@ class TestPublicWorkerLifecycle:
 
     def test_public_worker_consumes_enqueued_message(self, monkeypatch, tmp_path) -> None:
         settings = _make_redis_settings(tmp_path, queue_read_block_ms=100)
-
-        class _WorkerRedis:
-            def __init__(self) -> None:
-                self.messages: list[tuple[str, dict[str, str]]] = []
-                self.acked: list[tuple[str, str, str]] = []
-                self.deleted: list[tuple[str, str]] = []
-                self.groups_created: list[tuple[str, str, str, bool]] = []
-
-            async def xadd(self, stream: str, fields: dict[str, str]) -> str:
-                message_id = f"{len(self.messages) + 1}-0"
-                self.messages.append((message_id, fields))
-                return message_id
-
-            async def xgroup_create(
-                self,
-                stream: str,
-                group: str,
-                **kwargs: Any,
-            ) -> None:
-                group_id = str(kwargs["id"])
-                mkstream = bool(kwargs["mkstream"])
-                self.groups_created.append((stream, group, group_id, mkstream))
-
-            async def xpending_range(self, *args: Any) -> list[dict[str, str]]:  # noqa: ARG002
-                await asyncio.sleep(0)
-                return []
-
-            async def xreadgroup(
-                self,
-                groupname: str,  # noqa: ARG002
-                consumername: str,  # noqa: ARG002
-                streams: dict[str, str],
-                count: int = 10,
-                block: int | None = None,  # noqa: ARG002
-            ) -> list[tuple[str, list[tuple[str, dict[str, str]]]]]:
-                stream, stream_id = next(iter(streams.items()))
-                if stream_id != ">" or not self.messages:
-                    await asyncio.sleep(0)
-                    return []
-                messages = self.messages[:count]
-                self.messages = self.messages[count:]
-                await asyncio.sleep(0)
-                return [(stream, messages)]
-
-            async def xack(self, stream: str, group: str, message_id: str) -> int:
-                self.acked.append((stream, group, message_id))
-                return 1
-
-            async def xdel(self, stream: str, message_id: str) -> int:
-                self.deleted.append((stream, message_id))
-                return 1
-
-            async def ping(self) -> None:
-                return None
-
         fake = _WorkerRedis()
         processed: list[tuple[str | None, dict[str, Any]]] = []
 
@@ -453,10 +460,7 @@ class TestPublicWorkerLifecycle:
             task = await redis_queue.start_queue_worker(settings)
             check(not not task is not None, "assertion failed")
             try:
-                for _ in range(100):
-                    if fake.acked:
-                        break
-                    await asyncio.sleep(0.01)
+                await _wait_for_worker_ack(fake)
             finally:
                 await redis_queue.stop_queue_worker(settings, timeout=1.0)
 
