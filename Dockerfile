@@ -11,7 +11,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
 
-RUN python -m pip install --no-cache-dir -U pip uv \
+RUN python -m pip install --no-cache-dir uv==0.10.7 \
   && uv pip install --no-cache-dir ".[redis]"
 
 
