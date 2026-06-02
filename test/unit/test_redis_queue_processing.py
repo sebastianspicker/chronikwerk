@@ -13,13 +13,24 @@ from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
 from zammad_pdf_archiver.app.jobs.process_ticket import ProcessTicketResult
 
+
+class _AckDeleteMixin:
+    async def xack(self: Any, stream: str, group: str, message_id: str) -> int:
+        self.acked.append((stream, group, message_id))
+        return 1
+
+    async def xdel(self: Any, stream: str, message_id: str) -> int:
+        self.deleted.append((stream, message_id))
+        return 1
+
+
 # ---------------------------------------------------------------------------
 # Shared fake Redis
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class _FakeRedis:
+class _FakeRedis(_AckDeleteMixin):
     """Minimal fake Redis supporting xreadgroup, xadd, xack, xdel, xlen, xpending."""
 
     xadds: list[tuple[str, dict[str, str]]] = field(default_factory=list)
@@ -50,14 +61,6 @@ class _FakeRedis:
         self.stream_lengths[stream] = self.stream_lengths.get(stream, 0) + 1
         return f"{len(self.xadds)}-0"
 
-    async def xack(self, stream: str, group: str, message_id: str) -> int:
-        self.acked.append((stream, group, message_id))
-        return 1
-
-    async def xdel(self, stream: str, message_id: str) -> int:
-        self.deleted.append((stream, message_id))
-        return 1
-
     async def xlen(self, stream: str) -> int:
         return self.stream_lengths.get(stream, 0)
 
@@ -76,7 +79,7 @@ class _FakeRedis:
         pass
 
 
-class _WorkerRedis:
+class _WorkerRedis(_AckDeleteMixin):
     def __init__(self) -> None:
         self.messages: list[tuple[str, dict[str, str]]] = []
         self.acked: list[tuple[str, str, str]] = []
@@ -119,14 +122,6 @@ class _WorkerRedis:
         await asyncio.sleep(0)
         return [(stream, messages)]
 
-    async def xack(self, stream: str, group: str, message_id: str) -> int:
-        self.acked.append((stream, group, message_id))
-        return 1
-
-    async def xdel(self, stream: str, message_id: str) -> int:
-        self.deleted.append((stream, message_id))
-        return 1
-
     async def ping(self) -> None:
         return None
 
@@ -161,6 +156,18 @@ async def _wait_for_worker_ack(fake: _WorkerRedis) -> None:
         if fake.acked:
             return
         await asyncio.sleep(0.01)
+
+
+def _reset_worker_state() -> None:
+    redis_queue._worker_task = None  # noqa: SLF001
+    redis_queue._worker_stop_event = None  # noqa: SLF001
+
+
+async def _sleeping_worker_loop(s: Any, e: Any) -> None:  # noqa: ARG001
+    try:
+        await asyncio.sleep(100)
+    except asyncio.CancelledError:
+        return
 
 
 # ===========================================================================
@@ -357,8 +364,7 @@ class TestPublicWorkerLifecycle:
         )
 
         async def _run() -> None:
-            redis_queue._worker_task = None  # noqa: SLF001
-            redis_queue._worker_stop_event = None  # noqa: SLF001
+            _reset_worker_state()
             check(
                 not await redis_queue.start_queue_worker(settings) is not None, "assertion failed"
             )
@@ -369,16 +375,8 @@ class TestPublicWorkerLifecycle:
         settings = _make_redis_settings(tmp_path)
 
         async def _run() -> asyncio.Task[None] | None:
-            redis_queue._worker_task = None  # noqa: SLF001
-            redis_queue._worker_stop_event = None  # noqa: SLF001
-
-            async def _fake_worker_loop(s: Any, e: Any) -> None:  # noqa: ARG001
-                try:
-                    await asyncio.sleep(100)
-                except asyncio.CancelledError:
-                    return
-
-            monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
+            _reset_worker_state()
+            monkeypatch.setattr(redis_queue, "_worker_loop", _sleeping_worker_loop)
             task = await redis_queue.start_queue_worker(settings)
             check(not not task is not None, "assertion failed")
             check(not not isinstance(task, asyncio.Task), "assertion failed")
@@ -391,8 +389,7 @@ class TestPublicWorkerLifecycle:
         settings = _make_redis_settings(tmp_path)
 
         async def _run() -> None:
-            redis_queue._worker_task = None  # noqa: SLF001
-            redis_queue._worker_stop_event = None  # noqa: SLF001
+            _reset_worker_state()
             stop_observed = False
 
             async def _fake_worker_loop(s: Any, stop_event: asyncio.Event) -> None:  # noqa: ARG001
@@ -413,16 +410,8 @@ class TestPublicWorkerLifecycle:
         settings = _make_redis_settings(tmp_path)
 
         async def _run() -> None:
-            redis_queue._worker_task = None  # noqa: SLF001
-            redis_queue._worker_stop_event = None  # noqa: SLF001
-
-            async def _fake_worker_loop(s: Any, e: Any) -> None:  # noqa: ARG001
-                try:
-                    await asyncio.sleep(100)
-                except asyncio.CancelledError:
-                    return
-
-            monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
+            _reset_worker_state()
+            monkeypatch.setattr(redis_queue, "_worker_loop", _sleeping_worker_loop)
             task1 = await redis_queue.start_queue_worker(settings)
             task2 = await redis_queue.start_queue_worker(settings)
             check(not task1 is not task2, "assertion failed")
