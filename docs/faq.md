@@ -2,7 +2,13 @@
 
 ## Why did `/ingest` return `202` but no PDF exists yet?
 
-`202` means the request was accepted, not that processing completed. Processing after `202` is best-effort: there is no guaranteed retry, and work can be lost on process restart (no durable queue). If the service restarted or the job never ran, re-trigger by saving the ticket or reapplying the macro.
+`202` means the request was accepted, not that processing completed. In default
+`inprocess` mode, processing after `202` is best-effort: there is no guaranteed
+retry, and work can be lost on process restart. With
+`workflow.execution_backend=redis_queue`, accepted work is queued in Redis with
+retry and DLQ handling. If the service restarted or the job never ran,
+re-trigger by saving the ticket, reapplying the macro, or using the retry
+endpoint after checking queue/history state.
 
 Check:
 - ticket tags (`pdf:processing`, `pdf:signed`, `pdf:error`)
@@ -27,7 +33,8 @@ No webhook secret is configured and unsigned mode is disabled.
 
 Fix:
 - set `WEBHOOK_HMAC_SECRET`, or
-- for internal test only: `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true`
+- for internal test only: `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` plus
+  `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET=true`
 
 ## Why do I get `400 missing_delivery_id`?
 
@@ -54,6 +61,10 @@ Recovery:
 ## Why are duplicate deliveries skipped?
 
 Delivery dedupe is active for `workflow.delivery_id_ttl_seconds`.
+
+The default memory backend resets on process restart. With
+`workflow.idempotency_backend=redis`, dedupe state is shared across workers and
+survives service restarts for the configured TTL.
 
 To process again:
 - trigger a new Zammad event (new delivery ID), or
@@ -84,7 +95,8 @@ See [`06-signing-and-timestamp.md`](06-signing-and-timestamp.md).
 Check:
 - `TSA_URL`
 - `TSA_CA_BUNDLE_PATH` (if private CA)
-- `TSA_USER` + `TSA_PASS` when auth is required
+- `signing.timestamp.rfc3161.user` / `signing.timestamp.rfc3161.password`, or
+  `TSA_USER` / `TSA_PASS`, when auth is required
 - outbound connectivity and TLS trust
 
 ## Why do large tickets fail to render?

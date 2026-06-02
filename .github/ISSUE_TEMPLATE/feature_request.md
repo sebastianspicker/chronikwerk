@@ -10,9 +10,17 @@ assignees: ""
 
 <!-- What problem are you trying to solve? -->
 
+## User / operator workflow
+
+<!-- Describe the workflow this would improve. -->
+
 ## Proposed solution
 
 <!-- What would you like to see? -->
+
+## Contracts affected
+
+<!-- Note API, config, storage layout, PDF/sidecar shape, tags, queue/idempotency, security, or deployment impact. -->
 
 ## Alternatives considered
 
@@ -21,4 +29,3 @@ assignees: ""
 ## Additional context
 
 <!-- Optional -->
-

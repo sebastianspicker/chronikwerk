@@ -43,7 +43,7 @@ This repository provides:
   - `GET /jobs/history` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `POST /jobs/queue/dlq/drain` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `GET /admin` (requires Bearer or HTTP Basic auth via `ADMIN_BEARER_TOKEN`)
-  - `GET /admin/api/*` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
+  - `/admin/api/*` queue, history, retry, DLQ, and config-check endpoints (requires Bearer token via `ADMIN_BEARER_TOKEN`)
   - `GET /healthz`
   - `GET /metrics` (requires Bearer token via `METRICS_BEARER_TOKEN` when enabled)
 - End-to-end ticket processing:
@@ -185,7 +185,7 @@ STORAGE_ROOT=/mnt/archive
 WEBHOOK_HMAC_SECRET=your-webhook-secret
 ```
 
-> For test/dev without HMAC, set `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` instead of `WEBHOOK_HMAC_SECRET`.
+> For internal test/dev without HMAC, set both `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` and `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET=true` instead of `WEBHOOK_HMAC_SECRET`.
 
 **3. Start the service:**
 
@@ -255,7 +255,7 @@ make demo-down     # tear down
 | `GET` | `/jobs/history` | Bearer | Processing history |
 | `POST` | `/jobs/queue/dlq/drain` | Bearer | Delete dead-letter queue entries |
 | `GET` | `/admin` | Bearer or Basic | Admin dashboard (optional) |
-| `GET` | `/admin/api/*` | Bearer | Admin API (optional) |
+| `GET/POST` | `/admin/api/*` | Bearer | Admin API (optional) |
 | `GET` | `/healthz` | -- | Health check (supports `?deep=true`) |
 | `GET` | `/metrics` | Bearer | Prometheus metrics (optional) |
 
@@ -265,7 +265,7 @@ See [`docs/api.md`](docs/api.md) for full request/response details.
 
 Precedence (highest first):
 1. Environment variables (including values loaded from `.env`)
-2. Flat env aliases (backward-compat keys)
+2. Flat env aliases (operator-friendly env keys)
 3. YAML config (`CONFIG_PATH`, or `config/config.yaml` when present)
 4. Defaults in settings model
 
@@ -281,15 +281,15 @@ Precedence (highest first):
 ## Operational Notes
 
 - All output paths are validated and confined under `storage.root`.
-- Default storage writes are atomic (`storage.atomic_write=true`) and fsynced (`storage.fsync=true`).
+- Archive commits use a temp-directory, sidecar-last storage path and are fsynced by default (`storage.fsync=true`).
 - Signing requires `signing.enabled=true` and `signing.pfx_path`.
 - Timestamping requires signing plus:
   - `signing.timestamp.enabled=true`
   - `signing.timestamp.rfc3161.tsa_url`
-- TSA basic auth (if needed) uses env-only keys:
-  - `TSA_USER`
-  - `TSA_PASS`
-- Delivery ID dedupe is in-memory only and resets on process restart. For consistent deduplication across restarts or multiple instances, use Redis (`workflow.idempotency_backend=redis`, `workflow.redis_url`); see [Operations](docs/08-operations.md).
+- TSA basic auth (if needed) can be configured with
+  `signing.timestamp.rfc3161.user` / `signing.timestamp.rfc3161.password` or
+  the flat env aliases `TSA_USER` / `TSA_PASS`.
+- Delivery ID dedupe is memory-backed by default and resets on process restart. For consistent deduplication across restarts or multiple instances, use Redis (`workflow.idempotency_backend=redis`, `workflow.redis_url`); see [Operations](docs/08-operations.md).
 - For `POST /ingest/batch`, a batch-level `X-Zammad-Delivery` header is expanded to per-item IDs of the form `<delivery-id>:<index>` before dedupe is applied.
 - Processing after `202` is **best-effort** in default `inprocess` mode. For durable retries and dead-letter handling, enable `workflow.execution_backend=redis_queue` with `workflow.redis_url`; see [Processing and Idempotency](docs/08-operations.md#4-processing-and-idempotency-behavior).
 - If a ticket is stuck in `pdf:processing` after a crash, see [Stuck in pdf:processing](docs/faq.md#why-is-a-ticket-stuck-with-pdfprocessing) in the FAQ.
@@ -316,8 +316,6 @@ make dev           # Docker Compose dev stack (hot-reload)
 
 ## Documentation (index)
 
-- [`docs/PRD.md`](docs/PRD.md) – Product Requirements Document
-- [`docs/adr/`](docs/adr/) – Architecture Decision Records
 - [`docs/01-architecture.md`](docs/01-architecture.md)
 - [`docs/02-zammad-setup.md`](docs/02-zammad-setup.md)
 - [`docs/03-data-model.md`](docs/03-data-model.md)
@@ -330,8 +328,8 @@ make dev           # Docker Compose dev stack (hot-reload)
 - [`docs/api.md`](docs/api.md)
 - [`docs/config-reference.md`](docs/config-reference.md)
 - [`docs/faq.md`](docs/faq.md)
-- [`docs/release-checklist.md`](docs/release-checklist.md) – Release and deployment checklist
 - [`docs/deploy.md`](docs/deploy.md) – Production deployment
+- [`CONTRIBUTING.md`](CONTRIBUTING.md#releases) – Release workflow
 - [`docs/demo-mock-university.md`](docs/demo-mock-university.md) – Local mock university demo stack and screenshot workflow
 
 ## Glossary
@@ -339,7 +337,7 @@ make dev           # Docker Compose dev stack (hot-reload)
 - **Audit sidecar**: JSON file written next to each PDF containing checksum and processing metadata.
 - **Archive path**: ticket custom field defining path segments under storage root.
 - **Archive user mode**: strategy that selects the first directory component (`owner`, `current_agent`, `fixed`).
-- **Delivery ID**: `X-Zammad-Delivery` header used for best-effort in-memory deduplication.
+- **Delivery ID**: `X-Zammad-Delivery` header used for deduplication; memory-backed by default, Redis-backed when configured.
 - **HMAC**: webhook signature validation via `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>`.
 - **PAdES**: PDF Advanced Electronic Signatures profile.
 - **RFC3161**: timestamp protocol used by Time Stamping Authorities.
