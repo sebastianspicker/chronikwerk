@@ -45,6 +45,7 @@ __all__ = [
     "_CapturingLog",
     "_Counter",
     "_Observer",
+    "_SimpleProcessTicketClient",
     "_VisibilityFailureClient",
     "_assert_done_tag_update_partial_failure",
     "_assert_error_transition_cleanup",
@@ -54,6 +55,10 @@ __all__ = [
     "_assert_processing_cleanup_failure",
     "_assert_success_acknowledgement_partial_failure",
     "_settings",
+    "_patch_process_ticket_client",
+    "_patch_process_ticket_render_pdf",
+    "_patch_process_ticket_sleep",
+    "_pdf_render_result",
     "asyncio",
     "cast",
     "check",
@@ -112,6 +117,61 @@ class _Observer:
         self.observations.append(value)
 
 
+class _SimpleProcessTicketClient:
+    added_tags: list[str] = []
+    articles: list[tuple[str, str]] = []
+    ticket_title = "process ticket"
+
+    def __init_subclass__(cls) -> None:
+        cls.added_tags = []
+        cls.articles = []
+
+    def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+        pass
+
+    async def __aenter__(self) -> _SimpleProcessTicketClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+        return None
+
+    async def get_ticket(self, ticket_id: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=ticket_id,
+            number="12345",
+            title=type(self).ticket_title,
+            owner=SimpleNamespace(login="owner.user"),
+            updated_by=SimpleNamespace(login="agent.user"),
+            preferences=SimpleNamespace(
+                custom_fields={
+                    "archive_path": "Support > Team",
+                    "archive_user_mode": "owner",
+                }
+            ),
+        )
+
+    async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
+        return TagList(["pdf:sign"])
+
+    async def remove_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
+        return None
+
+    async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
+        type(self).added_tags.append(tag)
+
+    async def list_articles(self, ticket_id: int) -> list[SimpleNamespace]:  # noqa: ARG002
+        return []
+
+    async def create_internal_article(
+        self,
+        ticket_id: int,
+        subject: str,
+        body_html: str,
+    ) -> SimpleNamespace:
+        type(self).articles.append((subject, body_html))
+        return SimpleNamespace(id=1)
+
+
 class _VisibilityFailureClient:
     articles: list[tuple[str, str]] = []
     error_note_fails = False
@@ -162,6 +222,41 @@ class _VisibilityFailureClient:
             raise RuntimeError("error note failed")
         type(self).articles.append((subject, body_html))
         return SimpleNamespace(id=1)
+
+
+def _pdf_render_result(*, title: str, ticket_id: int = 321) -> tuple[bytes, Snapshot, bool, int]:
+    snapshot = Snapshot(
+        ticket=TicketMeta(id=ticket_id, number="12345", title=title),
+        articles=[],
+    )
+    return b"%PDF-1.4\n%%EOF\n", snapshot, False, 0
+
+
+def _patch_process_ticket_client(monkeypatch: pytest.MonkeyPatch, client: type) -> None:
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.app.jobs.process_ticket.AsyncZammadClient",
+        client,
+    )
+
+
+def _patch_process_ticket_render_pdf(monkeypatch: pytest.MonkeyPatch, render_pdf: Any) -> None:
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.app.jobs.process_ticket.build_and_render_pdf",
+        render_pdf,
+    )
+
+
+def _patch_process_ticket_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    sleep_delays: list[float] = []
+
+    async def _record_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.app.jobs.process_ticket.asyncio.sleep",
+        _record_sleep,
+    )
+    return sleep_delays
 
 
 def _assert_nonnegative_delays(delays: list[float], *, count: int) -> None:
@@ -334,4 +429,3 @@ def _assert_error_visibility_failures(
         ],
         "assertion failed",
     )
-

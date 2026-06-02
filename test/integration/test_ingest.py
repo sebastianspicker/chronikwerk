@@ -105,17 +105,30 @@ class _FakeRedisDeliveryIdStore:
         return int(existed)
 
 
-def test_ingest_accepts_and_extracts_ticket_id(tmp_path, monkeypatch) -> None:
-    calls: list[tuple[object, object, object]] = []
+def _client_with_stubbed_process_ticket(
+    tmp_path,
+    monkeypatch,
+    *,
+    settings: Settings | None = None,
+) -> tuple[TestClient, list[tuple[str | None, dict[str, Any], Settings]]]:
+    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
 
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:
+    async def _stub_process_ticket(
+        delivery_id: str | None,
+        payload: dict[str, Any],
+        settings: Settings,
+    ) -> None:
         calls.append((delivery_id, payload, settings))
 
-    app = create_app(_test_settings(str(tmp_path)))
+    app = create_app(settings or _test_settings(str(tmp_path)))
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
 
     monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    return TestClient(app), calls
+
+
+def test_ingest_accepts_and_extracts_ticket_id(tmp_path, monkeypatch) -> None:
+    client, calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post("/ingest", json={"ticket": {"id": 123}})
     check(not not response.status_code == 202, "assertion failed")
@@ -134,14 +147,7 @@ def test_ingest_rejects_payload_without_ticket_id(tmp_path) -> None:
 
 
 def test_request_id_header_is_preserved(tmp_path, monkeypatch) -> None:
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:  # noqa: ANN001, ARG001
-        return None
-
-    app = create_app(_test_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client, _calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post(
         "/ingest",
@@ -153,14 +159,7 @@ def test_request_id_header_is_preserved(tmp_path, monkeypatch) -> None:
 
 
 def test_request_id_header_invalid_value_is_replaced(tmp_path, monkeypatch) -> None:
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:  # noqa: ANN001, ARG001
-        return None
-
-    app = create_app(_test_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client, _calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post(
         "/ingest",
@@ -173,18 +172,7 @@ def test_request_id_header_invalid_value_is_replaced(tmp_path, monkeypatch) -> N
 
 
 def test_ingest_passes_delivery_id_header_to_process_ticket(tmp_path, monkeypatch) -> None:
-    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
-
-    async def _stub_process_ticket(
-        delivery_id: str | None, payload: dict[str, Any], settings: Settings
-    ) -> None:
-        calls.append((delivery_id, payload, settings))
-
-    app = create_app(_test_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client, calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post(
         "/ingest",
@@ -287,18 +275,7 @@ def test_ingest_duplicate_delivery_id_uses_redis_idempotency_backend(
 
 
 def test_ingest_ignores_force_reprocess_field_from_public_payload(tmp_path, monkeypatch) -> None:
-    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
-
-    async def _stub_process_ticket(
-        delivery_id: str | None, payload: dict[str, Any], settings: Settings
-    ) -> None:
-        calls.append((delivery_id, payload, settings))
-
-    app = create_app(_test_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client, calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post(
         "/ingest",
@@ -324,18 +301,7 @@ def test_ingest_rejects_missing_delivery_id_when_required(tmp_path) -> None:
 
 def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
     """Schema validation: ticket.id must be a positive int (422); no background run."""
-    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
-
-    async def _stub_process_ticket(
-        delivery_id: str | None, payload: dict[str, Any], settings: Settings
-    ) -> None:
-        calls.append((delivery_id, payload, settings))
-
-    app = create_app(_test_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client, calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post("/ingest", json={"ticket": {"id": True}})
     check(not not response.status_code == 422, "assertion failed")
@@ -343,18 +309,7 @@ def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
 
 
 def test_ingest_batch_uses_per_item_delivery_ids_when_header_present(tmp_path, monkeypatch) -> None:
-    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
-
-    async def _stub_process_ticket(
-        delivery_id: str | None, payload: dict[str, Any], settings: Settings
-    ) -> None:
-        calls.append((delivery_id, payload, settings))
-
-    app = create_app(_test_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client, calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post(
         "/ingest/batch",
@@ -376,18 +331,7 @@ def test_ingest_batch_uses_per_item_delivery_ids_when_header_present(tmp_path, m
 def test_batch_ingest_ignores_force_reprocess_flag_from_public_payload(
     tmp_path, monkeypatch
 ) -> None:
-    calls: list[tuple[str | None, dict[str, Any], Settings]] = []
-
-    async def _stub_process_ticket(
-        delivery_id: str | None, payload: dict[str, Any], settings: Settings
-    ) -> None:
-        calls.append((delivery_id, payload, settings))
-
-    app = create_app(_test_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.ingest as ingest_route
-
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
-    client = TestClient(app)
+    client, calls = _client_with_stubbed_process_ticket(tmp_path, monkeypatch)
 
     response = client.post(
         "/ingest/batch",
