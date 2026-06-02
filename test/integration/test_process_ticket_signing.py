@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -11,6 +11,7 @@ import respx
 
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.signing_helpers import write_test_pfx
 from test.support.time_control import freeze_process_ticket_now
 from zammad_pdf_archiver._version import VERSION
 from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
@@ -19,39 +20,6 @@ from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
 
 pytest.importorskip("pyhanko", reason="Signing integration requires pyHanko")
-
-
-def _write_test_pfx(path: Path, password: str) -> str:
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    from cryptography.x509.oid import NameOID
-
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Integration Test Signer")])
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(days=1))
-        .not_valid_after(now + timedelta(days=30))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(private_key=key, algorithm=hashes.SHA256())
-    )
-
-    pfx = pkcs12.serialize_key_and_certificates(
-        name=b"test-signer",
-        key=key,
-        cert=cert,
-        cas=None,
-        encryption_algorithm=serialization.BestAvailableEncryption(password.encode("utf-8")),
-    )
-    path.write_bytes(pfx)
-    return cert.fingerprint(hashes.SHA256()).hex()
 
 
 def _test_settings(storage_root: str, *, pfx_path: Path, password: str) -> Settings:
@@ -235,7 +203,11 @@ def test_process_ticket_signing_writes_signed_pdf_and_audit_fingerprint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pfx_path = tmp_path / "test.pfx"
-    expected_fingerprint = _write_test_pfx(pfx_path, password=fake_credential("secret"))
+    expected_fingerprint = write_test_pfx(
+        pfx_path,
+        password=fake_credential("secret"),
+        common_name="Integration Test Signer",
+    )
     settings = _test_settings(str(tmp_path), pfx_path=pfx_path, password=fake_credential("secret"))
 
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
@@ -279,7 +251,7 @@ def test_process_ticket_signing_with_unreachable_tsa_is_transient_and_keeps_trig
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password=fake_credential("secret"))
+    write_test_pfx(pfx_path, password=fake_credential("secret"))
     tsa_url = "https://tsa.test/rfc3161"
     settings = _test_settings_with_unreachable_tsa(
         str(tmp_path),
@@ -316,7 +288,7 @@ def test_process_ticket_signing_with_invalid_pfx_password_is_permanent_and_drops
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password=fake_credential("secret"))
+    write_test_pfx(pfx_path, password=fake_credential("secret"))
     settings = _test_settings(
         str(tmp_path), pfx_path=pfx_path, password=fake_credential("wrong-password")
     )
@@ -349,7 +321,7 @@ def test_process_ticket_signing_with_tsa_http_503_is_transient_and_keeps_trigger
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password=fake_credential("secret"))
+    write_test_pfx(pfx_path, password=fake_credential("secret"))
     tsa_url = "https://tsa.test/rfc3161"
     settings = _test_settings_with_unreachable_tsa(
         str(tmp_path),

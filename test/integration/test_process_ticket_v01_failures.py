@@ -46,15 +46,38 @@ from zammad_pdf_archiver.domain.state_machine import (
 )
 
 
-def test_process_ticket_v01_failure_sets_error_tag_and_posts_note(tmp_path, monkeypatch) -> None:
-    settings = _test_settings(str(tmp_path))
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
+def _freeze_default_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    freeze_process_ticket_now(
+        monkeypatch,
+        process_ticket_module,
+        datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC),
+    )
+
+
+def _default_payload(request_id: str) -> dict[str, object]:
+    return {
         "ticket": {"id": 123},
-        "_request_id": "req-err-1",
+        "_request_id": request_id,
         "user": {"login": "agent-from-webhook"},
     }
+
+
+def _force_reprocess_payload(request_id: str) -> dict[str, object]:
+    payload = _default_payload(request_id)
+    payload.pop("ticket")
+    payload["ticket_id"] = 123
+    payload["_force_reprocess"] = True
+    return payload
+
+
+def _run_ticket(delivery_id: str, payload: dict[str, object], settings: Settings):
+    return asyncio.run(process_ticket(delivery_id, payload, settings))
+
+
+def test_process_ticket_v01_failure_sets_error_tag_and_posts_note(tmp_path, monkeypatch) -> None:
+    settings = _test_settings(str(tmp_path))
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload("req-err-1")
 
     def _boom(*_args, **_kwargs) -> None:
         raise PermissionError("no-write token=super-secret")
@@ -65,7 +88,7 @@ def test_process_ticket_v01_failure_sets_error_tag_and_posts_note(tmp_path, monk
         _mock_standard_ticket_reads()
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        result = asyncio.run(process_ticket("delivery-err-1", payload, settings))
+        result = _run_ticket("delivery-err-1", payload, settings)
 
         _assert_error_tag_transitions(
             add_tag_route=add_tag_route,
@@ -95,13 +118,8 @@ def test_process_ticket_v01_transient_failure_keeps_trigger_and_posts_note(
     tmp_path, monkeypatch
 ) -> None:
     settings = _test_settings(str(tmp_path))
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-err-transient-1",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload("req-err-transient-1")
 
     def _boom(*_args, **_kwargs) -> None:
         raise OSError(errno.EAGAIN, "try again")
@@ -112,7 +130,7 @@ def test_process_ticket_v01_transient_failure_keeps_trigger_and_posts_note(
         _mock_standard_ticket_reads()
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        result = asyncio.run(process_ticket("delivery-err-transient-1", payload, settings))
+        result = _run_ticket("delivery-err-transient-1", payload, settings)
 
         _assert_error_tag_transitions(
             add_tag_route=add_tag_route,
@@ -188,19 +206,14 @@ def test_process_ticket_v01_field_failures_post_actionable_error_notes(
             "storage": storage_settings,
         }
     )
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": f"req-{case_id}",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload(f"req-{case_id}")
 
     with respx.mock:
         _mock_ticket_and_tags(custom_fields)
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        result = asyncio.run(process_ticket(f"delivery-{case_id}", payload, settings))
+        result = _run_ticket(f"delivery-{case_id}", payload, settings)
 
         _assert_permanent_result_no_files(result, tmp_path)
         _assert_permanent_field_failure_tags(
@@ -230,13 +243,8 @@ def test_process_ticket_v01_zammad_permanent_fetch_failures_post_operator_notes(
     expected_action: str,
 ) -> None:
     settings = _test_settings(str(tmp_path))
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": f"req-zammad-{status_code}",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload(f"req-zammad-{status_code}")
 
     with respx.mock:
         respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
@@ -244,7 +252,7 @@ def test_process_ticket_v01_zammad_permanent_fetch_failures_post_operator_notes(
         )
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        result = asyncio.run(process_ticket(f"delivery-zammad-{status_code}", payload, settings))
+        result = _run_ticket(f"delivery-zammad-{status_code}", payload, settings)
 
         check(not not result.status == "failed_permanent", "assertion failed")
         check(not not result.classification == "Permanent", "assertion failed")
@@ -277,13 +285,8 @@ def test_process_ticket_v01_zammad_server_failure_posts_transient_note_and_keeps
     tmp_path, monkeypatch
 ) -> None:
     settings = _test_settings(str(tmp_path))
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-zammad-500",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload("req-zammad-500")
 
     with respx.mock:
         ticket_route = respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
@@ -291,7 +294,7 @@ def test_process_ticket_v01_zammad_server_failure_posts_transient_note_and_keeps
         )
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        result = asyncio.run(process_ticket("delivery-zammad-500", payload, settings))
+        result = _run_ticket("delivery-zammad-500", payload, settings)
 
         check(not not ticket_route.call_count == 4, "assertion failed")
         check(not not result.status == "failed_transient", "assertion failed")
@@ -323,20 +326,14 @@ def test_process_ticket_v01_zammad_server_failure_posts_transient_note_and_keeps
 
 def test_process_ticket_v01_force_reprocess_overrides_done_tag(tmp_path, monkeypatch) -> None:
     settings = _test_settings(str(tmp_path))
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket_id": 123,
-        "_request_id": "req-force-1",
-        "_force_reprocess": True,
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _force_reprocess_payload("req-force-1")
 
     with respx.mock:
         _mock_ticket_reads_with_tags(tags=[DONE_TAG])
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        asyncio.run(process_ticket("delivery-force-1", payload, settings))
+        _run_ticket("delivery-force-1", payload, settings)
 
         added = _called_tag_items(add_tag_route)
         removed = _called_tag_items(remove_tag_route)
@@ -351,19 +348,14 @@ def test_process_ticket_v01_invalid_archive_path_is_permanent_and_writes_no_file
     tmp_path, monkeypatch
 ) -> None:
     settings = _test_settings(str(tmp_path))
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-path-invalid-1",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload("req-path-invalid-1")
 
     with respx.mock:
         _mock_ticket_and_tags({"archive_user_mode": "owner", "archive_path": ["A", "..", "C"]})
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        asyncio.run(process_ticket("delivery-path-invalid-1", payload, settings))
+        _run_ticket("delivery-path-invalid-1", payload, settings)
 
         check(not not list(tmp_path.rglob("*.pdf")) == [], "assertion failed")
         check(not not list(tmp_path.rglob("*.pdf.json")) == [], "assertion failed")
@@ -382,13 +374,8 @@ def test_process_ticket_v01_invalid_archive_path_is_permanent_and_writes_no_file
 
 def test_process_ticket_v01_enforces_pdf_max_articles_setting(tmp_path, monkeypatch) -> None:
     settings = _settings_with_pdf(tmp_path, {"max_articles": 1})
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-max-articles-1",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload("req-max-articles-1")
 
     with respx.mock:
         _mock_standard_ticket_reads(
@@ -396,7 +383,7 @@ def test_process_ticket_v01_enforces_pdf_max_articles_setting(tmp_path, monkeypa
         )
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        asyncio.run(process_ticket("delivery-max-articles-1", payload, settings))
+        _run_ticket("delivery-max-articles-1", payload, settings)
 
         _assert_max_article_failure(
             add_tag_route=add_tag_route,
@@ -407,13 +394,8 @@ def test_process_ticket_v01_enforces_pdf_max_articles_setting(tmp_path, monkeypa
 
 def test_process_ticket_v01_pdf_max_articles_zero_disables_limit(tmp_path, monkeypatch) -> None:
     settings = _settings_with_pdf(tmp_path, {"max_articles": 0})
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-max-articles-disabled",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload("req-max-articles-disabled")
 
     with respx.mock:
         _mock_standard_ticket_reads(
@@ -421,7 +403,7 @@ def test_process_ticket_v01_pdf_max_articles_zero_disables_limit(tmp_path, monke
         )
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        asyncio.run(process_ticket("delivery-max-articles-disabled", payload, settings))
+        _run_ticket("delivery-max-articles-disabled", payload, settings)
 
         _assert_success_tags_and_note_posted(
             add_tag_route=add_tag_route,
@@ -439,13 +421,8 @@ def test_process_ticket_v01_attachment_fetch_failure_fails_job(tmp_path, monkeyp
             "max_total_attachment_bytes": 1000,
         },
     )
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-attachment-fail",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_default_now(monkeypatch)
+    payload = _default_payload("req-attachment-fail")
 
     with respx.mock:
         _mock_standard_ticket_reads(articles=[_article_with_attachment_json()])
@@ -454,7 +431,7 @@ def test_process_ticket_v01_attachment_fetch_failure_fails_job(tmp_path, monkeyp
         )
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
-        result = asyncio.run(process_ticket("delivery-attachment-fail-1", payload, settings))
+        result = _run_ticket("delivery-attachment-fail-1", payload, settings)
 
         _assert_attachment_fetch_failure(
             result=result,

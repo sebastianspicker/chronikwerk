@@ -14,86 +14,88 @@ from test.unit.test_redis_queue import (
 from zammad_pdf_archiver.app.jobs._queue_types import _QueueEnvelope
 from zammad_pdf_archiver.app.jobs.process_ticket import ProcessTicketResult
 
+REDIS_WORKFLOW = {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}
 
-def test_handle_envelope_success_acks_and_increments(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {
-                "execution_backend": "redis_queue",
-                "redis_url": "redis://localhost:6379",
-            }
-        },
-    )
-    fake = _FakeRedis()
-    processed_counter = _FakeCounter()
 
-    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
-        return ProcessTicketResult(status="processed", ticket_id=99, message="done")
+class _CapturingLog:
+    def __init__(self) -> None:
+        self.warning_events: list[tuple[str, dict[str, object]]] = []
 
-    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
-    monkeypatch.setattr(redis_queue, "queue_processed_total", processed_counter)
-    envelope = _QueueEnvelope(
-        message_id="5-0",
+    def warning(self, event: str, **kwargs: object) -> None:
+        self.warning_events.append((event, kwargs))
+
+
+def _settings(tmp_path, *, workflow: dict[str, object] | None = None):
+    return make_settings(str(tmp_path), overrides={"workflow": workflow or REDIS_WORKFLOW})
+
+
+def _envelope(message_id: str, *, delivery_id: str = "d-5") -> _QueueEnvelope:
+    return _QueueEnvelope(
+        message_id=message_id,
         payload={"ticket_id": 99},
-        delivery_id="d-5",
+        delivery_id=delivery_id,
         attempt=0,
         not_before_ts=0.0,
         last_error=None,
     )
-    result = redis_queue.asyncio.run(
+
+
+def _ack(settings, message_id: str):
+    return (settings.workflow.queue_stream, settings.workflow.queue_group, message_id)
+
+
+def _deleted(settings, message_id: str):
+    return (settings.workflow.queue_stream, message_id)
+
+
+def _stub_process_result(monkeypatch, result: ProcessTicketResult) -> None:
+    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
+        return result
+
+    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
+
+
+def _handle(fake: _FakeRedis, settings, envelope: _QueueEnvelope) -> float:
+    return redis_queue.asyncio.run(
         redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
     )
-    check(not not result == 0.0, "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "5-0")],
-        "assertion failed",
+
+
+def test_handle_envelope_success_acks_and_increments(monkeypatch, tmp_path) -> None:
+    settings = _settings(tmp_path)
+    fake = _FakeRedis()
+    processed_counter = _FakeCounter()
+
+    _stub_process_result(
+        monkeypatch,
+        ProcessTicketResult(status="processed", ticket_id=99, message="done"),
     )
-    check(not not fake.deleted[-1] == (settings.workflow.queue_stream, "5-0"), "assertion failed")
+    monkeypatch.setattr(redis_queue, "queue_processed_total", processed_counter)
+    result = _handle(fake, settings, _envelope("5-0"))
+
+    check(not not result == 0.0, "assertion failed")
+    check(not not fake.acked == [_ack(settings, "5-0")], "assertion failed")
+    check(not not fake.deleted[-1] == _deleted(settings, "5-0"), "assertion failed")
     check(not not processed_counter.count == 1, "assertion failed")
 
 
 def test_handle_envelope_logs_lock_release_failure(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}
-        },
-    )
+    settings = _settings(tmp_path)
     fake = _FakeRedis()
-
-    class _CapturingLog:
-        def __init__(self) -> None:
-            self.warning_events: list[tuple[str, dict[str, object]]] = []
-
-        def warning(self, event: str, **kwargs: object) -> None:
-            self.warning_events.append((event, kwargs))
-
     capturing_log = _CapturingLog()
 
-    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
-        return ProcessTicketResult(
+    _stub_process_result(
+        monkeypatch,
+        ProcessTicketResult(
             status="processed",
             ticket_id=99,
             message="done",
             lock_release_failed=True,
-        )
+        ),
+    )
 
-    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
     monkeypatch.setattr(redis_queue, "log", capturing_log)
-    envelope = _QueueEnvelope(
-        message_id="5-lock",
-        payload={"ticket_id": 99},
-        delivery_id="d-lock",
-        attempt=0,
-        not_before_ts=0.0,
-        last_error=None,
-    )
-
-    redis_queue.asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
-    )
+    _handle(fake, settings, _envelope("5-lock", delivery_id="d-lock"))
 
     check(
         not not capturing_log.warning_events
@@ -105,58 +107,28 @@ def test_handle_envelope_logs_lock_release_failure(monkeypatch, tmp_path) -> Non
         ],
         "assertion failed",
     )
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "5-lock")],
-        "assertion failed",
-    )
+    check(not not fake.acked == [_ack(settings, "5-lock")], "assertion failed")
 
 
 def test_handle_envelope_counts_and_logs_history_record_failure(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {
-                "execution_backend": "redis_queue",
-                "redis_url": "redis://localhost:6379",
-            }
-        },
-    )
+    settings = _settings(tmp_path)
     fake = _FakeRedis()
     failed_counter = _FakeCounter()
-
-    class _CapturingLog:
-        def __init__(self) -> None:
-            self.warning_events: list[tuple[str, dict[str, object]]] = []
-
-        def warning(self, event: str, **kwargs: object) -> None:
-            self.warning_events.append((event, kwargs))
-
     capturing_log = _CapturingLog()
 
-    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
-        return ProcessTicketResult(
+    _stub_process_result(
+        monkeypatch,
+        ProcessTicketResult(
             status="processed",
             ticket_id=99,
             message="done",
             history_recorded=False,
-        )
+        ),
+    )
 
-    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
     monkeypatch.setattr(redis_queue, "history_record_failed_total", failed_counter)
     monkeypatch.setattr(redis_queue, "log", capturing_log)
-    envelope = _QueueEnvelope(
-        message_id="5-history",
-        payload={"ticket_id": 99},
-        delivery_id="d-history",
-        attempt=0,
-        not_before_ts=0.0,
-        last_error=None,
-    )
-
-    redis_queue.asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
-    )
+    _handle(fake, settings, _envelope("5-history", delivery_id="d-history"))
 
     check(not not failed_counter.count == 1, "assertion failed")
     check(
@@ -169,11 +141,7 @@ def test_handle_envelope_counts_and_logs_history_record_failure(monkeypatch, tmp
         ],
         "assertion failed",
     )
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "5-history")],
-        "assertion failed",
-    )
+    check(not not fake.acked == [_ack(settings, "5-history")], "assertion failed")
 
 
 @pytest.mark.parametrize(
@@ -183,42 +151,23 @@ def test_handle_envelope_counts_and_logs_history_record_failure(monkeypatch, tmp
 def test_handle_envelope_partial_status_acks_without_processed_metric(
     monkeypatch, tmp_path, status: str
 ) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}
-        },
-    )
+    settings = _settings(tmp_path)
     fake = _FakeRedis()
     partial_counter = _FakeCounter()
     processed_counter = _FakeCounter()
 
-    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
-        return ProcessTicketResult(status=cast(Any, status), ticket_id=99, message="partial")
-
-    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
+    _stub_process_result(
+        monkeypatch,
+        ProcessTicketResult(status=cast(Any, status), ticket_id=99, message="partial"),
+    )
     monkeypatch.setattr(redis_queue, "queue_partial_total", partial_counter)
     monkeypatch.setattr(redis_queue, "queue_processed_total", processed_counter)
-    envelope = _QueueEnvelope(
-        message_id="5-1",
-        payload={"ticket_id": 99},
-        delivery_id="d-5",
-        attempt=0,
-        not_before_ts=0.0,
-        last_error=None,
-    )
 
-    result = redis_queue.asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
-    )
+    result = _handle(fake, settings, _envelope("5-1"))
 
     check(not not result == 0.0, "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "5-1")],
-        "assertion failed",
-    )
-    check(not not fake.deleted[-1] == (settings.workflow.queue_stream, "5-1"), "assertion failed")
+    check(not not fake.acked == [_ack(settings, "5-1")], "assertion failed")
+    check(not not fake.deleted[-1] == _deleted(settings, "5-1"), "assertion failed")
     check(not not fake.xadds == [], "assertion failed")
     check(not not partial_counter.count == 1, "assertion failed")
     check(not not processed_counter.count == 0, "assertion failed")
@@ -236,42 +185,23 @@ def test_handle_envelope_partial_status_acks_without_processed_metric(
 def test_handle_envelope_skipped_status_acks_with_skip_metric(
     monkeypatch, tmp_path, status: str, reason: str
 ) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}
-        },
-    )
+    settings = _settings(tmp_path)
     fake = _FakeRedis()
     skipped_counter = _FakeCounter()
     processed_counter = _FakeCounter()
 
-    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
-        return ProcessTicketResult(status=cast(Any, status), ticket_id=99, message="skipped")
-
-    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
+    _stub_process_result(
+        monkeypatch,
+        ProcessTicketResult(status=cast(Any, status), ticket_id=99, message="skipped"),
+    )
     monkeypatch.setattr(redis_queue, "queue_skipped_total", skipped_counter)
     monkeypatch.setattr(redis_queue, "queue_processed_total", processed_counter)
-    envelope = _QueueEnvelope(
-        message_id="5-2",
-        payload={"ticket_id": 99},
-        delivery_id="d-5",
-        attempt=0,
-        not_before_ts=0.0,
-        last_error=None,
-    )
 
-    result = redis_queue.asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
-    )
+    result = _handle(fake, settings, _envelope("5-2"))
 
     check(not not result == 0.0, "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "5-2")],
-        "assertion failed",
-    )
-    check(not not fake.deleted[-1] == (settings.workflow.queue_stream, "5-2"), "assertion failed")
+    check(not not fake.acked == [_ack(settings, "5-2")], "assertion failed")
+    check(not not fake.deleted[-1] == _deleted(settings, "5-2"), "assertion failed")
     check(not not fake.xadds == [], "assertion failed")
     check(not not skipped_counter.count == 1, "assertion failed")
     check(not not skipped_counter.label_calls == [{"reason": reason}], "assertion failed")
@@ -279,38 +209,22 @@ def test_handle_envelope_skipped_status_acks_with_skip_metric(
 
 
 def test_handle_envelope_unknown_status_moves_to_dlq(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {
-                "execution_backend": "redis_queue",
-                "redis_url": "redis://localhost:6379",
-                "queue_dlq_stream": "zammad:jobs:dlq",
-            }
-        },
+    settings = _settings(
+        tmp_path,
+        workflow={**REDIS_WORKFLOW, "queue_dlq_stream": "zammad:jobs:dlq"},
     )
     fake = _FakeRedis()
     unknown_counter = _FakeCounter()
     processed_counter = _FakeCounter()
 
-    async def _stub_process_ticket(*args, **kwargs):  # noqa: ANN002, ANN003
-        return ProcessTicketResult(status=cast(Any, "ok"), ticket_id=99, message="unexpected")
-
-    monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
+    _stub_process_result(
+        monkeypatch,
+        ProcessTicketResult(status=cast(Any, "ok"), ticket_id=99, message="unexpected"),
+    )
     monkeypatch.setattr(redis_queue, "queue_unknown_status_total", unknown_counter)
     monkeypatch.setattr(redis_queue, "queue_processed_total", processed_counter)
-    envelope = _QueueEnvelope(
-        message_id="5-3",
-        payload={"ticket_id": 99},
-        delivery_id="d-5",
-        attempt=0,
-        not_before_ts=0.0,
-        last_error=None,
-    )
 
-    result = redis_queue.asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=envelope)  # noqa: SLF001
-    )
+    result = _handle(fake, settings, _envelope("5-3"))
 
     check(not not result == 0.0, "assertion failed")
     dlq_entries = [
@@ -319,12 +233,7 @@ def test_handle_envelope_unknown_status_moves_to_dlq(monkeypatch, tmp_path) -> N
     check(not not dlq_entries, "assertion failed")
     check(not not dlq_entries[0]["reason"] == "unknown_status", "assertion failed")
     check(not not dlq_entries[0]["error"] == "unexpected", "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "5-3")],
-        "assertion failed",
-    )
-    check(not not fake.deleted[-1] == (settings.workflow.queue_stream, "5-3"), "assertion failed")
+    check(not not fake.acked == [_ack(settings, "5-3")], "assertion failed")
+    check(not not fake.deleted[-1] == _deleted(settings, "5-3"), "assertion failed")
     check(not not unknown_counter.count == 1, "assertion failed")
     check(not not processed_counter.count == 0, "assertion failed")
-

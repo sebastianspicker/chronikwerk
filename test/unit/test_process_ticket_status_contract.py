@@ -95,6 +95,32 @@ def _stub_process_ticket_status(
     monkeypatch.setattr(redis_queue, "process_ticket", _stub_process_ticket)
 
 
+def _handle_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    status: ProcessTicketStatus | str,
+    message: str | None = None,
+) -> tuple[Any, _FakeRedis, float]:
+    settings = _settings(tmp_path)
+    fake = _FakeRedis()
+    _stub_process_ticket_status(monkeypatch, status=status, message=message)
+
+    result = asyncio.run(
+        redis_queue._handle_envelope(fake, settings=settings, envelope=_envelope())  # noqa: SLF001
+    )
+    return settings, fake, result
+
+
+def _assert_acked_and_deleted(fake: _FakeRedis, settings: Any) -> None:
+    check(
+        not not fake.acked
+        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")],
+        "assertion failed",
+    )
+    check(not not fake.deleted == [(settings.workflow.queue_stream, "1-0")], "assertion failed")
+
+
 def test_contract_statuses_match_process_ticket_literal() -> None:
     check(
         not not set(KNOWN_PROCESS_TICKET_STATUSES)
@@ -109,21 +135,10 @@ def test_known_nonfailed_statuses_ack_without_dlq(
     tmp_path: Path,
     status: ProcessTicketStatus,
 ) -> None:
-    settings = _settings(tmp_path)
-    fake = _FakeRedis()
-    _stub_process_ticket_status(monkeypatch, status=status)
-
-    result = asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=_envelope())  # noqa: SLF001
-    )
+    settings, fake, result = _handle_status(monkeypatch, tmp_path, status=status)
 
     check(not not result == 0.0, "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")],
-        "assertion failed",
-    )
-    check(not not fake.deleted == [(settings.workflow.queue_stream, "1-0")], "assertion failed")
+    _assert_acked_and_deleted(fake, settings)
     check(not not fake.xadds == [], "assertion failed")
 
 
@@ -160,12 +175,7 @@ def test_failed_transient_status_requeues_and_acks(
     )
 
     check(not not result == 0.0, "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")],
-        "assertion failed",
-    )
-    check(not not fake.deleted == [(settings.workflow.queue_stream, "1-0")], "assertion failed")
+    _assert_acked_and_deleted(fake, settings)
     check(not not fake.xadds[0][0] == settings.workflow.queue_stream, "assertion failed")
     check(not not fake.xadds[0][1]["attempt"] == "1", "assertion failed")
     check(not not fake.xadds[0][1]["last_error"] == "retry me", "assertion failed")
@@ -175,21 +185,15 @@ def test_failed_permanent_status_moves_to_dlq_and_acks(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    settings = _settings(tmp_path)
-    fake = _FakeRedis()
-    _stub_process_ticket_status(monkeypatch, status="failed_permanent", message="permanent")
-
-    result = asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=_envelope())  # noqa: SLF001
+    settings, fake, result = _handle_status(
+        monkeypatch,
+        tmp_path,
+        status="failed_permanent",
+        message="permanent",
     )
 
     check(not not result == 0.0, "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")],
-        "assertion failed",
-    )
-    check(not not fake.deleted == [(settings.workflow.queue_stream, "1-0")], "assertion failed")
+    _assert_acked_and_deleted(fake, settings)
     check(not not fake.xadds[0][0] == settings.workflow.queue_dlq_stream, "assertion failed")
     check(not not fake.xadds[0][1]["reason"] == "permanent_error", "assertion failed")
 
@@ -198,21 +202,10 @@ def test_unknown_status_moves_to_dlq_with_unknown_status_reason(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    settings = _settings(tmp_path)
-    fake = _FakeRedis()
-    _stub_process_ticket_status(monkeypatch, status="xyzzy", message="")
-
-    result = asyncio.run(
-        redis_queue._handle_envelope(fake, settings=settings, envelope=_envelope())  # noqa: SLF001
-    )
+    settings, fake, result = _handle_status(monkeypatch, tmp_path, status="xyzzy", message="")
 
     check(not not result == 0.0, "assertion failed")
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")],
-        "assertion failed",
-    )
-    check(not not fake.deleted == [(settings.workflow.queue_stream, "1-0")], "assertion failed")
+    _assert_acked_and_deleted(fake, settings)
     check(not not fake.xadds[0][0] == settings.workflow.queue_dlq_stream, "assertion failed")
     check(not not fake.xadds[0][1]["reason"] == "unknown_status", "assertion failed")
     check(

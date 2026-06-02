@@ -16,10 +16,28 @@ def _test_settings(storage_root: str) -> Settings:
     return make_settings(storage_root)
 
 
-def test_healthz_ok(tmp_path) -> None:
-    app = create_app(_test_settings(str(tmp_path)))
-    client = TestClient(app)
+def _client(settings: Settings | None = None) -> TestClient:
+    return TestClient(create_app(settings))
 
+
+def _configured_client(tmp_path, *, overrides: dict | None = None) -> TestClient:
+    return _client(make_settings(str(tmp_path), overrides=overrides))
+
+
+def _deep_healthz(client: TestClient):
+    response = client.get("/healthz", params={"deep": "true"})
+    check(not not response.status_code == 200, "assertion failed")
+    return response
+
+
+def _assert_healthy_storage(storage: dict) -> None:
+    check(not storage["writable"] is not True, "assertion failed")
+    check(not not isinstance(storage["free_bytes"], int), "assertion failed")
+    check(not not storage["free_bytes"] >= 0, "assertion failed")
+
+
+def test_healthz_ok(tmp_path) -> None:
+    client = _configured_client(tmp_path)
     response = client.get("/healthz")
     check(not not response.status_code == 200, "assertion failed")
 
@@ -33,9 +51,7 @@ def test_healthz_ok(tmp_path) -> None:
 
 
 def test_healthz_without_settings_omits_version() -> None:
-    app = create_app()
-    client = TestClient(app)
-
+    client = _client()
     response = client.get("/healthz")
     check(not not response.status_code == 200, "assertion failed")
 
@@ -46,11 +62,7 @@ def test_healthz_without_settings_omits_version() -> None:
 
 
 def test_deep_healthz_without_settings_reports_degraded() -> None:
-    app = create_app()
-    client = TestClient(app)
-
-    response = client.get("/healthz", params={"deep": "true"})
-    check(not not response.status_code == 200, "assertion failed")
+    response = _deep_healthz(_client())
 
     body = response.json()
     check(not not body["status"] == "degraded", "assertion failed")
@@ -62,18 +74,12 @@ def test_deep_healthz_without_settings_reports_degraded() -> None:
 
 def test_deep_healthz_does_not_leak_path(tmp_path) -> None:
     """GET /healthz?deep=true must never expose the filesystem path."""
-    app = create_app(_test_settings(str(tmp_path)))
-    client = TestClient(app)
-
-    response = client.get("/healthz", params={"deep": "true"})
-    check(not not response.status_code == 200, "assertion failed")
+    response = _deep_healthz(_configured_client(tmp_path))
 
     body = response.json()
     check(not "checks" not in body, "assertion failed")
     storage = body["checks"]["storage"]
-    check(not storage["writable"] is not True, "assertion failed")
-    check(not not isinstance(storage["free_bytes"], int), "assertion failed")
-    check(not not storage["free_bytes"] >= 0, "assertion failed")
+    _assert_healthy_storage(storage)
     # The response must not contain any filesystem path
     check(not not "path" not in storage, "assertion failed")
     raw = response.text
@@ -82,19 +88,12 @@ def test_deep_healthz_does_not_leak_path(tmp_path) -> None:
 
 def test_deep_healthz_all_healthy(tmp_path) -> None:
     """GET /healthz?deep=true with writable storage returns status=ok."""
-    app = create_app(_test_settings(str(tmp_path)))
-    client = TestClient(app)
-
-    response = client.get("/healthz", params={"deep": "true"})
-    check(not not response.status_code == 200, "assertion failed")
+    response = _deep_healthz(_configured_client(tmp_path))
 
     body = response.json()
     check(not not body["status"] == "ok", "assertion failed")
     check(not "checks" not in body, "assertion failed")
-    storage = body["checks"]["storage"]
-    check(not storage["writable"] is not True, "assertion failed")
-    check(not not isinstance(storage["free_bytes"], int), "assertion failed")
-    check(not not storage["free_bytes"] >= 0, "assertion failed")
+    _assert_healthy_storage(body["checks"]["storage"])
     datetime.fromisoformat(body["time"])
 
 
@@ -103,11 +102,7 @@ def test_deep_healthz_storage_failure() -> None:
     settings = make_settings(
         "/nonexistent/path/should/not/exist",
     )
-    app = create_app(settings)
-    client = TestClient(app)
-
-    response = client.get("/healthz", params={"deep": "true"})
-    check(not not response.status_code == 200, "assertion failed")
+    response = _deep_healthz(_client(settings))
 
     body = response.json()
     check(not "checks" not in body, "assertion failed")
@@ -118,9 +113,7 @@ def test_deep_healthz_storage_failure() -> None:
 
 def test_deep_healthz_without_deep_param(tmp_path) -> None:
     """GET /healthz without ?deep param returns basic response without checks."""
-    app = create_app(_test_settings(str(tmp_path)))
-    client = TestClient(app)
-
+    client = _configured_client(tmp_path)
     response = client.get("/healthz")
     check(not not response.status_code == 200, "assertion failed")
 
@@ -132,15 +125,12 @@ def test_deep_healthz_without_deep_param(tmp_path) -> None:
 
 def test_deep_healthz_omit_version(tmp_path) -> None:
     """GET /healthz?deep=true with healthz_omit_version=true omits version."""
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"observability": {"healthz_omit_version": True}},
+    response = _deep_healthz(
+        _configured_client(
+            tmp_path,
+            overrides={"observability": {"healthz_omit_version": True}},
+        )
     )
-    app = create_app(settings)
-    client = TestClient(app)
-
-    response = client.get("/healthz", params={"deep": "true"})
-    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
     check(not not "version" not in body, "assertion failed")
@@ -150,13 +140,10 @@ def test_deep_healthz_omit_version(tmp_path) -> None:
 
 
 def test_healthz_omit_version(tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
+    client = _configured_client(
+        tmp_path,
         overrides={"observability": {"healthz_omit_version": True}},
     )
-    app = create_app(settings)
-    client = TestClient(app)
-
     response = client.get("/healthz")
     check(not not response.status_code == 200, "assertion failed")
     body = response.json()
@@ -169,8 +156,7 @@ def test_healthz_omit_version(tmp_path) -> None:
 def test_deep_healthz_all_subsystems_failed() -> None:
     """When both storage and redis fail (all checks have 'reason'), status must be 'degraded'."""
     settings = make_settings("/nonexistent/path/should/not/exist")
-    app = create_app(settings)
-    client = TestClient(app)
+    client = _client(settings)
 
     mock_redis = AsyncMock(return_value={"available": False, "reason": "connection refused"})
     with patch("zammad_pdf_archiver.app.routes.healthz._check_redis", mock_redis):
@@ -189,11 +175,7 @@ def test_deep_healthz_all_subsystems_failed() -> None:
 def test_deep_healthz_storage_failed_reports_degraded() -> None:
     """When storage fails, overall status must be 'degraded' (not 'ok')."""
     settings = make_settings("/nonexistent/path/should/not/exist")
-    app = create_app(settings)
-    client = TestClient(app)
-
-    response = client.get("/healthz", params={"deep": "true"})
-    check(not not response.status_code == 200, "assertion failed")
+    response = _deep_healthz(_client(settings))
 
     body = response.json()
     check(not not body["status"] == "degraded", "assertion failed")
@@ -203,8 +185,7 @@ def test_deep_healthz_storage_failed_reports_degraded() -> None:
 
 def test_service_version_package_not_found(tmp_path) -> None:
     """When metadata.version raises PackageNotFoundError, version falls back to '0.0.0'."""
-    app = create_app(_test_settings(str(tmp_path)))
-    client = TestClient(app)
+    client = _configured_client(tmp_path)
 
     with patch(
         "zammad_pdf_archiver.domain.package_version.metadata.version",
@@ -223,11 +204,7 @@ def test_check_redis_no_url_configured(tmp_path) -> None:
     # Verify redis_url is not set in default settings
     check(not not not settings.workflow.redis_url, "assertion failed")
 
-    app = create_app(settings)
-    client = TestClient(app)
-
-    response = client.get("/healthz", params={"deep": "true"})
-    check(not not response.status_code == 200, "assertion failed")
+    response = _deep_healthz(_client(settings))
 
     body = response.json()
     redis_check = body["checks"]["redis"]
@@ -241,16 +218,12 @@ def test_check_redis_connection_failure(tmp_path) -> None:
         str(tmp_path),
         overrides={"workflow": {"redis_url": "redis://localhost:59999/0"}},
     )
-    app = create_app(settings)
-    client = TestClient(app)
-
     with patch(
         "zammad_pdf_archiver.adapters.redis_pool.get_redis",
         side_effect=ConnectionError("Connection refused"),
     ):
-        response = client.get("/healthz", params={"deep": "true"})
+        response = _deep_healthz(_client(settings))
 
-    check(not not response.status_code == 200, "assertion failed")
     body = response.json()
     redis_check = body["checks"]["redis"]
     check(not redis_check["available"] is not False, "assertion failed")
@@ -263,8 +236,7 @@ def test_deep_healthz_redis_failure_reports_degraded_when_storage_is_healthy(tmp
         str(tmp_path),
         overrides={"workflow": {"redis_url": "redis://localhost:6379/0"}},
     )
-    app = create_app(settings)
-    client = TestClient(app)
+    client = _client(settings)
 
     mock_redis = AsyncMock(return_value={"available": False, "reason": "connection refused"})
     with patch("zammad_pdf_archiver.app.routes.healthz._check_redis", mock_redis):
@@ -278,6 +250,4 @@ def test_deep_healthz_redis_failure_reports_degraded_when_storage_is_healthy(tmp
         "assertion failed",
     )
     storage = body["checks"]["storage"]
-    check(not storage["writable"] is not True, "assertion failed")
-    check(not not isinstance(storage["free_bytes"], int), "assertion failed")
-    check(not not storage["free_bytes"] >= 0, "assertion failed")
+    _assert_healthy_storage(storage)

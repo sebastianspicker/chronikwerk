@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import zammad_pdf_archiver.app.routes.operations as operations_route
 from test.support.checks import check
 from test.support.credentials import fake_credential
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
+
+OPS_HEADERS = {"Authorization": "Bearer ops-token"}
 
 
 def _ops_auth_settings(storage_root: str):
@@ -15,8 +18,8 @@ def _ops_auth_settings(storage_root: str):
     )
 
 
-def test_jobs_history_endpoint_returns_items(tmp_path, monkeypatch) -> None:
-    app = create_app(
+def _ops_redis_app(tmp_path):
+    return create_app(
         make_settings(
             str(tmp_path),
             overrides={
@@ -25,7 +28,10 @@ def test_jobs_history_endpoint_returns_items(tmp_path, monkeypatch) -> None:
             },
         )
     )
-    import zammad_pdf_archiver.app.routes.operations as operations_route
+
+
+def test_jobs_history_endpoint_returns_items(tmp_path, monkeypatch) -> None:
+    app = _ops_redis_app(tmp_path)
 
     async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):
         check(not not limit == 50, "assertion failed")
@@ -37,7 +43,7 @@ def test_jobs_history_endpoint_returns_items(tmp_path, monkeypatch) -> None:
     client = TestClient(app)
     response = client.get(
         "/jobs/history?limit=50&ticket_id=123",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
     check(not not response.status_code == 200, "assertion failed")
     check(
@@ -59,7 +65,7 @@ def test_jobs_history_endpoint_reports_disabled_history(tmp_path) -> None:
     client = TestClient(app)
     response = client.get(
         "/jobs/history",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
 
     check(not not response.status_code == 200, "assertion failed")
@@ -71,16 +77,7 @@ def test_jobs_history_endpoint_reports_disabled_history(tmp_path) -> None:
 
 
 def test_jobs_history_endpoint_distinguishes_empty_enabled_history(tmp_path, monkeypatch) -> None:
-    app = create_app(
-        make_settings(
-            str(tmp_path),
-            overrides={
-                "admin": {"bearer_token": fake_credential("ops-token")},
-                "workflow": {"redis_url": "redis://localhost/0"},
-            },
-        )
-    )
-    import zammad_pdf_archiver.app.routes.operations as operations_route
+    app = _ops_redis_app(tmp_path)
 
     async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
         return []
@@ -90,7 +87,7 @@ def test_jobs_history_endpoint_distinguishes_empty_enabled_history(tmp_path, mon
     client = TestClient(app)
     response = client.get(
         "/jobs/history",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
 
     check(not not response.status_code == 200, "assertion failed")
@@ -105,16 +102,7 @@ def test_jobs_history_endpoint_reports_truncated_when_limit_reached(
     tmp_path,
     monkeypatch,
 ) -> None:
-    app = create_app(
-        make_settings(
-            str(tmp_path),
-            overrides={
-                "admin": {"bearer_token": fake_credential("ops-token")},
-                "workflow": {"redis_url": "redis://localhost/0"},
-            },
-        )
-    )
-    import zammad_pdf_archiver.app.routes.operations as operations_route
+    app = _ops_redis_app(tmp_path)
 
     async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
         check(not not limit == 2, "assertion failed")
@@ -128,7 +116,7 @@ def test_jobs_history_endpoint_reports_truncated_when_limit_reached(
     client = TestClient(app)
     response = client.get(
         "/jobs/history?limit=2",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
 
     check(not not response.status_code == 200, "assertion failed")
@@ -137,16 +125,7 @@ def test_jobs_history_endpoint_reports_truncated_when_limit_reached(
 
 
 def test_jobs_history_endpoint_returns_503_on_backend_error(tmp_path, monkeypatch) -> None:
-    app = create_app(
-        make_settings(
-            str(tmp_path),
-            overrides={
-                "admin": {"bearer_token": fake_credential("ops-token")},
-                "workflow": {"redis_url": "redis://localhost/0"},
-            },
-        )
-    )
-    import zammad_pdf_archiver.app.routes.operations as operations_route
+    app = _ops_redis_app(tmp_path)
 
     async def _boom(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
         raise RuntimeError("history backend down")
@@ -156,7 +135,7 @@ def test_jobs_history_endpoint_returns_503_on_backend_error(tmp_path, monkeypatc
     client = TestClient(app)
     response = client.get(
         "/jobs/history",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
 
     check(not not response.status_code == 503, "assertion failed")
@@ -165,7 +144,6 @@ def test_jobs_history_endpoint_returns_503_on_backend_error(tmp_path, monkeypatc
 
 def test_jobs_dlq_drain_endpoint_bounds_limit(tmp_path, monkeypatch) -> None:
     app = create_app(_ops_auth_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.operations as operations_route
 
     captured: dict[str, int | None] = {"limit": None}
 
@@ -178,7 +156,7 @@ def test_jobs_dlq_drain_endpoint_bounds_limit(tmp_path, monkeypatch) -> None:
     client = TestClient(app)
     response = client.post(
         "/jobs/queue/dlq/drain?limit=2000",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
     check(not not response.status_code == 200, "assertion failed")
     check(not not captured["limit"] == 1000, "assertion failed")
@@ -191,7 +169,6 @@ def test_jobs_dlq_drain_endpoint_bounds_limit(tmp_path, monkeypatch) -> None:
 
 def test_jobs_dlq_drain_endpoint_reports_partial_delete(tmp_path, monkeypatch) -> None:
     app = create_app(_ops_auth_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.operations as operations_route
 
     async def _stub_drain(_settings, *, limit: int):  # noqa: ARG001
         return {"selected": 3, "deleted": 2, "not_deleted": 1}
@@ -201,7 +178,7 @@ def test_jobs_dlq_drain_endpoint_reports_partial_delete(tmp_path, monkeypatch) -
     client = TestClient(app)
     response = client.post(
         "/jobs/queue/dlq/drain?limit=3",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
     check(not not response.status_code == 200, "assertion failed")
     check(
@@ -238,7 +215,6 @@ def test_jobs_history_requires_configured_ops_token(tmp_path) -> None:
 
 def test_jobs_dlq_drain_returns_503_on_backend_error(tmp_path, monkeypatch) -> None:
     app = create_app(_ops_auth_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.operations as operations_route
 
     async def _boom(_settings, *, limit: int):  # noqa: ARG001
         raise RuntimeError("redis unavailable")
@@ -248,7 +224,7 @@ def test_jobs_dlq_drain_returns_503_on_backend_error(tmp_path, monkeypatch) -> N
     client = TestClient(app)
     response = client.post(
         "/jobs/queue/dlq/drain",
-        headers={"Authorization": "Bearer ops-token"},
+        headers=OPS_HEADERS,
     )
     check(not not response.status_code == 503, "assertion failed")
     check(not not response.json()["detail"] == "dlq_unavailable", "assertion failed")

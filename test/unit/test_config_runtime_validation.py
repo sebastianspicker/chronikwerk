@@ -13,12 +13,49 @@ from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import ConfigValidationError, validate_settings
 
 
-def test_load_settings_rejects_signing_enabled_without_pfx_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _clear_env(monkeypatch)
+def _base_mapping(
+    storage_root: str | Path = "/mnt/archive",
+    *,
+    hardening: dict | None = None,
+    workflow: dict | None = None,
+    signing: dict | None = None,
+    observability: dict | None = None,
+) -> dict:
+    data = {
+        "zammad": {
+            "base_url": "https://zammad.example.local",
+            "api_token": fake_credential("test-token"),
+        },
+        "storage": {"root": str(storage_root)},
+    }
+    if hardening is not None:
+        data["hardening"] = hardening
+    if workflow is not None:
+        data["workflow"] = workflow
+    if signing is not None:
+        data["signing"] = signing
+    if observability is not None:
+        data["observability"] = observability
+    return data
 
+
+def _unsigned_webhook_hardening(**webhook_overrides: object) -> dict:
+    webhook: dict[str, object] = {
+        "allow_unsigned": True,
+        "allow_unsigned_when_no_secret": bool(1),
+    }
+    webhook.update(webhook_overrides)
+    return {"webhook": webhook}
+
+
+def _settings(
+    storage_root: str | Path = "/mnt/archive",
+    **overrides: dict,
+) -> Settings:
+    return Settings.from_mapping(_base_mapping(storage_root, **overrides))
+
+
+def _write_signing_config(tmp_path: Path, signing_lines: list[str]) -> Path:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         "\n".join(
@@ -33,13 +70,28 @@ def test_load_settings_rejects_signing_enabled_without_pfx_path(
                 "    allow_unsigned: true",
                 "    allow_unsigned_when_no_secret: true",
                 "signing:",
-                "  enabled: true",
-                "  pades:",
-                "    cert_path: /run/secrets/signer.crt",
+                *signing_lines,
                 "",
             ]
         ),
         encoding="utf-8",
+    )
+    return config_path
+
+
+def test_load_settings_rejects_signing_enabled_without_pfx_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _clear_env(monkeypatch)
+
+    config_path = _write_signing_config(
+        tmp_path,
+        [
+            "  enabled: true",
+            "  pades:",
+            "    cert_path: /run/secrets/signer.crt",
+        ],
     )
 
     with pytest.raises(ConfigValidationError) as exc:
@@ -50,20 +102,13 @@ def test_load_settings_rejects_signing_enabled_without_pfx_path(
 
 def test_signing_pades_rejects_unsupported_key_material() -> None:
     with pytest.raises(ValidationError) as exc:
-        Settings.from_mapping(
-            {
-                "zammad": {
-                    "base_url": "https://zammad.example.local",
-                    "api_token": fake_credential("test-token"),
-                },
-                "storage": {"root": "/mnt/archive"},
-                "signing": {
-                    "pades": {
-                        "key_path": "/run/secrets/signer.key",
-                        "key_password": fake_credential("secret"),
-                    }
-                },
-            }
+        _settings(
+            signing={
+                "pades": {
+                    "key_path": "/run/secrets/signer.key",
+                    "key_password": fake_credential("secret"),
+                }
+            },
         )
 
     msg = str(exc.value)
@@ -74,16 +119,7 @@ def test_signing_pades_rejects_unsupported_key_material() -> None:
 
 def test_observability_rejects_stale_json_logs_config() -> None:
     with pytest.raises(ValidationError) as exc:
-        Settings.from_mapping(
-            {
-                "zammad": {
-                    "base_url": "https://zammad.example.local",
-                    "api_token": fake_credential("test-token"),
-                },
-                "storage": {"root": "/mnt/archive"},
-                "observability": {"json_logs": True},
-            }
-        )
+        _settings(observability={"json_logs": True})
 
     msg = str(exc.value)
     check(not "observability.json_logs" not in msg, "assertion failed")
@@ -96,26 +132,12 @@ def test_load_settings_accepts_signing_enabled_with_pfx_path(
     monkeypatch.chdir(tmp_path)
     _clear_env(monkeypatch)
 
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "zammad:",
-                "  base_url: https://zammad.example.local",
-                "  api_token: test-token",
-                "storage:",
-                "  root: /mnt/archive",
-                "hardening:",
-                "  webhook:",
-                "    allow_unsigned: true",
-                "    allow_unsigned_when_no_secret: true",
-                "signing:",
-                "  enabled: true",
-                "  pfx_path: /run/secrets/signing.pfx",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    config_path = _write_signing_config(
+        tmp_path,
+        [
+            "  enabled: true",
+            "  pfx_path: /run/secrets/signing.pfx",
+        ],
     )
 
     settings = load_settings(config_path=config_path)
@@ -124,24 +146,12 @@ def test_load_settings_accepts_signing_enabled_with_pfx_path(
 
 
 def test_validate_settings_rejects_invalid_redis_url_scheme() -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": "/mnt/archive"},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": bool(1),
-                }
-            },
-            "workflow": {
+    settings = _settings(
+        hardening=_unsigned_webhook_hardening(),
+        workflow={
                 "execution_backend": "redis_queue",
                 "redis_url": "http://redis.local:6379",
-            },
-        }
+        },
     )
 
     with pytest.raises(ConfigValidationError) as exc:
@@ -153,50 +163,26 @@ def test_validate_settings_rejects_invalid_redis_url_scheme() -> None:
 
 
 def test_validate_settings_accepts_valid_redis_url() -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": "/mnt/archive"},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": bool(1),
-                }
-            },
-            "workflow": {
+    settings = _settings(
+        hardening=_unsigned_webhook_hardening(),
+        workflow={
                 "execution_backend": "redis_queue",
                 "idempotency_backend": "redis",
                 "redis_url": "redis://redis.local:6379/0",
-            },
-        }
+        },
     )
 
     validate_settings(settings)
 
 
 def test_validate_settings_accepts_rediss_url() -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": "/mnt/archive"},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": bool(1),
-                }
-            },
-            "workflow": {
+    settings = _settings(
+        hardening=_unsigned_webhook_hardening(),
+        workflow={
                 "execution_backend": "redis_queue",
                 "idempotency_backend": "redis",
                 "redis_url": "rediss://redis.local:6380/0",
-            },
-        }
+        },
     )
 
     validate_settings(settings)
@@ -204,54 +190,24 @@ def test_validate_settings_accepts_rediss_url() -> None:
 
 def test_rate_limit_rps_upper_bound() -> None:
     with pytest.raises(ValidationError):
-        Settings.from_mapping(
-            {
-                "zammad": {"base_url": "https://z.example", "api_token": fake_credential("t")},
-                "storage": {"root": "/mnt"},
-                "hardening": {
-                    "webhook": {
-                        "allow_unsigned": bool(1),
-                        "allow_unsigned_when_no_secret": bool(1),
-                    },
-                    "rate_limit": {"rps": 99999},
-                },
-            }
+        _settings(
+            "/mnt",
+            hardening=_unsigned_webhook_hardening() | {"rate_limit": {"rps": 99999}},
         )
 
 
 def test_rate_limit_burst_upper_bound() -> None:
     with pytest.raises(ValidationError):
-        Settings.from_mapping(
-            {
-                "zammad": {"base_url": "https://z.example", "api_token": fake_credential("t")},
-                "storage": {"root": "/mnt"},
-                "hardening": {
-                    "webhook": {
-                        "allow_unsigned": bool(1),
-                        "allow_unsigned_when_no_secret": bool(1),
-                    },
-                    "rate_limit": {"burst": 99999},
-                },
-            }
+        _settings(
+            "/mnt",
+            hardening=_unsigned_webhook_hardening() | {"rate_limit": {"burst": 99999}},
         )
 
 
 def test_metrics_enabled_requires_bearer_token() -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": "/mnt/archive"},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": bool(1),
-                }
-            },
-            "observability": {"metrics_enabled": True},
-        }
+    settings = _settings(
+        hardening=_unsigned_webhook_hardening(),
+        observability={"metrics_enabled": True},
     )
 
     with pytest.raises(ConfigValidationError) as exc:
@@ -277,38 +233,24 @@ def test_is_local_upstream_host_external_returns_false() -> None:
 
 
 def test_require_delivery_id_with_zero_ttl_raises(tmp_path: Path) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://z.example.local", "api_token": fake_credential("t")},
-            "storage": {"root": str(tmp_path)},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": bool(1),
-                    "require_delivery_id": True,
-                }
-            },
-            "workflow": {"delivery_id_ttl_seconds": 0},
-        }
+    settings = _settings(
+        tmp_path,
+        hardening=_unsigned_webhook_hardening(require_delivery_id=True),
+        workflow={"delivery_id_ttl_seconds": 0},
     )
     with pytest.raises(ConfigValidationError, match="delivery_id_ttl_seconds"):
         validate_settings(settings)
 
 
 def test_redis_queue_requires_redis_idempotency_backend(tmp_path: Path) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://z.example.local", "api_token": fake_credential("t")},
-            "storage": {"root": str(tmp_path)},
-            "hardening": {
-                "webhook": {"allow_unsigned": bool(1), "allow_unsigned_when_no_secret": bool(1)}
-            },
-            "workflow": {
+    settings = _settings(
+        tmp_path,
+        hardening=_unsigned_webhook_hardening(),
+        workflow={
                 "execution_backend": "redis_queue",
                 "idempotency_backend": "memory",
                 "redis_url": "redis://localhost/0",
-            },
-        }
+        },
     )
 
     with pytest.raises(ConfigValidationError, match="idempotency_backend='redis'"):
@@ -316,44 +258,33 @@ def test_redis_queue_requires_redis_idempotency_backend(tmp_path: Path) -> None:
 
 
 def test_plain_http_tsa_url_raises_without_allow_insecure(tmp_path: Path) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://z.example.local", "api_token": fake_credential("t")},
-            "storage": {"root": str(tmp_path)},
-            "hardening": {
-                "webhook": {"allow_unsigned": bool(1), "allow_unsigned_when_no_secret": bool(1)},
-                "transport": {"allow_insecure_http": False},
-            },
-            "signing": {
+    settings = _settings(
+        tmp_path,
+        hardening=_unsigned_webhook_hardening() | {"transport": {"allow_insecure_http": False}},
+        signing={
                 "enabled": False,
                 "timestamp": {
                     "enabled": True,
                     "rfc3161": {"tsa_url": "http://tsa.example.com/rfc3161"},
                 },
-            },
-        }
+        },
     )
     with pytest.raises(ConfigValidationError, match="Plain HTTP TSA URL"):
         validate_settings(settings)
 
 
 def test_localhost_tsa_url_raises_without_allow_local(tmp_path: Path) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://z.example.local", "api_token": fake_credential("t")},
-            "storage": {"root": str(tmp_path)},
-            "hardening": {
-                "webhook": {"allow_unsigned": bool(1), "allow_unsigned_when_no_secret": bool(1)},
-                "transport": {"allow_local_upstreams": False, "allow_insecure_http": True},
-            },
-            "signing": {
+    settings = _settings(
+        tmp_path,
+        hardening=_unsigned_webhook_hardening()
+        | {"transport": {"allow_local_upstreams": False, "allow_insecure_http": True}},
+        signing={
                 "enabled": False,
                 "timestamp": {
                     "enabled": True,
                     "rfc3161": {"tsa_url": "http://localhost/rfc3161"},
                 },
-            },
-        }
+        },
     )
     with pytest.raises(ConfigValidationError, match="local.*upstream|tsa_url"):
         validate_settings(settings)
@@ -361,16 +292,8 @@ def test_localhost_tsa_url_raises_without_allow_local(tmp_path: Path) -> None:
 
 def test_timestamp_enabled_requires_tsa_url(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="tsa_url is missing"):
-        Settings.from_mapping(
-            {
-                "zammad": {
-                    "base_url": "https://z.example.local",
-                    "api_token": fake_credential("t"),
-                },
-                "storage": {"root": str(tmp_path)},
-                "hardening": {
-                    "webhook": {"allow_unsigned": bool(1), "allow_unsigned_when_no_secret": bool(1)}
-                },
-                "signing": {"timestamp": {"enabled": True}},
-            }
+        _settings(
+            tmp_path,
+            hardening=_unsigned_webhook_hardening(),
+            signing={"timestamp": {"enabled": True}},
         )
