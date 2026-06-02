@@ -10,6 +10,10 @@ assignees: ""
 
 <!-- What happened? What did you expect? -->
 
+## Impact
+
+<!-- Who is affected? Is this data loss, failed archival, false success, security, UX, or docs-only? -->
+
 ## Steps to reproduce
 
 1.
@@ -21,6 +25,8 @@ assignees: ""
 - OS:
 - Python:
 - Deployment: (docker/systemd/other)
+- Version/commit:
+- Execution backend: (inprocess/redis_queue)
 
 ## Logs / Output
 
@@ -28,7 +34,10 @@ assignees: ""
 paste relevant logs here
 ```
 
+## Configuration context
+
+<!-- Redact secrets. Include relevant settings such as storage, signing/TSA, Redis, hardening, or template settings. -->
+
 ## Additional context
 
 <!-- Anything else that helps -->
-

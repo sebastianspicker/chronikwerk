@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver import cli
 from zammad_pdf_archiver.config.validate import ConfigValidationError, ConfigValidationIssue
@@ -19,11 +20,11 @@ def test_cmd_validate_config_success(monkeypatch, capsys, tmp_path) -> None:
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     rc = cli.cmd_validate_config(argparse.Namespace())
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
 
     out = capsys.readouterr().out
-    assert "Configuration is valid" in out
-    assert "Zammad URL" in out
+    check(not "Configuration is valid" not in out, "assertion failed")
+    check(not "Zammad URL" not in out, "assertion failed")
 
 
 def test_cmd_validate_config_file_not_found(monkeypatch, capsys) -> None:
@@ -40,11 +41,11 @@ def test_cmd_validate_config_file_not_found(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_validate_config(argparse.Namespace())
-    assert rc == 2
+    check(not not rc == 2, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Configuration file not found" in err
-    assert "missing.yaml" in err
+    check(not "Configuration file not found" not in err, "assertion failed")
+    check(not "missing.yaml" not in err, "assertion failed")
 
 
 def test_cmd_validate_config_invalid(monkeypatch, capsys) -> None:
@@ -57,10 +58,10 @@ def test_cmd_validate_config_invalid(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_validate_config(argparse.Namespace())
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Configuration is invalid" in err
+    check(not "Configuration is invalid" not in err, "assertion failed")
 
 
 def test_cmd_validate_config_value_error(monkeypatch, capsys) -> None:
@@ -72,11 +73,11 @@ def test_cmd_validate_config_value_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_validate_config(argparse.Namespace())
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Configuration is invalid" in err
-    assert "bad value" in err
+    check(not "Configuration is invalid" not in err, "assertion failed")
+    check(not "bad value" not in err, "assertion failed")
 
 
 def test_cmd_validate_config_os_error(monkeypatch, capsys) -> None:
@@ -88,10 +89,10 @@ def test_cmd_validate_config_os_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_validate_config(argparse.Namespace())
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Configuration is invalid" in err
+    check(not "Configuration is invalid" not in err, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -105,13 +106,13 @@ def test_cmd_dump_config_success(monkeypatch, capsys, tmp_path) -> None:
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     rc = cli.cmd_dump_config(argparse.Namespace())
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
 
     parsed = json.loads(capsys.readouterr().out)
     # Secrets should be redacted
-    assert parsed["zammad"]["api_token"] == "[redacted]"
+    check(not not parsed["zammad"]["api_token"] == "[redacted]", "assertion failed")
     # Non-secret values preserved
-    assert parsed["storage"]["root"] == str(tmp_path)
+    check(not not parsed["storage"]["root"] == str(tmp_path), "assertion failed")
 
 
 def test_cmd_dump_config_error(monkeypatch, capsys) -> None:
@@ -123,11 +124,11 @@ def test_cmd_dump_config_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_dump_config(argparse.Namespace())
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Failed to load configuration" in err
-    assert "invalid config" in err
+    check(not "Failed to load configuration" not in err, "assertion failed")
+    check(not "invalid config" not in err, "assertion failed")
 
 
 def test_cmd_dump_config_config_validation_error(monkeypatch, capsys) -> None:
@@ -140,67 +141,10 @@ def test_cmd_dump_config_config_validation_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_dump_config(argparse.Namespace())
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Failed to load configuration" in err
-
-
-# ---------------------------------------------------------------------------
-# cmd_show_deprecated
-# ---------------------------------------------------------------------------
-
-
-def test_cmd_show_deprecated_no_vars(monkeypatch, capsys) -> None:
-    """show-deprecated exits 0 with a clean message when no deprecated vars are set."""
-    # Remove any deprecated env vars that may be present
-    for old_name in cli._DEPRECATED_ALIASES:
-        monkeypatch.delenv(old_name, raising=False)
-
-    rc = cli.cmd_show_deprecated(argparse.Namespace())
-    assert rc == 0
-
-    out = capsys.readouterr().out
-    assert "No deprecated environment variables in use" in out
-
-
-def test_cmd_show_deprecated_with_vars_needs_migration(monkeypatch, capsys) -> None:
-    """show-deprecated lists deprecated vars that need migration."""
-    # Remove all deprecated vars first
-    for old_name in cli._DEPRECATED_ALIASES:
-        monkeypatch.delenv(old_name, raising=False)
-
-    # Set a deprecated var WITHOUT the canonical equivalent
-    monkeypatch.setenv("ZAMMAD_URL", "https://old.example.com")
-    monkeypatch.delenv("ZAMMAD_BASE_URL", raising=False)
-
-    rc = cli.cmd_show_deprecated(argparse.Namespace())
-    assert rc == 0
-
-    out = capsys.readouterr().out
-    assert "Deprecated environment variables detected" in out
-    assert "ZAMMAD_URL" in out
-    assert "ZAMMAD_BASE_URL" in out
-    assert "NEEDS MIGRATION" in out
-
-
-def test_cmd_show_deprecated_with_canonical_override(monkeypatch, capsys) -> None:
-    """show-deprecated shows informational status when canonical var is also set."""
-    for old_name in cli._DEPRECATED_ALIASES:
-        monkeypatch.delenv(old_name, raising=False)
-
-    # Set both deprecated and canonical
-    monkeypatch.setenv("ZAMMAD_URL", "https://old.example.com")
-    monkeypatch.setenv("ZAMMAD_BASE_URL", "https://new.example.com")
-
-    rc = cli.cmd_show_deprecated(argparse.Namespace())
-    assert rc == 0
-
-    out = capsys.readouterr().out
-    assert "Deprecated environment variables detected" in out
-    assert "ZAMMAD_URL" in out
-    assert "Has canonical override" in out
-    assert "removed in a future version" in out
+    check(not "Failed to load configuration" not in err, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -218,9 +162,12 @@ def test_cmd_queue_stats_prints_json(monkeypatch, capsys, tmp_path) -> None:
     monkeypatch.setattr(cli, "get_queue_stats", _stub_stats)
 
     rc = cli.cmd_queue_stats(argparse.Namespace())
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
     parsed = json.loads(capsys.readouterr().out)
-    assert parsed == {"execution_backend": "inprocess", "queue_enabled": False}
+    check(
+        not not parsed == {"execution_backend": "inprocess", "queue_enabled": False},
+        "assertion failed",
+    )
 
 
 def test_cmd_queue_stats_error(monkeypatch, capsys) -> None:
@@ -232,11 +179,11 @@ def test_cmd_queue_stats_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_queue_stats(argparse.Namespace())
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Failed to read queue stats" in err
-    assert "connection refused" in err
+    check(not "Failed to read queue stats" not in err, "assertion failed")
+    check(not "connection refused" not in err, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +199,11 @@ def test_cmd_queue_drain_dlq_requires_redis_backend(monkeypatch, capsys, tmp_pat
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     rc = cli.cmd_queue_drain_dlq(argparse.Namespace(limit=5))
-    assert rc == 1
-    assert "requires workflow.execution_backend=redis_queue" in capsys.readouterr().err
+    check(not not rc == 1, "assertion failed")
+    check(
+        not "requires workflow.execution_backend=redis_queue" not in capsys.readouterr().err,
+        "assertion failed",
+    )
 
 
 def test_cmd_queue_drain_dlq_success(monkeypatch, capsys, tmp_path) -> None:
@@ -265,16 +215,78 @@ def test_cmd_queue_drain_dlq_success(monkeypatch, capsys, tmp_path) -> None:
     )
 
     async def _stub_drain(_settings, *, limit: int):
-        assert limit == 7
-        return 3
+        check(not not limit == 7, "assertion failed")
+        return {"selected": 3, "deleted": 3, "not_deleted": 0}
 
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "drain_dlq", _stub_drain)
 
     rc = cli.cmd_queue_drain_dlq(argparse.Namespace(limit=7))
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
     parsed = json.loads(capsys.readouterr().out)
-    assert parsed == {"status": "ok", "drained": 3}
+    check(
+        not not parsed
+        == {"status": "ok", "drained": 3, "selected": 3, "deleted": 3, "not_deleted": 0},
+        "assertion failed",
+    )
+
+
+def test_cmd_queue_drain_dlq_partial_delete(monkeypatch, capsys, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost/0"}
+        },
+    )
+
+    async def _stub_drain(_settings, *, limit: int):
+        check(not not limit == 7, "assertion failed")
+        return {"selected": 3, "deleted": 2, "not_deleted": 1}
+
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "drain_dlq", _stub_drain)
+
+    rc = cli.cmd_queue_drain_dlq(argparse.Namespace(limit=7))
+    check(not not rc == 0, "assertion failed")
+    parsed = json.loads(capsys.readouterr().out)
+    check(
+        not not parsed
+        == {"status": "partial", "drained": 2, "selected": 3, "deleted": 2, "not_deleted": 1},
+        "assertion failed",
+    )
+
+
+def test_cmd_queue_drain_dlq_uses_config_path(monkeypatch, capsys, tmp_path) -> None:
+    config_path = tmp_path / "archiver.yaml"
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost/0"}
+        },
+    )
+    seen_config_paths = []
+
+    def _load(args: argparse.Namespace):
+        seen_config_paths.append(args.config)
+        return settings
+
+    async def _stub_drain(_settings, *, limit: int):
+        check(not _settings is not settings, "assertion failed")
+        check(not not limit == 7, "assertion failed")
+        return {"selected": 3, "deleted": 3, "not_deleted": 0}
+
+    monkeypatch.setattr(cli, "_load_settings_for_cli", _load)
+    monkeypatch.setattr(cli, "drain_dlq", _stub_drain)
+
+    rc = cli.cmd_queue_drain_dlq(argparse.Namespace(limit=7, config=str(config_path)))
+    check(not not rc == 0, "assertion failed")
+    check(not not seen_config_paths == [str(config_path)], "assertion failed")
+    parsed = json.loads(capsys.readouterr().out)
+    check(
+        not not parsed
+        == {"status": "ok", "drained": 3, "selected": 3, "deleted": 3, "not_deleted": 0},
+        "assertion failed",
+    )
 
 
 def test_cmd_queue_drain_dlq_error(monkeypatch, capsys) -> None:
@@ -286,11 +298,11 @@ def test_cmd_queue_drain_dlq_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_queue_drain_dlq(argparse.Namespace(limit=10))
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Failed to drain DLQ" in err
-    assert "redis down" in err
+    check(not "Failed to drain DLQ" not in err, "assertion failed")
+    check(not "redis down" not in err, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -307,21 +319,26 @@ def test_cmd_queue_history_prints_json(monkeypatch, capsys, tmp_path) -> None:
     )
 
     async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):
-        assert limit == 9
-        assert ticket_id == 77
+        check(not not limit == 9, "assertion failed")
+        check(not not ticket_id == 77, "assertion failed")
         return [{"status": "processed", "ticket_id": 77}]
 
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(cli, "read_history", _stub_history)
 
     rc = cli.cmd_queue_history(argparse.Namespace(limit=9, ticket_id=77))
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
     parsed = json.loads(capsys.readouterr().out)
-    assert parsed == {
-        "status": "ok",
-        "count": 1,
-        "items": [{"status": "processed", "ticket_id": 77}],
-    }
+    check(
+        not not parsed
+        == {
+            "status": "ok",
+            "available": True,
+            "count": 1,
+            "items": [{"status": "processed", "ticket_id": 77}],
+        },
+        "assertion failed",
+    )
 
 
 def test_cmd_queue_history_inprocess_backend(monkeypatch, capsys, tmp_path) -> None:
@@ -333,10 +350,59 @@ def test_cmd_queue_history_inprocess_backend(monkeypatch, capsys, tmp_path) -> N
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
 
     rc = cli.cmd_queue_history(argparse.Namespace(limit=50, ticket_id=None))
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
 
     parsed = json.loads(capsys.readouterr().out)
-    assert parsed == {"status": "ok", "count": 0, "items": []}
+    check(
+        not not parsed == {"status": "disabled", "available": False, "count": 0, "items": []},
+        "assertion failed",
+    )
+
+
+def test_cmd_queue_history_empty_enabled_history(monkeypatch, capsys, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost/0"}
+        },
+    )
+
+    async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
+        return []
+
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "read_history", _stub_history)
+
+    rc = cli.cmd_queue_history(argparse.Namespace(limit=50, ticket_id=None))
+    check(not not rc == 0, "assertion failed")
+
+    parsed = json.loads(capsys.readouterr().out)
+    check(
+        not not parsed == {"status": "ok", "available": True, "count": 0, "items": []},
+        "assertion failed",
+    )
+
+
+def test_cmd_queue_history_read_error_exits_nonzero(monkeypatch, capsys, tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "workflow": {"execution_backend": "redis_queue", "redis_url": "redis://localhost/0"}
+        },
+    )
+
+    async def _boom(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
+        raise RuntimeError("history backend down")
+
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "read_history", _boom)
+
+    rc = cli.cmd_queue_history(argparse.Namespace(limit=50, ticket_id=None))
+    check(not not rc == 1, "assertion failed")
+
+    err = capsys.readouterr().err
+    check(not "Failed to read queue history" not in err, "assertion failed")
+    check(not "history backend down" not in err, "assertion failed")
 
 
 def test_cmd_queue_history_error(monkeypatch, capsys) -> None:
@@ -348,11 +414,11 @@ def test_cmd_queue_history_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "load_settings", _raise)
 
     rc = cli.cmd_queue_history(argparse.Namespace(limit=10, ticket_id=None))
-    assert rc == 1
+    check(not not rc == 1, "assertion failed")
 
     err = capsys.readouterr().err
-    assert "Failed to read queue history" in err
-    assert "disk error" in err
+    check(not "Failed to read queue history" not in err, "assertion failed")
+    check(not "disk error" not in err, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -365,10 +431,10 @@ def test_main_no_args_prints_help(monkeypatch, capsys) -> None:
     monkeypatch.setattr(sys, "argv", ["zammad-pdf-archiver"])
 
     rc = cli.main()
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
 
     out = capsys.readouterr().out
-    assert "usage:" in out.lower() or "Available commands" in out
+    check(not not ("usage:" in out.lower() or "Available commands" in out), "assertion failed")
 
 
 def test_main_unknown_command(monkeypatch, capsys) -> None:
@@ -380,7 +446,7 @@ def test_main_unknown_command(monkeypatch, capsys) -> None:
 
     with pytest.raises(SystemExit) as exc_info:
         cli.main()
-    assert exc_info.value.code == 2
+    check(not not exc_info.value.code == 2, "assertion failed")
 
 
 def test_main_validate_config_subcommand(monkeypatch, capsys, tmp_path) -> None:
@@ -390,8 +456,8 @@ def test_main_validate_config_subcommand(monkeypatch, capsys, tmp_path) -> None:
     monkeypatch.setattr(sys, "argv", ["zammad-pdf-archiver", "validate-config"])
 
     rc = cli.main()
-    assert rc == 0
-    assert "Configuration is valid" in capsys.readouterr().out
+    check(not not rc == 0, "assertion failed")
+    check(not "Configuration is valid" not in capsys.readouterr().out, "assertion failed")
 
 
 def test_main_dump_config_subcommand(monkeypatch, capsys, tmp_path) -> None:
@@ -401,21 +467,10 @@ def test_main_dump_config_subcommand(monkeypatch, capsys, tmp_path) -> None:
     monkeypatch.setattr(sys, "argv", ["zammad-pdf-archiver", "dump-config"])
 
     rc = cli.main()
-    assert rc == 0
+    check(not not rc == 0, "assertion failed")
 
     parsed = json.loads(capsys.readouterr().out)
-    assert "zammad" in parsed
-
-
-def test_main_show_deprecated_subcommand(monkeypatch, capsys) -> None:
-    """main() dispatches to cmd_show_deprecated when called with 'show-deprecated'."""
-    for old_name in cli._DEPRECATED_ALIASES:
-        monkeypatch.delenv(old_name, raising=False)
-    monkeypatch.setattr(sys, "argv", ["zammad-pdf-archiver", "show-deprecated"])
-
-    rc = cli.main()
-    assert rc == 0
-    assert "No deprecated environment variables" in capsys.readouterr().out
+    check(not "zammad" not in parsed, "assertion failed")
 
 
 def test_main_version_prints_package_version(monkeypatch, capsys) -> None:
@@ -426,8 +481,8 @@ def test_main_version_prints_package_version(monkeypatch, capsys) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main()
 
-    assert exc_info.value.code == 0
-    assert cli.__version__ in capsys.readouterr().out
+    check(not not exc_info.value.code == 0, "assertion failed")
+    check(not cli.__version__ not in capsys.readouterr().out, "assertion failed")
 
 
 def test_main_config_option_passes_path(monkeypatch, tmp_path) -> None:
@@ -446,8 +501,8 @@ def test_main_config_option_passes_path(monkeypatch, tmp_path) -> None:
         ["zammad-pdf-archiver", "--config", str(config_path), "validate-config"],
     )
 
-    assert cli.main() == 0
-    assert seen["config_path"] == str(config_path)
+    check(not not cli.main() == 0, "assertion failed")
+    check(not not seen["config_path"] == str(config_path), "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +517,7 @@ def test_cli_command_decorator_passes_through_on_success() -> None:
     def _ok(_args: argparse.Namespace) -> int:
         return 0
 
-    assert _ok(argparse.Namespace()) == 0
+    check(not not _ok(argparse.Namespace()) == 0, "assertion failed")
 
 
 def test_cli_command_decorator_catches_specified_exception(capsys) -> None:
@@ -473,8 +528,8 @@ def test_cli_command_decorator_catches_specified_exception(capsys) -> None:
         raise ValueError("boom")
 
     rc = _fail(argparse.Namespace())
-    assert rc == 1
-    assert "test error: boom" in capsys.readouterr().err
+    check(not not rc == 1, "assertion failed")
+    check(not "test error: boom" not in capsys.readouterr().err, "assertion failed")
 
 
 def test_cli_command_decorator_does_not_catch_unspecified_exception() -> None:

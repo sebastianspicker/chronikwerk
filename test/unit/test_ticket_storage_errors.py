@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import zammad_pdf_archiver.app.jobs.ticket_storage as ticket_storage_module
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.app.jobs.ticket_storage import (
-    StoragePaths,
     _write_attachments,
     store_ticket_files,
 )
@@ -29,12 +32,15 @@ from zammad_pdf_archiver.domain.snapshot_models import (
 def _make_settings(tmp_path: Path) -> Settings:
     return Settings.from_mapping(
         {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "tok"},
+            "zammad": {
+                "base_url": "https://zammad.example.local",
+                "api_token": fake_credential("tok"),
+            },
             "storage": {"root": str(tmp_path), "fsync": False},
             "hardening": {
                 "webhook": {
                     "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": True,
+                    "allow_unsigned_when_no_secret": bool(1),
                 }
             },
         }
@@ -68,31 +74,39 @@ def _make_snapshot_no_attachments() -> Snapshot:
     return Snapshot(ticket=ticket, articles=[article])
 
 
-# ===================================================================
-# 0. compute_storage_paths
-# ===================================================================
+def _make_snapshot_with_skipped_attachments() -> Snapshot:
+    ticket = TicketMeta(id=500, number="50001", title="Skipped attachment")
+    attachments = [
+        AttachmentMeta(
+            article_id=50,
+            attachment_id=1,
+            filename="kept.txt",
+            content=b"kept",
+        ),
+        AttachmentMeta(
+            article_id=50,
+            attachment_id=2,
+            filename="large.bin",
+            content=None,
+            content_omission_reason="per_file_limit_declared_size",
+        ),
+        AttachmentMeta(
+            article_id=50,
+            attachment_id=3,
+            filename="later.bin",
+            content=None,
+            content_omission_reason="total_budget_exhausted",
+        ),
+    ]
+    return Snapshot(ticket=ticket, articles=[Article(id=50, attachments=attachments)])
 
 
-def test_compute_storage_paths(tmp_path: Path) -> None:
-    """compute_storage_paths returns correct target and sidecar paths."""
-    from zammad_pdf_archiver.app.jobs.ticket_storage import compute_storage_paths
+class _CapturingLog:
+    def __init__(self) -> None:
+        self.warning_events: list[tuple[str, dict[str, object]]] = []
 
-    storage_root = tmp_path / "storage"
-    storage_root.mkdir()
-
-    paths = compute_storage_paths(
-        storage_root=storage_root,
-        username="testuser",
-        archive_path_segments=["2025"],
-        allow_prefixes=None,
-        filename_pattern="Ticket-{ticket_number}_{timestamp_utc}.pdf",
-        ticket_number="10001",
-        date_iso="2025-01-01",
-    )
-
-    assert paths.target_path.name == "Ticket-10001_2025-01-01.pdf"
-    assert paths.sidecar_path.name == "Ticket-10001_2025-01-01.pdf.json"
-    assert paths.target_dir.is_relative_to(storage_root)
+    def warning(self, event: str, **kwargs: object) -> None:
+        self.warning_events.append((event, kwargs))
 
 
 # ===================================================================
@@ -113,35 +127,31 @@ class TestWriteAttachments:
         work_dir.mkdir()
         attachments_dir = storage_root / "attachments"
 
-        entries = _write_attachments(
-            work_dir, snapshot, storage_root, attachments_dir, fsync=False
-        )
+        entries = _write_attachments(work_dir, snapshot, storage_root, attachments_dir, fsync=False)
 
         # Should return one entry per attachment with content.
-        assert len(entries) == 2
+        check(not not len(entries) == 2, "assertion failed")
 
         # Verify files exist in the temp attachments sub-directory.
         temp_att_dir = storage_root / "work" / "attachments"
-        assert temp_att_dir.is_dir()
+        check(not not temp_att_dir.is_dir(), "assertion failed")
         written_files = sorted(f.name for f in temp_att_dir.iterdir())
-        assert len(written_files) == 2
+        check(not not len(written_files) == 2, "assertion failed")
 
         # Check audit metadata structure.
         for entry in entries:
-            assert "sha256" in entry
-            assert "article_id" in entry
-            assert "attachment_id" in entry
-            assert "storage_path" in entry
-            assert "filename" in entry
+            check(not "sha256" not in entry, "assertion failed")
+            check(not "article_id" not in entry, "assertion failed")
+            check(not "attachment_id" not in entry, "assertion failed")
+            check(not "storage_path" not in entry, "assertion failed")
+            check(not "filename" not in entry, "assertion failed")
 
     def test_write_attachments_no_articles(self, tmp_path: Path) -> None:
         """Snapshot with no articles returns empty list immediately."""
         ticket = TicketMeta(id=300, number="30001", title="Empty")
         snapshot = Snapshot(ticket=ticket, articles=[])
-        entries = _write_attachments(
-            tmp_path, snapshot, tmp_path, tmp_path / "att", fsync=False
-        )
-        assert entries == []
+        entries = _write_attachments(tmp_path, snapshot, tmp_path, tmp_path / "att", fsync=False)
+        check(not not entries == [], "assertion failed")
 
     def test_write_attachments_no_binary_content(self, tmp_path: Path) -> None:
         """Articles whose attachments have content=None are skipped."""
@@ -150,10 +160,8 @@ class TestWriteAttachments:
         ticket = TicketMeta(id=400, number="40001", title="No content")
         snapshot = Snapshot(ticket=ticket, articles=[article])
 
-        entries = _write_attachments(
-            tmp_path, snapshot, tmp_path, tmp_path / "att", fsync=False
-        )
-        assert entries == []
+        entries = _write_attachments(tmp_path, snapshot, tmp_path, tmp_path / "att", fsync=False)
+        check(not not entries == [], "assertion failed")
 
 
 # ===================================================================
@@ -171,11 +179,7 @@ class TestStoreTicketFilesAttachmentWriteFailure:
 
         target_dir = tmp_path / "archive" / "user"
         target_dir.mkdir(parents=True)
-        paths = StoragePaths(
-            target_dir=target_dir,
-            target_path=target_dir / "Ticket-10001_2025-01-01.pdf",
-            sidecar_path=target_dir / "Ticket-10001_2025-01-01.pdf.json",
-        )
+        target_path = target_dir / "Ticket-10001_2025-01-01.pdf"
         now = datetime(2025, 1, 1, tzinfo=UTC)
 
         # Track calls so we only fail on the attachment write (not the PDF write).
@@ -200,7 +204,7 @@ class TestStoreTicketFilesAttachmentWriteFailure:
                 store_ticket_files(
                     pdf_bytes=b"%PDF-fake",
                     snapshot=snapshot,
-                    paths=paths,
+                    target_path=target_path,
                     ticket_id=100,
                     now=now,
                     settings=settings,
@@ -223,9 +227,10 @@ def test_backup_if_exists_renames_existing_file(tmp_path: Path) -> None:
 
     _backup_if_exists(target, storage_root=root, fsync=False)
 
-    assert not target.exists()
+    check(not not not target.exists(), "assertion failed")
     bak_files = list(root.glob("archive.pdf.bak.*"))
-    assert len(bak_files) == 1
+    check(not not len(bak_files) == 1, "assertion failed")
+    check(not not bak_files[0].read_bytes() == b"original", "assertion failed")
 
 
 def test_backup_if_exists_noop_when_no_file(tmp_path: Path) -> None:
@@ -236,7 +241,10 @@ def test_backup_if_exists_noop_when_no_file(tmp_path: Path) -> None:
     root.mkdir()
     target = root / "nonexistent.pdf"
 
-    _backup_if_exists(target, storage_root=root, fsync=False)  # should not raise
+    check(
+        not _backup_if_exists(target, storage_root=root, fsync=False) is not None,
+        "assertion failed",
+    )
 
 
 # ===================================================================
@@ -251,26 +259,109 @@ def test_store_ticket_files_happy_path_with_attachments(tmp_path: Path) -> None:
 
     target_dir = tmp_path / "archive" / "user"
     target_dir.mkdir(parents=True)
-    paths = StoragePaths(
-        target_dir=target_dir,
-        target_path=target_dir / "Ticket-10001_2025-01-01.pdf",
-        sidecar_path=target_dir / "Ticket-10001_2025-01-01.pdf.json",
-    )
+    target_path = target_dir / "Ticket-10001_2025-01-01.pdf"
+    sidecar_path = target_path.with_name(target_path.name + ".json")
     now = datetime(2025, 1, 1, tzinfo=UTC)
 
     result = store_ticket_files(
         pdf_bytes=b"%PDF-1.4 fake",
         snapshot=snapshot,
-        paths=paths,
+        target_path=target_path,
         ticket_id=100,
         now=now,
         settings=settings,
     )
 
-    assert result.target_path == paths.target_path
-    assert result.sidecar_path == paths.sidecar_path
-    assert paths.target_path.is_file()
-    assert paths.sidecar_path.is_file()
+    check(not not result.target_path == target_path, "assertion failed")
+    check(not not result.sidecar_path == sidecar_path, "assertion failed")
+    check(not not target_path.is_file(), "assertion failed")
+    check(not not sidecar_path.is_file(), "assertion failed")
+    audit = json.loads(sidecar_path.read_text("utf-8"))
+    check(
+        not not audit["attachment_summary"]
+        == {"total": 2, "written": 2, "metadata_only": 0, "skipped": 0, "skipped_reasons": {}},
+        "assertion failed",
+    )
+    check(not not len(audit["attachments"]) == 2, "assertion failed")
+
+
+def test_store_ticket_files_logs_staging_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _make_settings(tmp_path)
+    snapshot = _make_snapshot_no_attachments()
+    target_dir = tmp_path / "archive" / "user"
+    target_dir.mkdir(parents=True)
+    target_path = target_dir / "Ticket-20001_2025-01-01.pdf"
+    sidecar_path = target_path.with_name(target_path.name + ".json")
+    cleanup_paths: list[Path] = []
+    capture = _CapturingLog()
+
+    def _failing_rmtree(path: str | Path) -> None:
+        cleanup_paths.append(Path(path))
+        raise OSError("cleanup failed")
+
+    monkeypatch.setattr(ticket_storage_module.shutil, "rmtree", _failing_rmtree)
+    monkeypatch.setattr(ticket_storage_module, "log", capture)
+
+    result = store_ticket_files(
+        pdf_bytes=b"%PDF-1.4 fake",
+        snapshot=snapshot,
+        target_path=target_path,
+        ticket_id=200,
+        now=datetime(2025, 1, 1, tzinfo=UTC),
+        settings=settings,
+    )
+
+    check(not not result.target_path == target_path, "assertion failed")
+    check(not not target_path.exists(), "assertion failed")
+    check(not not sidecar_path.exists(), "assertion failed")
+    check(not not len(cleanup_paths) == 1, "assertion failed")
+    check(not not cleanup_paths[0].parent == target_dir, "assertion failed")
+    check(not not cleanup_paths[0].name.startswith(".tmp-archiving-200-"), "assertion failed")
+    check(
+        not not capture.warning_events
+        == [("staging_dir_cleanup_failed", {"path": str(cleanup_paths[0]), "exc_info": True})],
+        "assertion failed",
+    )
+
+
+def test_store_ticket_files_sidecar_records_skipped_attachment_summary(tmp_path: Path) -> None:
+    """Successful archives must report attachment binaries omitted by policy."""
+    settings = _make_settings(tmp_path)
+    snapshot = _make_snapshot_with_skipped_attachments()
+
+    target_dir = tmp_path / "archive" / "user"
+    target_dir.mkdir(parents=True)
+    target_path = target_dir / "Ticket-50001_2025-01-01.pdf"
+    sidecar_path = target_path.with_name(target_path.name + ".json")
+
+    store_ticket_files(
+        pdf_bytes=b"%PDF-1.4 fake",
+        snapshot=snapshot,
+        target_path=target_path,
+        ticket_id=500,
+        now=datetime(2025, 1, 1, tzinfo=UTC),
+        settings=settings,
+    )
+
+    audit = json.loads(sidecar_path.read_text("utf-8"))
+    check(
+        not not audit["attachment_summary"]
+        == {
+            "total": 3,
+            "written": 1,
+            "metadata_only": 2,
+            "skipped": 2,
+            "skipped_reasons": {"per_file_limit_declared_size": 1, "total_budget_exhausted": 1},
+        },
+        "assertion failed",
+    )
+    check(
+        not not [entry["filename"] for entry in audit["attachments"]] == ["kept.txt"],
+        "assertion failed",
+    )
 
 
 # ===================================================================
@@ -288,11 +379,7 @@ def test_store_ticket_files_sidecar_failure_cleans_up_pdf(tmp_path: Path) -> Non
     target_dir = tmp_path / "archive" / "user"
     target_dir.mkdir(parents=True)
     pdf_path = target_dir / "Ticket-20001_2025-01-01.pdf"
-    paths = StoragePaths(
-        target_dir=target_dir,
-        target_path=pdf_path,
-        sidecar_path=target_dir / "Ticket-20001_2025-01-01.pdf.json",
-    )
+    sidecar_path = pdf_path.with_name(pdf_path.name + ".json")
     now = datetime(2025, 1, 1, tzinfo=UTC)
 
     call_count = 0
@@ -304,7 +391,7 @@ def test_store_ticket_files_sidecar_failure_cleans_up_pdf(tmp_path: Path) -> Non
     def _failing_sidecar_move(src: Path, dst: Path, **kwargs: object) -> None:
         nonlocal call_count
         call_count += 1
-        if dst == paths.sidecar_path:
+        if dst == sidecar_path:
             # PDF already moved at this point - create it to simulate the scenario
             pdf_path.write_bytes(b"%PDF-moved")
             raise OSError("sidecar move failed")
@@ -318,8 +405,61 @@ def test_store_ticket_files_sidecar_failure_cleans_up_pdf(tmp_path: Path) -> Non
             store_ticket_files(
                 pdf_bytes=b"%PDF-1.4 fake",
                 snapshot=snapshot,
-                paths=paths,
+                target_path=pdf_path,
                 ticket_id=200,
                 now=now,
                 settings=settings,
             )
+
+    check(not not not pdf_path.exists(), "assertion failed")
+
+
+def test_store_ticket_files_sidecar_failure_rolls_back_attachments_and_backups(
+    tmp_path: Path,
+) -> None:
+    """Sidecar failure must not leave new attachments or discard previous files."""
+    settings = _make_settings(tmp_path)
+    snapshot = _make_snapshot_with_attachments()
+
+    target_dir = tmp_path / "archive" / "user"
+    target_dir.mkdir(parents=True)
+    attachments_dir = target_dir / "attachments"
+    attachments_dir.mkdir()
+    pdf_path = target_dir / "Ticket-10001_2025-01-01.pdf"
+    sidecar_path = target_dir / "Ticket-10001_2025-01-01.pdf.json"
+    existing_attachment = attachments_dir / "10_1_report.pdf"
+    new_attachment = attachments_dir / "10_2_image.png"
+
+    pdf_path.write_bytes(b"old-pdf")
+    sidecar_path.write_bytes(b"old-sidecar")
+    existing_attachment.write_bytes(b"old-attachment")
+
+    now = datetime(2025, 1, 1, tzinfo=UTC)
+
+    original_move = __import__(
+        "zammad_pdf_archiver.adapters.storage.fs_storage", fromlist=["move_file_within_root"]
+    ).move_file_within_root
+
+    def _failing_sidecar_move(src: Path, dst: Path, **kwargs: object) -> None:
+        if dst == sidecar_path and src.parent != target_dir:
+            raise OSError("sidecar move failed")
+        return original_move(src, dst, **kwargs)
+
+    with patch(
+        "zammad_pdf_archiver.app.jobs.ticket_storage.move_file_within_root",
+        side_effect=_failing_sidecar_move,
+    ):
+        with pytest.raises(OSError, match="sidecar move failed"):
+            store_ticket_files(
+                pdf_bytes=b"%PDF-1.4 fake",
+                snapshot=snapshot,
+                target_path=pdf_path,
+                ticket_id=100,
+                now=now,
+                settings=settings,
+            )
+
+    check(not not pdf_path.read_bytes() == b"old-pdf", "assertion failed")
+    check(not not sidecar_path.read_bytes() == b"old-sidecar", "assertion failed")
+    check(not not existing_attachment.read_bytes() == b"old-attachment", "assertion failed")
+    check(not not not new_attachment.exists(), "assertion failed")

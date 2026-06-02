@@ -6,16 +6,14 @@ import argparse
 import asyncio
 import functools
 import json
-import os
 import sys
 from collections.abc import Callable
 
 import structlog
 
 from zammad_pdf_archiver._version import __version__
-from zammad_pdf_archiver.app.jobs.history import read_history
+from zammad_pdf_archiver.app.jobs.history import _history_enabled, read_history
 from zammad_pdf_archiver.app.jobs.redis_queue import drain_dlq, get_queue_stats
-from zammad_pdf_archiver.config.env_aliases import _DEPRECATED_ALIASES
 from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.config.redact import redact_settings_dict
 from zammad_pdf_archiver.config.settings import Settings
@@ -107,29 +105,6 @@ def cmd_dump_config(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_show_deprecated(args: argparse.Namespace) -> int:
-    """Show deprecated environment variables that are in use."""
-    found = []
-    for old_name, new_name in _DEPRECATED_ALIASES.items():
-        if old_name in os.environ:
-            found.append((old_name, new_name, os.environ.get(new_name) is None))
-
-    if not found:
-        print("No deprecated environment variables in use.")
-        return 0
-
-    print("Deprecated environment variables detected:")
-    print()
-    for old_name, new_name, needs_migration in found:
-        status = "⚠️  NEEDS MIGRATION" if needs_migration else "ℹ️  Has canonical override"
-        print(f"  {old_name} → {new_name} {status}")
-
-    print()
-    print("These variables will be removed in a future version.")
-    print("Please migrate to the canonical names.")
-    return 0
-
-
 @_cli_command(
     "Failed to read queue stats", catch=(RuntimeError, ConnectionError, OSError, ValueError)
 )
@@ -144,7 +119,7 @@ def cmd_queue_stats(args: argparse.Namespace) -> int:
 @_cli_command("Failed to drain DLQ", catch=(RuntimeError, ConnectionError, OSError, ValueError))
 def cmd_queue_drain_dlq(args: argparse.Namespace) -> int:
     """Drain dead-letter queue entries (bounded by --limit)."""
-    settings = load_settings()
+    settings = _load_settings_for_cli(args)
     backend = (settings.workflow.execution_backend or "inprocess").strip().lower()
     if backend != "redis_queue":
         print(
@@ -153,8 +128,14 @@ def cmd_queue_drain_dlq(args: argparse.Namespace) -> int:
         )
         return 1
 
-    drained = asyncio.run(drain_dlq(settings, limit=args.limit))
-    print(json.dumps({"status": "ok", "drained": drained}, indent=2))
+    drain_result = asyncio.run(drain_dlq(settings, limit=args.limit))
+    status = "partial" if drain_result["not_deleted"] else "ok"
+    print(
+        json.dumps(
+            {"status": status, "drained": drain_result["deleted"], **drain_result},
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -164,9 +145,8 @@ def cmd_queue_drain_dlq(args: argparse.Namespace) -> int:
 def cmd_queue_history(args: argparse.Namespace) -> int:
     """Show queue history events as JSON."""
     settings = _load_settings_for_cli(args)
-    backend = (settings.workflow.execution_backend or "inprocess").strip().lower()
-    if backend != "redis_queue" and not settings.workflow.redis_url:
-        payload = {"status": "ok", "count": 0, "items": []}
+    if not _history_enabled(settings):
+        payload = {"status": "disabled", "available": False, "count": 0, "items": []}
         print(json.dumps(payload, indent=2))
         return 0
 
@@ -177,13 +157,12 @@ def cmd_queue_history(args: argparse.Namespace) -> int:
             ticket_id=getattr(args, "ticket_id", None),
         )
     )
-    payload = {"status": "ok", "count": len(items), "items": items}
+    payload = {"status": "ok", "available": True, "count": len(items), "items": items}
     print(json.dumps(payload, indent=2, default=str))
     return 0
 
 
-def main() -> int:
-    """Main CLI entry point."""
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zammad-pdf-archiver",
         description="Zammad PDF Archiver CLI utilities",
@@ -200,28 +179,26 @@ def main() -> int:
         version=f"%(prog)s {__version__}",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    _add_config_commands(subparsers)
+    _add_queue_commands(subparsers)
+    return parser
 
-    # validate-config
+
+def _add_config_commands(subparsers: argparse._SubParsersAction) -> None:
     validate_parser = subparsers.add_parser(
         "validate-config",
         help="Validate configuration and exit",
     )
     validate_parser.set_defaults(func=cmd_validate_config)
 
-    # dump-config
     dump_parser = subparsers.add_parser(
         "dump-config",
         help="Dump configuration as JSON (secrets redacted)",
     )
     dump_parser.set_defaults(func=cmd_dump_config)
 
-    # show-deprecated
-    deprecated_parser = subparsers.add_parser(
-        "show-deprecated",
-        help="Show deprecated environment variables in use",
-    )
-    deprecated_parser.set_defaults(func=cmd_show_deprecated)
 
+def _add_queue_commands(subparsers: argparse._SubParsersAction) -> None:
     queue_stats_parser = subparsers.add_parser(
         "queue-stats",
         help="Show queue stats (redis_queue backend)",
@@ -258,8 +235,11 @@ def main() -> int:
     )
     queue_history_parser.set_defaults(func=cmd_queue_history)
 
-    args = parser.parse_args()
 
+def main() -> int:
+    """Main CLI entry point."""
+    parser = _build_parser()
+    args = parser.parse_args()
     if args.command is None:
         parser.print_help()
         return 0

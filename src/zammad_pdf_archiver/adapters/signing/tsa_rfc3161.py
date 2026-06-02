@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-
 import httpx
+import structlog
 from asn1crypto import tsp
 from pyhanko.sign.timestamps.api import TimeStamper
 from pyhanko.sign.timestamps.common_utils import set_tsp_headers
@@ -12,72 +10,55 @@ from zammad_pdf_archiver.adapters.http_util import timeouts_for
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
-
-@dataclass(frozen=True)
-class _TsaConfig:
-    url: str
-    timeout_seconds: float
-    ca_bundle_path: Path | None
-    auth: tuple[str, str] | None
-    trust_env: bool
-
-
-def _load_tsa_config(signing: SigningSettings, *, trust_env: bool = False) -> _TsaConfig:
-    rfc3161 = signing.timestamp.rfc3161
-
-    tsa_url = rfc3161.tsa_url
-    if tsa_url is None:
-        raise PermanentError("Timestamping is enabled but TSA URL is missing")
-
-    timeout_seconds = float(rfc3161.timeout_seconds)
-    ca_bundle_path = rfc3161.ca_bundle_path
-
-    user = rfc3161.user
-    password: str | None = (
-        rfc3161.password.get_secret_value() if rfc3161.password is not None else None
-    )
-
-    auth: tuple[str, str] | None
-    if user or password:
-        if not user or not password:
-            raise PermanentError("TSA basic auth requires both user and password in settings")
-        auth = (user, password)
-    else:
-        auth = None
-
-    return _TsaConfig(
-        url=str(tsa_url),
-        timeout_seconds=timeout_seconds,
-        ca_bundle_path=ca_bundle_path,
-        auth=auth,
-        trust_env=trust_env,
-    )
+log = structlog.get_logger(__name__)
 
 
 class _HttpxRFC3161TimeStamper(TimeStamper):
-    def __init__(self, config: _TsaConfig):
+    def __init__(self, signing: SigningSettings, *, trust_env: bool = False):
         super().__init__()
-        self._config = config
+        rfc3161 = signing.timestamp.rfc3161
+
+        tsa_url = rfc3161.tsa_url
+        if tsa_url is None:
+            raise PermanentError("Timestamping is enabled but TSA URL is missing")
+
+        self._url = str(tsa_url)
+        self._timeout_seconds = float(rfc3161.timeout_seconds)
+        self._ca_bundle_path = rfc3161.ca_bundle_path
+        self._trust_env = trust_env
+
+        user = rfc3161.user
+        password: str | None = (
+            rfc3161.password.get_secret_value() if rfc3161.password is not None else None
+        )
+
+        self._auth: tuple[str, str] | None
+        if user or password:
+            if not user or not password:
+                raise PermanentError("TSA basic auth requires both user and password in settings")
+            self._auth = (user, password)
+        else:
+            self._auth = None
 
     async def async_request_tsa_response(self, req: tsp.TimeStampReq) -> tsp.TimeStampResp:
         headers = set_tsp_headers({})
         verify: bool | str = True
-        if self._config.ca_bundle_path is not None:
-            verify = str(self._config.ca_bundle_path)
+        if self._ca_bundle_path is not None:
+            verify = str(self._ca_bundle_path)
 
         try:
-            auth: tuple[str | bytes, str | bytes] | None = self._config.auth
+            auth: tuple[str | bytes, str | bytes] | None = self._auth
 
             async with httpx.AsyncClient(
-                timeout=timeouts_for(self._config.timeout_seconds),
+                timeout=timeouts_for(self._timeout_seconds),
                 limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
                 verify=verify,
-                trust_env=self._config.trust_env,
+                trust_env=self._trust_env,
                 follow_redirects=False,
                 auth=auth,
             ) as client:
                 response = await client.post(
-                    self._config.url,
+                    self._url,
                     content=req.dump(),
                     headers=headers,
                 )
@@ -120,8 +101,8 @@ def _validate_timestamp_status(tsa_resp: tsp.TimeStampResp) -> None:
     status_string = ""
     try:
         status_string = status_info["status_string"].native or ""
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("tsa_status_string_unavailable", exc_info=exc)
     raise PermanentError(
         f"RFC3161 TSA rejected the request: status={status_value!r}"
         f"{f' ({status_string})' if status_string else ''}"
@@ -154,5 +135,4 @@ def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> T
       - PermanentError for misconfiguration or non-retryable TSA responses.
       - TransientError for network issues and HTTP 5xx responses.
     """
-    config = _load_tsa_config(signing, trust_env=trust_env)
-    return _HttpxRFC3161TimeStamper(config)
+    return _HttpxRFC3161TimeStamper(signing, trust_env=trust_env)

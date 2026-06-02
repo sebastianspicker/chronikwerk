@@ -20,7 +20,7 @@ class DeliveryIdStore(Protocol):
         ...
 
     async def try_claim(self, key: str) -> bool:
-        """Atomically claim key if not yet seen. True if claimed, False if seen."""
+        """Claim key if not yet seen. True if claimed, False if seen."""
         ...
 
     async def release(self, key: str) -> None:
@@ -69,6 +69,8 @@ class InMemoryTTLSet:
         self._maybe_evict(now)
         self._expires_at_by_key[key] = now + self._ttl_seconds
 
+    # Async methods intentionally shim the Redis-compatible DeliveryIdStore
+    # protocol while keeping the in-memory check/update bodies await-free.
     async def seen(self, key: str) -> bool:
         """Return True if key was already seen and is still within TTL."""
         return self._seen_sync(key)
@@ -78,7 +80,12 @@ class InMemoryTTLSet:
         self._add_sync(key)
 
     async def try_claim(self, key: str) -> bool:
-        """Atomically claim key if not yet seen; return True if claimed."""
+        """Check and claim key in one event-loop-safe step.
+
+        Safe for concurrent asyncio coroutines in a single process because no
+        ``await`` separates the seen-check and add. Not thread-safe and not
+        multi-process-safe; use RedisDeliveryIdStore for multi-worker deployments.
+        """
         if self._seen_sync(key):
             return False
         self._add_sync(key)

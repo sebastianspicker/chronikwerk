@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
@@ -20,15 +21,15 @@ def test_healthz_ok(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/healthz")
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert body["status"] == "ok"
-    assert body["service"] == "zammad-pdf-archiver"
-    assert isinstance(body["version"], str) and body["version"]
+    check(not not body["status"] == "ok", "assertion failed")
+    check(not not body["service"] == "zammad-pdf-archiver", "assertion failed")
+    check(not not (isinstance(body["version"], str) and body["version"]), "assertion failed")
     datetime.fromisoformat(body["time"])
 
-    assert response.headers.get("X-Request-Id")
+    check(not not response.headers.get("X-Request-Id"), "assertion failed")
 
 
 def test_healthz_without_settings_omits_version() -> None:
@@ -36,12 +37,27 @@ def test_healthz_without_settings_omits_version() -> None:
     client = TestClient(app)
 
     response = client.get("/healthz")
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert body["status"] == "ok"
-    assert "service" not in body
-    assert "version" not in body
+    check(not not body["status"] == "ok", "assertion failed")
+    check(not not "service" not in body, "assertion failed")
+    check(not not "version" not in body, "assertion failed")
+
+
+def test_deep_healthz_without_settings_reports_degraded() -> None:
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.get("/healthz", params={"deep": "true"})
+    check(not not response.status_code == 200, "assertion failed")
+
+    body = response.json()
+    check(not not body["status"] == "degraded", "assertion failed")
+    check(not not body["reason"] == "settings_not_loaded", "assertion failed")
+    check(not not body["checks"] == {}, "assertion failed")
+    check(not not "service" not in body, "assertion failed")
+    check(not not "version" not in body, "assertion failed")
 
 
 def test_deep_healthz_does_not_leak_path(tmp_path) -> None:
@@ -50,16 +66,18 @@ def test_deep_healthz_does_not_leak_path(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/healthz", params={"deep": "true"})
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert "checks" in body
+    check(not "checks" not in body, "assertion failed")
     storage = body["checks"]["storage"]
-    assert storage["writable"] is True
+    check(not storage["writable"] is not True, "assertion failed")
+    check(not not isinstance(storage["free_bytes"], int), "assertion failed")
+    check(not not storage["free_bytes"] >= 0, "assertion failed")
     # The response must not contain any filesystem path
-    assert "path" not in storage
+    check(not not "path" not in storage, "assertion failed")
     raw = response.text
-    assert str(tmp_path) not in raw
+    check(not not str(tmp_path) not in raw, "assertion failed")
 
 
 def test_deep_healthz_all_healthy(tmp_path) -> None:
@@ -68,12 +86,15 @@ def test_deep_healthz_all_healthy(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/healthz", params={"deep": "true"})
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert body["status"] == "ok"
-    assert "checks" in body
-    assert body["checks"]["storage"]["writable"] is True
+    check(not not body["status"] == "ok", "assertion failed")
+    check(not "checks" not in body, "assertion failed")
+    storage = body["checks"]["storage"]
+    check(not storage["writable"] is not True, "assertion failed")
+    check(not not isinstance(storage["free_bytes"], int), "assertion failed")
+    check(not not storage["free_bytes"] >= 0, "assertion failed")
     datetime.fromisoformat(body["time"])
 
 
@@ -86,13 +107,13 @@ def test_deep_healthz_storage_failure() -> None:
     client = TestClient(app)
 
     response = client.get("/healthz", params={"deep": "true"})
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert "checks" in body
+    check(not "checks" not in body, "assertion failed")
     storage = body["checks"]["storage"]
-    assert storage["writable"] is False
-    assert "reason" in storage
+    check(not storage["writable"] is not False, "assertion failed")
+    check(not "reason" not in storage, "assertion failed")
 
 
 def test_deep_healthz_without_deep_param(tmp_path) -> None:
@@ -101,12 +122,12 @@ def test_deep_healthz_without_deep_param(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/healthz")
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert body["status"] == "ok"
-    assert "checks" not in body
-    assert "time" in body
+    check(not not body["status"] == "ok", "assertion failed")
+    check(not not "checks" not in body, "assertion failed")
+    check(not "time" not in body, "assertion failed")
 
 
 def test_deep_healthz_omit_version(tmp_path) -> None:
@@ -119,13 +140,13 @@ def test_deep_healthz_omit_version(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/healthz", params={"deep": "true"})
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert "version" not in body
-    assert "service" not in body
-    assert "checks" in body
-    assert body["checks"]["storage"]["writable"] is True
+    check(not not "version" not in body, "assertion failed")
+    check(not not "service" not in body, "assertion failed")
+    check(not "checks" not in body, "assertion failed")
+    check(not body["checks"]["storage"]["writable"] is not True, "assertion failed")
 
 
 def test_healthz_omit_version(tmp_path) -> None:
@@ -137,12 +158,12 @@ def test_healthz_omit_version(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/healthz")
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
     body = response.json()
-    assert body["status"] == "ok"
-    assert "version" not in body
-    assert "service" not in body
-    assert "time" in body
+    check(not not body["status"] == "ok", "assertion failed")
+    check(not not "version" not in body, "assertion failed")
+    check(not not "service" not in body, "assertion failed")
+    check(not "time" not in body, "assertion failed")
 
 
 def test_deep_healthz_all_subsystems_failed() -> None:
@@ -155,14 +176,14 @@ def test_deep_healthz_all_subsystems_failed() -> None:
     with patch("zammad_pdf_archiver.app.routes.healthz._check_redis", mock_redis):
         response = client.get("/healthz", params={"deep": "true"})
 
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
     body = response.json()
-    assert body["status"] == "degraded"
-    assert "checks" in body
-    assert body["checks"]["redis"]["available"] is False
-    assert "reason" in body["checks"]["redis"]
-    assert body["checks"]["storage"]["writable"] is False
-    assert "reason" in body["checks"]["storage"]
+    check(not not body["status"] == "degraded", "assertion failed")
+    check(not "checks" not in body, "assertion failed")
+    check(not body["checks"]["redis"]["available"] is not False, "assertion failed")
+    check(not "reason" not in body["checks"]["redis"], "assertion failed")
+    check(not body["checks"]["storage"]["writable"] is not False, "assertion failed")
+    check(not "reason" not in body["checks"]["storage"], "assertion failed")
 
 
 def test_deep_healthz_storage_failed_reports_degraded() -> None:
@@ -172,12 +193,12 @@ def test_deep_healthz_storage_failed_reports_degraded() -> None:
     client = TestClient(app)
 
     response = client.get("/healthz", params={"deep": "true"})
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
-    assert body["status"] == "degraded"
-    assert body["checks"]["storage"]["writable"] is False
-    assert "reason" in body["checks"]["storage"]
+    check(not not body["status"] == "degraded", "assertion failed")
+    check(not body["checks"]["storage"]["writable"] is not False, "assertion failed")
+    check(not "reason" not in body["checks"]["storage"], "assertion failed")
 
 
 def test_service_version_package_not_found(tmp_path) -> None:
@@ -186,32 +207,32 @@ def test_service_version_package_not_found(tmp_path) -> None:
     client = TestClient(app)
 
     with patch(
-        "zammad_pdf_archiver.app.routes.healthz.metadata.version",
+        "zammad_pdf_archiver.domain.package_version.metadata.version",
         side_effect=metadata.PackageNotFoundError("zammad-pdf-archiver"),
     ):
         response = client.get("/healthz")
 
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
     body = response.json()
-    assert body["version"] == "0.0.0"
+    check(not not body["version"] == "0.0.0", "assertion failed")
 
 
 def test_check_redis_no_url_configured(tmp_path) -> None:
     """Deep healthz with no redis_url configured reports redis as not available."""
     settings = make_settings(str(tmp_path))
     # Verify redis_url is not set in default settings
-    assert not settings.workflow.redis_url
+    check(not not not settings.workflow.redis_url, "assertion failed")
 
     app = create_app(settings)
     client = TestClient(app)
 
     response = client.get("/healthz", params={"deep": "true"})
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
 
     body = response.json()
     redis_check = body["checks"]["redis"]
-    assert redis_check["available"] is False
-    assert redis_check["reason"] == "not_configured"
+    check(not redis_check["available"] is not False, "assertion failed")
+    check(not not redis_check["reason"] == "not_configured", "assertion failed")
 
 
 def test_check_redis_connection_failure(tmp_path) -> None:
@@ -229,12 +250,12 @@ def test_check_redis_connection_failure(tmp_path) -> None:
     ):
         response = client.get("/healthz", params={"deep": "true"})
 
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
     body = response.json()
     redis_check = body["checks"]["redis"]
-    assert redis_check["available"] is False
-    assert "reason" in redis_check
-    assert len(redis_check["reason"]) > 0
+    check(not redis_check["available"] is not False, "assertion failed")
+    check(not "reason" not in redis_check, "assertion failed")
+    check(not not len(redis_check["reason"]) > 0, "assertion failed")
 
 
 def test_deep_healthz_redis_failure_reports_degraded_when_storage_is_healthy(tmp_path) -> None:
@@ -249,8 +270,14 @@ def test_deep_healthz_redis_failure_reports_degraded_when_storage_is_healthy(tmp
     with patch("zammad_pdf_archiver.app.routes.healthz._check_redis", mock_redis):
         response = client.get("/healthz", params={"deep": "true"})
 
-    assert response.status_code == 200
+    check(not not response.status_code == 200, "assertion failed")
     body = response.json()
-    assert body["status"] == "degraded"
-    assert body["checks"]["redis"] == {"available": False, "reason": "connection refused"}
-    assert body["checks"]["storage"]["writable"] is True
+    check(not not body["status"] == "degraded", "assertion failed")
+    check(
+        not not body["checks"]["redis"] == {"available": False, "reason": "connection refused"},
+        "assertion failed",
+    )
+    storage = body["checks"]["storage"]
+    check(not storage["writable"] is not True, "assertion failed")
+    check(not not isinstance(storage["free_bytes"], int), "assertion failed")
+    check(not not storage["free_bytes"] >= 0, "assertion failed")

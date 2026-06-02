@@ -1,36 +1,40 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 import structlog
 
 from zammad_pdf_archiver._version import VERSION
-from zammad_pdf_archiver.adapters.zammad.client import AsyncZammadClient
-from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
-from zammad_pdf_archiver.app.jobs.async_retry import async_retry
-from zammad_pdf_archiver.app.jobs.history import record_history_event
-from zammad_pdf_archiver.app.jobs.retry_policy import classify
-from zammad_pdf_archiver.app.jobs.ticket_fetcher import fetch_ticket_data
-from zammad_pdf_archiver.app.jobs.ticket_notes import (
-    action_hint,
-    concise_exc_message,
-    error_code_and_hint,
-    error_note_html,
-    success_note_html,
+from zammad_pdf_archiver.adapters.storage.layout import (
+    build_filename_from_pattern,
+    build_target_dir,
 )
-from zammad_pdf_archiver.app.jobs.ticket_path import (
+from zammad_pdf_archiver.adapters.zammad.client import (
+    AsyncZammadClient,
+    ZammadClientTransportOptions,
+)
+from zammad_pdf_archiver.adapters.zammad.models import TagList, Ticket
+from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
+from zammad_pdf_archiver.app.jobs import _process_ticket_error, _process_ticket_success
+from zammad_pdf_archiver.app.jobs._process_ticket_models import (
+    SKIPPED_PROCESS_STATUSES,
+    ProcessTicketResult,
+    ProcessTicketStatus,
+    _ArchiveOutcome,
+    _TicketJobContext,
+)
+from zammad_pdf_archiver.app.jobs._ticket_path import (
     determine_username,
     parse_archive_path_segments,
 )
-from zammad_pdf_archiver.app.jobs.ticket_renderer import build_and_render_pdf
-from zammad_pdf_archiver.app.jobs.ticket_storage import (
-    compute_storage_paths,
-    store_ticket_files,
-)
+from zammad_pdf_archiver.app.jobs._ticket_renderer import build_and_render_pdf
+from zammad_pdf_archiver.app.jobs.history import record_history_event
+from zammad_pdf_archiver.app.jobs.ticket_storage import store_ticket_files
 from zammad_pdf_archiver.app.jobs.ticket_stores import (
     release_ticket,
     try_acquire_ticket,
@@ -47,9 +51,9 @@ from zammad_pdf_archiver.domain.state_machine import (
 )
 from zammad_pdf_archiver.domain.ticket_id import extract_ticket_id
 from zammad_pdf_archiver.domain.ticket_utils import ticket_custom_fields
-from zammad_pdf_archiver.domain.time_utils import format_timestamp_utc, now_utc
 from zammad_pdf_archiver.observability.metrics import (
     failed_total,
+    processed_partial_total,
     processed_total,
     skipped_total,
     total_seconds,
@@ -57,23 +61,7 @@ from zammad_pdf_archiver.observability.metrics import (
 
 log = structlog.get_logger(__name__)
 
-
-@dataclass(frozen=True)
-class _TicketJobContext:
-    """Common context threaded through the ticket processing pipeline."""
-
-    settings: Settings
-    ticket_id: int
-    delivery_id: str | None
-    request_id: str | None
-
-
-@dataclass(frozen=True)
-class ProcessTicketResult:
-    status: str
-    ticket_id: int | None
-    classification: str | None = None
-    message: str = ""
+__all__ = ["ProcessTicketResult", "ProcessTicketStatus", "VERSION", "process_ticket"]
 
 
 async def _record_history(
@@ -82,9 +70,9 @@ async def _record_history(
     status: str,
     classification: str | None = None,
     message: str = "",
-) -> None:
+) -> bool:
     try:
-        await record_history_event(
+        return await record_history_event(
             ctx.settings,
             status=status,
             ticket_id=ctx.ticket_id,
@@ -95,6 +83,7 @@ async def _record_history(
         )
     except Exception:
         log.warning("process_ticket.history_record_failed", status=status, ticket_id=ctx.ticket_id)
+        return False
 
 
 async def _apply_done_with_backoff(
@@ -102,14 +91,21 @@ async def _apply_done_with_backoff(
     *,
     ticket_id: int,
     trigger_tag: str,
-    max_retries: int = 3,
 ) -> None:
-    await async_retry(
-        lambda: apply_done(client, ticket_id, trigger_tag=trigger_tag),
-        max_retries=max_retries,
-        backoff_base=0.5,
-        backoff_factor=2.0,
-    )
+    last_exc: Exception | None = None
+    for delay in (0.5, 1.0, 2.0, None):
+        try:
+            await apply_done(client, ticket_id, trigger_tag=trigger_tag)
+            return
+        except PermanentError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if delay is not None:
+                await asyncio.sleep(delay)
+    if last_exc is None:
+        raise RuntimeError("apply_done retry loop exited without an exception")
+    raise last_exc
 
 
 async def _apply_error_with_retry(
@@ -119,16 +115,31 @@ async def _apply_error_with_retry(
     keep_trigger: bool,
     trigger_tag: str,
 ) -> None:
-    await async_retry(
-        lambda: apply_error(
+    # Intentional asymmetry with _apply_done_with_backoff: success finalization
+    # gets the longer retry window because archive bytes are already stored and
+    # Zammad's done tag is the operator-visible acknowledgement. Error tagging
+    # gets one short retry; if it still fails, the error note/result/logs carry
+    # the failure and a stale processing tag is safer than reporting success.
+    try:
+        await apply_error(
             client,
             ticket_id,
             keep_trigger=keep_trigger,
             trigger_tag=trigger_tag,
-        ),
-        max_retries=1,
-        backoff_base=0.3,
-    )
+        )
+    except Exception as first_exc:
+        log.warning(
+            "apply_error_first_attempt_failed",
+            ticket_id=ticket_id,
+            exc_info=first_exc,
+        )
+        await asyncio.sleep(0.3)
+        await apply_error(
+            client,
+            ticket_id,
+            keep_trigger=keep_trigger,
+            trigger_tag=trigger_tag,
+        )
 
 
 async def process_ticket(
@@ -149,8 +160,12 @@ async def process_ticket(
             delivery_id=delivery_id,
             request_id=request_id,
         )
-        await _record_history(stub_ctx, status="skipped_no_ticket_id")
-        return ProcessTicketResult(status="skipped_no_ticket_id", ticket_id=None)
+        history_recorded = await _record_history(stub_ctx, status="skipped_no_ticket_id")
+        return ProcessTicketResult(
+            status="skipped_no_ticket_id",
+            ticket_id=None,
+            history_recorded=history_recorded,
+        )
 
     request_id = (
         raw_request_id if isinstance(raw_request_id, str) and raw_request_id.strip() else None
@@ -186,7 +201,7 @@ async def _process_with_ticket_lock(
             ticket_id=ctx.ticket_id,
             delivery_id=ctx.delivery_id,
         )
-        await _record_history(
+        history_recorded = await _record_history(
             ctx,
             status="failed_transient",
             classification="Transient",
@@ -197,17 +212,26 @@ async def _process_with_ticket_lock(
             ticket_id=ctx.ticket_id,
             classification="Transient",
             message=str(exc),
+            history_recorded=history_recorded,
         )
     if not acquired:
         return await _skip_in_flight(ctx)
 
+    result: ProcessTicketResult | None = None
     try:
         claimed = await _claim_delivery_or_skip(ctx)
         if claimed is not None:
-            return claimed
-        return await _process_ticket_with_client(ctx, payload=payload)
+            result = claimed
+        else:
+            result = await _process_ticket_with_client(ctx, payload=payload)
     finally:
-        await _release_ticket_lock(ctx)
+        lock_release_failed = await _release_ticket_lock(ctx)
+
+    if result is None:  # pragma: no cover - defensive; exceptions exit through finally above.
+        raise RuntimeError("process_ticket completed without a result")
+    if lock_release_failed:
+        return replace(result, lock_release_failed=True)
+    return result
 
 
 async def _skip_in_flight(ctx: _TicketJobContext) -> ProcessTicketResult:
@@ -218,8 +242,12 @@ async def _skip_in_flight(ctx: _TicketJobContext) -> ProcessTicketResult:
         delivery_id=ctx.delivery_id,
     )
     skipped_total.labels(reason="in_flight").inc()
-    await _record_history(ctx, status="skipped_in_flight")
-    return ProcessTicketResult(status="skipped_in_flight", ticket_id=ctx.ticket_id)
+    history_recorded = await _record_history(ctx, status="skipped_in_flight")
+    return ProcessTicketResult(
+        status="skipped_in_flight",
+        ticket_id=ctx.ticket_id,
+        history_recorded=history_recorded,
+    )
 
 
 async def _claim_delivery_or_skip(ctx: _TicketJobContext) -> ProcessTicketResult | None:
@@ -235,8 +263,12 @@ async def _claim_delivery_or_skip(ctx: _TicketJobContext) -> ProcessTicketResult
         delivery_id=ctx.delivery_id,
     )
     skipped_total.labels(reason="idempotency").inc()
-    await _record_history(ctx, status="skipped_idempotency")
-    return ProcessTicketResult(status="skipped_idempotency", ticket_id=ctx.ticket_id)
+    history_recorded = await _record_history(ctx, status="skipped_idempotency")
+    return ProcessTicketResult(
+        status="skipped_idempotency",
+        ticket_id=ctx.ticket_id,
+        history_recorded=history_recorded,
+    )
 
 
 async def _process_ticket_with_client(
@@ -253,14 +285,16 @@ async def _process_ticket_with_client(
     async with AsyncZammadClient(
         base_url=str(settings.zammad.base_url),
         api_token=settings.zammad.api_token.get_secret_value(),
-        timeout_seconds=settings.zammad.timeout_seconds,
-        verify_tls=settings.zammad.verify_tls,
-        trust_env=settings.hardening.transport.trust_env,
+        transport=ZammadClientTransportOptions(
+            timeout_seconds=settings.zammad.timeout_seconds,
+            verify_tls=settings.zammad.verify_tls,
+            trust_env=settings.hardening.transport.trust_env,
+        ),
     ) as client:
-        observe_total = True
+        result: ProcessTicketResult | None = None
         total_start = perf_counter()
         try:
-            result, observe_total = await _run_ticket_pipeline(
+            result = await _run_ticket_pipeline(
                 client=client,
                 ctx=ctx,
                 payload=payload,
@@ -273,14 +307,15 @@ async def _process_ticket_with_client(
             # Cancellation during shutdown should not mutate ticket state.
             raise
         except Exception as exc:
-            return await _handle_ticket_pipeline_exception(
+            result = await _handle_ticket_pipeline_exception(
                 client=client,
                 ctx=ctx,
                 trigger_tag=trigger_tag,
                 exc=exc,
             )
+            return result
         finally:
-            if observe_total:
+            if result is None or result.status not in SKIPPED_PROCESS_STATUSES:
                 total_seconds.observe(perf_counter() - total_start)
 
 
@@ -292,27 +327,22 @@ async def _run_ticket_pipeline(
     trigger_tag: str,
     require_trigger_tag: bool,
     force_reprocess: bool,
-) -> tuple[ProcessTicketResult, bool]:
-    """Fetch ticket data, render PDF, store files, and acknowledge success.
-
-    Returns the result and whether total-time metrics should be observed.
-    """
+) -> ProcessTicketResult:
+    """Fetch ticket data, render PDF, store files, and acknowledge success."""
     settings = ctx.settings
-    ticket_data = await fetch_ticket_data(client, ctx.ticket_id)
+    ticket = await client.get_ticket(ctx.ticket_id)
+    tags = await client.list_tags(ctx.ticket_id)
     # IMPORTANT: should_process is a non-atomic tag check.  In multi-instance
     # deployments, a second worker may read the same tags before the first worker
     # writes PROCESSING_TAG.  Multi-instance deployments MUST use
     # idempotency_backend=redis and execution_backend=redis_queue to prevent
     # duplicate processing.  See state_machine.py for details.
     if not force_reprocess and not should_process(
-        ticket_data.tags.root,
+        tags.root,
         trigger_tag=trigger_tag,
         require_trigger_tag=require_trigger_tag,
     ):
-        return (
-            await _skip_not_triggered(ctx, tags=ticket_data.tags.root),
-            False,
-        )
+        return await _skip_not_triggered(ctx, tags=tags.root)
 
     await apply_processing(
         client,
@@ -321,64 +351,114 @@ async def _run_ticket_pipeline(
         force_reprocess=force_reprocess,
     )
 
-    custom_fields = ticket_custom_fields(ticket_data.ticket)
+    now = datetime.now(UTC)
+    target_path = _target_path_for_ticket(
+        ticket=ticket,
+        payload=payload,
+        settings=settings,
+        now=now,
+    )
+    outcome = await _render_and_store_archive(
+        client=client,
+        ctx=ctx,
+        ticket=ticket,
+        tags=tags,
+        target_path=target_path,
+        now=now,
+    )
+    return await _finalize_successful_archive(
+        client=client,
+        ctx=ctx,
+        trigger_tag=trigger_tag,
+        outcome=outcome,
+    )
+
+
+def _target_path_for_ticket(
+    *,
+    ticket: Ticket,
+    payload: dict[str, Any],
+    settings: Settings,
+    now: datetime,
+) -> Path:
+    custom_fields = ticket_custom_fields(ticket)
     username = determine_username(
-        ticket=ticket_data.ticket,
+        ticket=ticket,
         payload=payload,
         custom_fields=custom_fields,
         mode_field_name=settings.fields.archive_user_mode,
         archive_user_field_name=settings.fields.archive_user,
     )
-
     segments = parse_archive_path_segments(custom_fields.get(settings.fields.archive_path))
-    now = now_utc()
-    storage_paths = compute_storage_paths(
-        storage_root=settings.storage.root,
-        username=username,
-        archive_path_segments=segments,
+    target_dir = build_target_dir(
+        settings.storage.root,
+        username,
+        segments,
         allow_prefixes=settings.storage.path_policy.allow_prefixes,
-        filename_pattern=settings.storage.path_policy.filename_pattern,
-        ticket_number=ticket_data.ticket.number,
-        date_iso=now.date().isoformat(),
     )
+    filename = build_filename_from_pattern(
+        settings.storage.path_policy.filename_pattern,
+        ticket_number=ticket.number,
+        timestamp_utc=now.date().isoformat(),
+    )
+    return target_dir / filename
 
-    render_result = await build_and_render_pdf(
+
+async def _render_and_store_archive(
+    *,
+    client: AsyncZammadClient,
+    ctx: _TicketJobContext,
+    ticket: Ticket,
+    tags: TagList,
+    target_path: Path,
+    now: datetime,
+) -> _ArchiveOutcome:
+    settings = ctx.settings
+    pdf_bytes, snapshot, articles_capped, attachments_skipped = await build_and_render_pdf(
         client,
-        ticket_data.ticket,
-        ticket_data.tags,
+        ticket,
+        tags,
         ctx.ticket_id,
         settings,
     )
     storage_result = store_ticket_files(
-        pdf_bytes=render_result.pdf_bytes,
-        snapshot=render_result.snapshot,
-        paths=storage_paths,
-        ticket_id=ticket_data.ticket.id,
+        pdf_bytes=pdf_bytes,
+        snapshot=snapshot,
+        target_path=target_path,
+        ticket_id=ticket.id,
         now=now,
         settings=settings,
     )
-    await _acknowledge_success_if_enabled(
+    outcome = _ArchiveOutcome(
+        storage_result=storage_result,
+        articles_capped=articles_capped,
+        attachments_skipped=attachments_skipped,
+        now=now,
+    )
+    return outcome
+
+
+async def _finalize_successful_archive(
+    *,
+    client: AsyncZammadClient,
+    ctx: _TicketJobContext,
+    trigger_tag: str,
+    outcome: _ArchiveOutcome,
+) -> ProcessTicketResult:
+    return await _process_ticket_success.finalize_successful_archive(
         client=client,
         ctx=ctx,
-        now=now,
-        storage_dir=str(storage_result.target_path.parent),
-        filename=storage_result.target_path.name,
-        sidecar_path=str(storage_result.sidecar_path),
-        size_bytes=storage_result.size_bytes,
-        sha256_hex=storage_result.sha256_hex,
+        trigger_tag=trigger_tag,
+        outcome=outcome,
+        deps=_process_ticket_success.SuccessDependencies(
+            apply_done_with_backoff=_apply_done_with_backoff,
+            record_history=_record_history,
+            log=log,
+            failed_total=failed_total,
+            processed_partial_total=processed_partial_total,
+            processed_total=processed_total,
+        ),
     )
-    await _apply_done_best_effort(client, ticket_id=ctx.ticket_id, trigger_tag=trigger_tag)
-
-    processed_total.inc()
-    await _record_history(ctx, status="processed")
-    log.info(
-        "process_ticket.done",
-        ticket_id=ctx.ticket_id,
-        storage_path=str(storage_result.target_path),
-        request_id=ctx.request_id,
-        delivery_id=ctx.delivery_id,
-    )
-    return ProcessTicketResult(status="processed", ticket_id=ctx.ticket_id), True
 
 
 async def _skip_not_triggered(
@@ -393,49 +473,12 @@ async def _skip_not_triggered(
         tags=tags,
     )
     skipped_total.labels(reason="not_triggered").inc()
-    await _record_history(ctx, status="skipped_not_triggered")
+    history_recorded = await _record_history(ctx, status="skipped_not_triggered")
     return ProcessTicketResult(
         status="skipped_not_triggered",
         ticket_id=ctx.ticket_id,
+        history_recorded=history_recorded,
     )
-
-
-async def _acknowledge_success_if_enabled(
-    *,
-    client: AsyncZammadClient,
-    ctx: _TicketJobContext,
-    now: datetime,
-    storage_dir: str,
-    filename: str,
-    sidecar_path: str,
-    size_bytes: int,
-    sha256_hex: str,
-) -> None:
-    if not ctx.settings.workflow.acknowledge_on_success:
-        return
-    await client.create_internal_article(
-        ctx.ticket_id,
-        f"PDF archived ({VERSION})",
-        success_note_html(
-            storage_dir=storage_dir,
-            filename=filename,
-            sidecar_path=sidecar_path,
-            size_bytes=size_bytes,
-            sha256_hex=sha256_hex,
-            request_id=ctx.request_id,
-            delivery_id=ctx.delivery_id,
-            timestamp_utc=format_timestamp_utc(now),
-        ),
-    )
-
-
-async def _apply_done_best_effort(
-    client: AsyncZammadClient, *, ticket_id: int, trigger_tag: str
-) -> None:
-    try:
-        await _apply_done_with_backoff(client, ticket_id=ticket_id, trigger_tag=trigger_tag)
-    except Exception:
-        log.exception("process_ticket.apply_done_failed", ticket_id=ticket_id)
 
 
 async def _handle_ticket_pipeline_exception(
@@ -445,135 +488,23 @@ async def _handle_ticket_pipeline_exception(
     trigger_tag: str,
     exc: Exception,
 ) -> ProcessTicketResult:
-    """Classify the exception, post an error note to the ticket, and update tags."""
-    failed_total.inc()
-    classified = classify(exc)
-    classification_label = "Transient" if isinstance(classified, TransientError) else "Permanent"
-    msg = concise_exc_message(exc)
-    action = action_hint(exc, classified=classified) if classified is not None else ""
-    code, hint = _error_code_hint(exc, classified=classified)
-
-    log.exception(
-        "process_ticket.error",
-        ticket_id=ctx.ticket_id,
-        request_id=ctx.request_id,
-        delivery_id=ctx.delivery_id,
-        classification=classification_label,
-        code=code or None,
-        hint=hint or None,
-    )
-
-    await _post_error_note(
+    return await _process_ticket_error.handle_ticket_pipeline_exception(
         client=client,
         ctx=ctx,
-        classification_label=classification_label,
-        msg=msg,
-        action=action,
-        code=code,
-        hint=hint,
-    )
-    await _apply_error_and_cleanup_processing_tag(
-        client=client,
-        ctx=ctx,
-        classification_label=classification_label,
-        classified=classified,
         trigger_tag=trigger_tag,
-    )
-
-    status = (
-        "failed_transient"
-        if classified is not None and isinstance(classified, TransientError)
-        else "failed_permanent"
-    )
-    await _record_history(
-        ctx,
-        status=status,
-        classification=classification_label,
-        message=msg,
-    )
-    return ProcessTicketResult(
-        status=status,
-        ticket_id=ctx.ticket_id,
-        classification=classification_label,
-        message=msg,
+        exc=exc,
+        deps=_process_ticket_error.ErrorDependencies(
+            apply_error_with_retry=_apply_error_with_retry,
+            record_history=_record_history,
+            log=log,
+            failed_total=failed_total,
+        ),
     )
 
 
-def _error_code_hint(
-    exc: BaseException, *, classified: TransientError | PermanentError | None
-) -> tuple[str, str]:
-    """Extract a structured error code and hint, but only for permanent errors."""
-    if classified is not None and isinstance(classified, PermanentError):
-        return error_code_and_hint(exc)
-    return "", ""
-
-
-async def _post_error_note(
-    *,
-    client: AsyncZammadClient,
-    ctx: _TicketJobContext,
-    classification_label: str,
-    msg: str,
-    action: str,
-    code: str,
-    hint: str,
-) -> None:
-    now = now_utc()
+async def _release_ticket_lock(ctx: _TicketJobContext) -> bool:
     try:
-        await client.create_internal_article(
-            ctx.ticket_id,
-            f"PDF archiver error ({VERSION})",
-            error_note_html(
-                classification=classification_label,
-                message=msg,
-                action=action,
-                request_id=ctx.request_id,
-                delivery_id=ctx.delivery_id,
-                timestamp_utc=format_timestamp_utc(now),
-                code=code,
-                hint=hint,
-            ),
-        )
-    except Exception:
-        log.exception(
-            "process_ticket.error_note_failed",
-            ticket_id=ctx.ticket_id,
-            request_id=ctx.request_id,
-            delivery_id=ctx.delivery_id,
-            classification=classification_label,
-        )
-
-
-async def _apply_error_and_cleanup_processing_tag(
-    *,
-    client: AsyncZammadClient,
-    ctx: _TicketJobContext,
-    classification_label: str,
-    classified: TransientError | PermanentError | None,
-    trigger_tag: str,
-) -> None:
-    try:
-        keep_trigger = classified is not None and isinstance(classified, TransientError)
-        await _apply_error_with_retry(
-            client,
-            ticket_id=ctx.ticket_id,
-            keep_trigger=keep_trigger,
-            trigger_tag=trigger_tag,
-        )
-    except Exception:
-        log.exception(
-            "process_ticket.apply_error_failed",
-            ticket_id=ctx.ticket_id,
-            request_id=ctx.request_id,
-            delivery_id=ctx.delivery_id,
-            classification=classification_label,
-        )
-        return
-
-
-async def _release_ticket_lock(ctx: _TicketJobContext) -> None:
-    try:
-        await asyncio.shield(release_ticket(ctx.settings, ctx.ticket_id))
+        return not await asyncio.shield(release_ticket(ctx.settings, ctx.ticket_id))
     except Exception:
         log.exception(
             "process_ticket.release_ticket_failed",
@@ -581,3 +512,4 @@ async def _release_ticket_lock(ctx: _TicketJobContext) -> None:
             request_id=ctx.request_id,
             delivery_id=ctx.delivery_id,
         )
+        return True

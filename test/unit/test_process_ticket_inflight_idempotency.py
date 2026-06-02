@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.adapters.zammad.models import TagList
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
@@ -14,12 +16,15 @@ from zammad_pdf_archiver.domain.errors import TransientError
 def _settings(storage_root: Path) -> Settings:
     return Settings.from_mapping(
         {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "zammad": {
+                "base_url": "https://zammad.example.local",
+                "api_token": fake_credential("test-token"),
+            },
             "storage": {"root": str(storage_root)},
             "hardening": {
                 "webhook": {
                     "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": True,
+                    "allow_unsigned_when_no_secret": bool(1),
                 }
             },
         }
@@ -74,7 +79,10 @@ def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
             return []
 
         async def create_internal_article(
-            self, ticket_id: int, subject: str, body_html: str  # noqa: ARG002
+            self,
+            ticket_id: int,
+            subject: str,
+            body_html: str,  # noqa: ARG002
         ) -> SimpleNamespace:
             if "archiver error" in subject:
                 type(self)._error_notes += 1
@@ -90,15 +98,16 @@ def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
     calls = {"n": 0}
 
     async def _flaky_build_and_render_pdf(
-        client, ticket, tags, ticket_id: int, settings  # noqa: ANN001, ARG001
-    ) -> SimpleNamespace:
+        client,
+        ticket,
+        tags,
+        ticket_id: int,
+        settings,  # noqa: ANN001, ARG001
+    ) -> tuple[bytes, SimpleNamespace, bool, int]:
         calls["n"] += 1
         if calls["n"] == 1:
             raise TransientError("transient-render-failure")
-        return SimpleNamespace(
-            pdf_bytes=b"%PDF-1.7\n%%EOF\n",
-            snapshot=SimpleNamespace(ticket=ticket),
-        )
+        return b"%PDF-1.7\n%%EOF\n", SimpleNamespace(ticket=ticket), False, 0
 
     def _fake_store_ticket_files(*args, **kwargs) -> SimpleNamespace:  # noqa: ANN002, ANN003
         target_path = tmp_path / "archived.pdf"
@@ -133,5 +142,5 @@ def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
     asyncio.run(process_ticket("d-2", payload, settings))
 
     # Expected: first run writes one error note; retry run succeeds and writes one success note.
-    assert _FakeClient._error_notes == 1
-    assert _FakeClient._success_notes == 1
+    check(not not _FakeClient._error_notes == 1, "assertion failed")
+    check(not not _FakeClient._success_notes == 1, "assertion failed")

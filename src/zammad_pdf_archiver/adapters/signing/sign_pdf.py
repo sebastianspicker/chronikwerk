@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
-import threading
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,9 +11,6 @@ import httpx
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 from zammad_pdf_archiver.observability.metrics import tsa_failure_total
-
-# Interval (seconds) between certificate expiry re-checks for cached signers.
-_CERT_CHECK_INTERVAL_SECONDS = 3600
 
 
 @dataclass(frozen=True)
@@ -66,80 +60,15 @@ def _validate_cert_not_expired(pfx_bytes: bytes, password: bytes | None) -> None
         raise PermanentError(f"Signing certificate expired on {not_after.isoformat()}")
 
 
-@dataclass
-class _CachedSigner:
-    signer: Any  # signers.SimpleSigner
-    pfx_path: str
-    pfx_mtime: float
-    pfx_bytes: bytes
-    password: bytes | None
-    last_cert_check: float
-
-
-_signer_cache_lock = threading.Lock()
-_signer_cache: dict[str, _CachedSigner] = {}
-
-
-def _get_cached_signer(pfx: _PfxMaterial) -> Any:
-    """Return a cached SimpleSigner, re-creating it when the PFX file changes on disk.
-
-    Certificate expiry is re-validated at most once per hour.
-    """
+def _build_signer(pfx: _PfxMaterial) -> Any:
+    """Validate current PFX material and build a SimpleSigner."""
     from pyhanko.sign import signers
 
-    pfx_path_str = str(pfx.path)
-    current_mtime = os.path.getmtime(pfx_path_str)
-    now = time.monotonic()
-
-    # Check cache and, on miss, build the signer inside the lock to avoid races.
-    needs_cert_check = False
-    with _signer_cache_lock:
-        cached = _signer_cache.get(pfx_path_str)
-        if cached is not None and cached.pfx_mtime == current_mtime:
-            if now - cached.last_cert_check >= _CERT_CHECK_INTERVAL_SECONDS:
-                # Mark for cert check outside the lock to avoid holding it
-                # during the expensive validation.
-                needs_cert_check = True
-                pfx_bytes_for_check = cached.pfx_bytes
-                password_for_check = cached.password
-            else:
-                return cached.signer
-
-    # Re-validate certificate expiry outside the lock.
-    if needs_cert_check:
-        _validate_cert_not_expired(pfx_bytes_for_check, password_for_check)
-        with _signer_cache_lock:
-            cached = _signer_cache.get(pfx_path_str)
-            if cached is not None and cached.pfx_mtime == current_mtime:
-                cached.last_cert_check = time.monotonic()
-                return cached.signer
-        # Cache entry was evicted or mtime changed during the check; fall through
-        # to full rebuild below.
-
-    # Build new signer outside the lock to avoid holding it during I/O.
     _validate_cert_not_expired(pfx.pfx_bytes, pfx.password)
     try:
-        signer = signers.SimpleSigner.load_pkcs12(pfx.path, passphrase=pfx.password)
+        return signers.SimpleSigner.load_pkcs12(pfx.path, passphrase=pfx.password)
     except Exception as exc:  # noqa: BLE001 - surface as PermanentError with context
         raise PermanentError("Failed to initialise signer from PKCS#12/PFX bundle") from exc
-
-    entry = _CachedSigner(
-        signer=signer,
-        pfx_path=pfx_path_str,
-        pfx_mtime=current_mtime,
-        pfx_bytes=pfx.pfx_bytes,
-        password=pfx.password,
-        last_cert_check=time.monotonic(),
-    )
-
-    # Re-check cache after building; another thread may have raced us.
-    with _signer_cache_lock:
-        existing = _signer_cache.get(pfx_path_str)
-        if existing is not None and existing.pfx_mtime == current_mtime:
-            return existing.signer
-        _signer_cache[pfx_path_str] = entry
-
-    return signer
 
 
 def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = False) -> bytes:
@@ -161,7 +90,7 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
     reason = signing.pades.reason
     location = signing.pades.location
 
-    signer = _get_cached_signer(pfx)
+    signer = _build_signer(pfx)
 
     field_name = "Signature1"
     meta = PdfSignatureMetadata(field_name=field_name, reason=reason, location=location)
@@ -187,22 +116,29 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
         writer = IncrementalPdfFileWriter(io.BytesIO(bytes(pdf_bytes)))
         pdf_signer.sign_pdf(writer, output=out)
     except (TransientError, PermanentError):
-        if signing.timestamp.enabled:
-            tsa_failure_total.inc()
+        _record_tsa_failure_if_enabled(signing)
         raise
     except Exception as exc:
-        # P2-3: Classify by exception type instead of string matching.
-        # Network/timeout errors (likely from TSA) are transient; everything else permanent.
-        if isinstance(
-            exc,
-            (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
-        ):
-            if signing.timestamp.enabled:
-                tsa_failure_total.inc()
-            raise TransientError("Failed to sign PDF due to temporary (TSA) network issue") from exc
-
-        # Mapping remaining pyHanko errors to PermanentError for callers.
-        if signing.timestamp.enabled:
-            tsa_failure_total.inc()
-        raise PermanentError("Failed to sign PDF") from exc
+        _record_tsa_failure_if_enabled(signing)
+        raise _signing_error_for_exception(exc) from exc
     return out.getvalue()
+
+
+def _record_tsa_failure_if_enabled(signing: SigningSettings) -> None:
+    if signing.timestamp.enabled:
+        tsa_failure_total.inc()
+
+
+def _signing_error_for_exception(exc: Exception) -> Exception:
+    # P2-3: Classify by exception type instead of string matching.
+    # Network/timeout errors (likely from TSA) are transient; everything else permanent.
+    if _is_temporary_signing_error(exc):
+        return TransientError("Failed to sign PDF due to temporary (TSA) network issue")
+    return PermanentError("Failed to sign PDF")
+
+
+def _is_temporary_signing_error(exc: Exception) -> bool:
+    return isinstance(
+        exc,
+        (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
+    )

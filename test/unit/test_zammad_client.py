@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import httpx
 import pytest
 import respx
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.adapters.zammad.client import (
     AsyncZammadClient,
     _parse_retry_after_seconds,
-    _RetryPolicy,
 )
 from zammad_pdf_archiver.adapters.zammad.errors import (
     AuthError,
@@ -28,14 +30,15 @@ def test_get_ticket_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             ticket = await client.get_ticket(123)
-            assert ticket.id == 123
-            assert ticket.number == "20240123"
-            assert ticket.owner is not None
-            assert ticket.owner.login == "agent"
+            check(not not ticket.id == 123, "assertion failed")
+            check(not not ticket.number == "20240123", "assertion failed")
+            if ticket.owner is None:
+                raise AssertionError("assertion failed")
+            check(not not ticket.owner.login == "agent", "assertion failed")
 
     with respx.mock:
         respx.get("https://zammad.example/api/v1/tickets/123").mock(
@@ -62,11 +65,11 @@ def test_list_tags_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             tags = await client.list_tags(123)
-            assert tags.root == ["pdf:sign", "archived"]
+            check(not not tags.root == ["pdf:sign", "archived"], "assertion failed")
 
     with respx.mock:
         respx.get(
@@ -80,7 +83,7 @@ def test_add_tag_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             await client.add_tag(123, "archived")
@@ -90,14 +93,14 @@ def test_add_tag_success() -> None:
             return_value=httpx.Response(200, json={"success": True})
         )
         asyncio.run(run())
-        assert route.called
+        check(not not route.called, "assertion failed")
 
 
 def test_remove_tag_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             await client.remove_tag(123, "archived")
@@ -107,21 +110,58 @@ def test_remove_tag_success() -> None:
             return_value=httpx.Response(200, json={"success": True})
         )
         asyncio.run(run())
-        assert route.called
+        check(not not route.called, "assertion failed")
+
+
+@pytest.mark.parametrize(
+    ("method_name", "endpoint"),
+    [
+        ("add_tag", "api/v1/tags/add"),
+        ("remove_tag", "api/v1/tags/remove"),
+    ],
+)
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"success": False},
+        {"success": "false"},
+        {},
+        ["success"],
+    ],
+)
+def test_tag_mutation_requires_confirmed_success(
+    method_name: str, endpoint: str, body: Any
+) -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token=fake_credential("test-token"),
+            sleep=_no_sleep,
+        ) as client:
+            method = getattr(client, method_name)
+            with pytest.raises(ClientError, match="did not confirm success"):
+                await method(123, "archived")
+
+    with respx.mock:
+        route = respx.post(f"https://zammad.example/{endpoint}").mock(
+            return_value=httpx.Response(200, json=body)
+        )
+        asyncio.run(run())
+        check(not not route.called, "assertion failed")
 
 
 def test_create_internal_article_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             article = await client.create_internal_article(123, "Subject", "<p>Body</p>")
-            assert article.id == 999
-            assert article.internal is True
-            assert article.subject == "Subject"
-            assert article.body == "<p>Body</p>"
+            check(not not article.id == 999, "assertion failed")
+            check(not article.internal is not True, "assertion failed")
+            check(not not article.subject == "Subject", "assertion failed")
+            check(not not article.body == "<p>Body</p>", "assertion failed")
 
     with respx.mock:
         route = respx.post("https://zammad.example/api/v1/ticket_articles").mock(
@@ -138,19 +178,20 @@ def test_create_internal_article_success() -> None:
             )
         )
         asyncio.run(run())
-        assert route.called
+        check(not not route.called, "assertion failed")
 
 
 def test_get_attachment_content_success() -> None:
-    """get_attachment_content returns raw bytes from ticket_attachment endpoint (PRD §8.2)."""
+    """get_attachment_content returns raw bytes from ticket_attachment endpoint."""
+
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             data = await client.get_attachment_content(1, 2, 3)
-            assert data == b"binary content"
+            check(not not data == b"binary content", "assertion failed")
 
     with respx.mock:
         respx.get(
@@ -164,12 +205,12 @@ def test_list_articles_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             articles = await client.list_articles(123)
-            assert [a.id for a in articles] == [1, 2]
-            assert articles[0].from_ == "agent@example.com"
+            check(not not [a.id for a in articles] == [1, 2], "assertion failed")
+            check(not not articles[0].from_ == "agent@example.com", "assertion failed")
 
     with respx.mock:
         respx.get("https://zammad.example/api/v1/ticket_articles/by_ticket/123").mock(
@@ -205,7 +246,7 @@ def test_401_raises_auth_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="bad-token",
+            api_token=fake_credential("bad-token"),
             sleep=_no_sleep,
         ) as client:
             with pytest.raises(AuthError):
@@ -222,7 +263,7 @@ def test_404_raises_not_found_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             with pytest.raises(NotFoundError):
@@ -239,7 +280,7 @@ def test_5xx_raises_server_error_after_retries() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             with pytest.raises(ServerError):
@@ -255,7 +296,7 @@ def test_5xx_raises_server_error_after_retries() -> None:
             ]
         )
         asyncio.run(run())
-        assert route.call_count == 4
+        check(not not route.call_count == 4, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +306,7 @@ def test_5xx_raises_server_error_after_retries() -> None:
 
 def test_base_url_missing_scheme_raises_value_error() -> None:
     with pytest.raises(ValueError, match="scheme"):
-        AsyncZammadClient(base_url="zammad.example", api_token="tok")
+        AsyncZammadClient(base_url="zammad.example", api_token=fake_credential("tok"))
 
 
 def test_aclose_without_owning_http_client_is_noop() -> None:
@@ -275,7 +316,7 @@ def test_aclose_without_owning_http_client_is_noop() -> None:
         external = httpx.AsyncClient()
         client = AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="tok",
+            api_token=fake_credential("tok"),
             http_client=external,
         )
         # Should not raise or call aclose on the external client
@@ -291,11 +332,11 @@ def test_list_tags_dict_response_with_tags_key() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             tags = await client.list_tags(123)
-            assert tags.root == ["foo", "bar"]
+            check(not not tags.root == ["foo", "bar"], "assertion failed")
 
     with respx.mock:
         respx.get(
@@ -311,7 +352,7 @@ def test_list_tags_invalid_format_raises_client_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             with pytest.raises(ClientError, match="unexpected"):
@@ -329,9 +370,8 @@ def test_timeout_raises_server_error_after_retries() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
-            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
         ) as client:
             with pytest.raises(ServerError, match="timeout"):
                 await client.get_ticket(123)
@@ -339,6 +379,8 @@ def test_timeout_raises_server_error_after_retries() -> None:
     with respx.mock:
         respx.get("https://zammad.example/api/v1/tickets/123").mock(
             side_effect=[
+                httpx.ReadTimeout("timeout"),
+                httpx.ReadTimeout("timeout"),
                 httpx.ReadTimeout("timeout"),
                 httpx.ReadTimeout("timeout"),
             ]
@@ -350,9 +392,8 @@ def test_transport_error_raises_server_error_after_retries() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
-            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
         ) as client:
             with pytest.raises(ServerError, match="Network error"):
                 await client.get_ticket(123)
@@ -360,6 +401,8 @@ def test_transport_error_raises_server_error_after_retries() -> None:
     with respx.mock:
         respx.get("https://zammad.example/api/v1/tickets/123").mock(
             side_effect=[
+                httpx.NetworkError("connection reset"),
+                httpx.NetworkError("connection reset"),
                 httpx.NetworkError("connection reset"),
                 httpx.NetworkError("connection reset"),
             ]
@@ -371,9 +414,8 @@ def test_rate_limit_exhausted_raises_rate_limit_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
-            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
         ) as client:
             with pytest.raises(RateLimitError):
                 await client.get_ticket(123)
@@ -382,6 +424,8 @@ def test_rate_limit_exhausted_raises_rate_limit_error() -> None:
         respx.get("https://zammad.example/api/v1/tickets/123").mock(
             side_effect=[
                 httpx.Response(429, headers={"Retry-After": "0"}),
+                httpx.Response(429),
+                httpx.Response(429),
                 httpx.Response(429),
             ]
         )
@@ -392,7 +436,7 @@ def test_400_raises_client_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
+            api_token=fake_credential("test-token"),
             sleep=_no_sleep,
         ) as client:
             with pytest.raises(ClientError):
@@ -409,7 +453,7 @@ def test_raise_for_status_429_direct() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="tok",
+            api_token=fake_credential("tok"),
             sleep=_no_sleep,
         ) as client:
             req = httpx.Request("GET", "https://zammad.example/api/v1/test")
@@ -424,7 +468,7 @@ def test_raise_for_status_500_direct() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="tok",
+            api_token=fake_credential("tok"),
             sleep=_no_sleep,
         ) as client:
             req = httpx.Request("GET", "https://zammad.example/api/v1/test")
@@ -436,12 +480,12 @@ def test_raise_for_status_500_direct() -> None:
 
 
 def test_parse_retry_after_none_returns_none() -> None:
-    assert _parse_retry_after_seconds(None) is None
+    check(not _parse_retry_after_seconds(None) is not None, "assertion failed")
 
 
 def test_parse_retry_after_invalid_string_returns_none() -> None:
-    assert _parse_retry_after_seconds("not-a-number") is None
+    check(not _parse_retry_after_seconds("not-a-number") is not None, "assertion failed")
 
 
 def test_parse_retry_after_negative_returns_none() -> None:
-    assert _parse_retry_after_seconds("-5") is None
+    check(not _parse_retry_after_seconds("-5") is not None, "assertion failed")

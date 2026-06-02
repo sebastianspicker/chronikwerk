@@ -1,23 +1,17 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from datetime import UTC, datetime
-from importlib import metadata
 
 import structlog
 from fastapi import APIRouter, Request
 
 from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.domain.package_version import get_package_version
 
 router = APIRouter()
 log = structlog.get_logger(__name__)
-
-
-def _service_version() -> str:
-    try:
-        return metadata.version("zammad-pdf-archiver")
-    except metadata.PackageNotFoundError:
-        return "0.0.0"
 
 
 async def _check_redis(settings: Settings) -> dict[str, object]:
@@ -38,7 +32,8 @@ def _check_storage(settings: Settings) -> dict[str, object]:
     root = settings.storage.root
     try:
         with tempfile.NamedTemporaryFile(dir=root, delete=True):
-            return {"writable": True}
+            stat = os.statvfs(root)
+            return {"writable": True, "free_bytes": int(stat.f_bavail * stat.f_frsize)}
     except OSError as exc:
         return {"writable": False, "reason": str(exc)[:200]}
 
@@ -58,27 +53,52 @@ def _deep_check_healthy(name: str, result: object) -> bool | None:
 @router.get("/healthz")
 async def healthz(request: Request, deep: bool = False) -> dict[str, object]:
     """Return service health; include Redis and storage checks when deep=True."""
-    out: dict[str, object] = {
+    out = _base_health_response()
+    settings = getattr(request.app.state, "settings", None)
+    _add_version_info(out, settings)
+
+    if deep and settings is None:
+        return _settings_not_loaded_response(out)
+
+    if deep and settings is not None:
+        out.update(await _deep_health_fields(settings))
+
+    return out
+
+
+def _base_health_response() -> dict[str, object]:
+    return {
         "status": "ok",
         "time": datetime.now(UTC).isoformat(),
     }
-    settings = getattr(request.app.state, "settings", None)
+
+
+def _add_version_info(out: dict[str, object], settings: Settings | None) -> None:
     if settings is not None and not settings.observability.healthz_omit_version:
         out["service"] = "zammad-pdf-archiver"
-        out["version"] = _service_version()
+        out["version"] = get_package_version("zammad-pdf-archiver", fallback="0.0.0")
 
-    if deep and settings is not None:
-        checks: dict[str, object] = {}
-        checks["redis"] = await _check_redis(settings)
-        checks["storage"] = _check_storage(settings)
-        out["checks"] = checks
-        healthy_checks = [
-            result
-            for name, value in checks.items()
-            if (result := _deep_check_healthy(name, value)) is not None
-        ]
-        all_ok = bool(healthy_checks) and all(healthy_checks)
-        if not all_ok:
-            out["status"] = "degraded"
 
+def _settings_not_loaded_response(out: dict[str, object]) -> dict[str, object]:
+    out["status"] = "degraded"
+    out["reason"] = "settings_not_loaded"
+    out["checks"] = {}
     return out
+
+
+async def _deep_health_fields(settings: Settings) -> dict[str, object]:
+    checks: dict[str, object] = {
+        "redis": await _check_redis(settings),
+        "storage": _check_storage(settings),
+    }
+    status = "ok" if _deep_checks_ok(checks) else "degraded"
+    return {"status": status, "checks": checks}
+
+
+def _deep_checks_ok(checks: dict[str, object]) -> bool:
+    healthy_checks = [
+        result
+        for name, value in checks.items()
+        if (result := _deep_check_healthy(name, value)) is not None
+    ]
+    return bool(healthy_checks) and all(healthy_checks)

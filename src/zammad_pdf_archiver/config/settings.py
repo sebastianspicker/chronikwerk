@@ -16,11 +16,7 @@ class _BaseSection(BaseModel):
 
 
 class ServerSettings(_BaseSection):
-    # 0.0.0.0 is the standard bind address for containerized services so the
-    # process is reachable from outside the container.  A reverse proxy (e.g.
-    # nginx, Traefik, cloud load balancer) should handle external access,
-    # TLS termination, and IP filtering.
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)
     webhook_shared_secret: SecretStr | None = None
 
@@ -62,23 +58,49 @@ class WorkflowSettings(_BaseSection):
 
     @model_validator(mode="after")
     def _redis_required_when_backend_redis(self) -> WorkflowSettings:
-        backend = (self.idempotency_backend or "").strip().lower()
-        if backend not in {"memory", "redis"}:
-            raise ValueError("workflow.idempotency_backend must be 'memory' or 'redis'")
-
-        execution_backend = (self.execution_backend or "").strip().lower()
-        if execution_backend not in {"inprocess", "redis_queue"}:
-            raise ValueError("workflow.execution_backend must be 'inprocess' or 'redis_queue'")
-
-        if backend == "redis" and not (self.redis_url and self.redis_url.strip()):
-            raise ValueError(
-                "workflow.idempotency_backend is 'redis' but workflow.redis_url is not set"
-            )
-        if execution_backend == "redis_queue" and not (self.redis_url and self.redis_url.strip()):
-            raise ValueError(
+        backend = _normalized_backend(
+            self.idempotency_backend,
+            allowed={"memory", "redis"},
+            message="workflow.idempotency_backend must be 'memory' or 'redis'",
+        )
+        execution_backend = _normalized_backend(
+            self.execution_backend,
+            allowed={"inprocess", "redis_queue"},
+            message="workflow.execution_backend must be 'inprocess' or 'redis_queue'",
+        )
+        _require_redis_url_for_backend(
+            backend,
+            redis_url=self.redis_url,
+            redis_backend="redis",
+            message="workflow.idempotency_backend is 'redis' but workflow.redis_url is not set",
+        )
+        _require_redis_url_for_backend(
+            execution_backend,
+            redis_url=self.redis_url,
+            redis_backend="redis_queue",
+            message=(
                 "workflow.execution_backend is 'redis_queue' but workflow.redis_url is not set"
-            )
+            ),
+        )
         return self
+
+
+def _normalized_backend(value: str, *, allowed: set[str], message: str) -> str:
+    backend = (value or "").strip().lower()
+    if backend not in allowed:
+        raise ValueError(message)
+    return backend
+
+
+def _require_redis_url_for_backend(
+    backend: str,
+    *,
+    redis_url: str | None,
+    redis_backend: str,
+    message: str,
+) -> None:
+    if backend == redis_backend and not (redis_url and redis_url.strip()):
+        raise ValueError(message)
 
 
 class FieldsSettings(_BaseSection):
@@ -88,23 +110,24 @@ class FieldsSettings(_BaseSection):
     archive_user: str = "archive_user"
 
 
-class StoragePathPolicySanitizeSettings(_BaseSection):
-    replace_whitespace: str = "_"
-    strip_control_chars: bool = True
-
-
 class StoragePathPolicySettings(_BaseSection):
     # None = no allowlist (all paths allowed); [] = explicit deny-all policy.
     allow_prefixes: list[str] | None = None
-    sanitize: StoragePathPolicySanitizeSettings = Field(
-        default_factory=StoragePathPolicySanitizeSettings
-    )
     filename_pattern: str = "Ticket-{ticket_number}_{timestamp_utc}.pdf"
+
+    @field_validator("filename_pattern")
+    @classmethod
+    def _reject_date_utc_alias(cls, value: str) -> str:
+        if "{date_utc}" in value:
+            raise ValueError(
+                "storage.path_policy.filename_pattern no longer supports "
+                "{date_utc}; use {timestamp_utc}"
+            )
+        return value
 
 
 class StorageSettings(_BaseSection):
     root: Path
-    atomic_write: bool = True
     fsync: bool = True
     path_policy: StoragePathPolicySettings = Field(default_factory=StoragePathPolicySettings)
 
@@ -115,13 +138,14 @@ class StorageSettings(_BaseSection):
 
 
 class PdfSettings(_BaseSection):
-    template_variant: str = "default"  # default|minimal|compact
+    # Built-ins: default|minimal|compact; custom names require pdf.templates_root.
+    template_variant: str = "default"
     templates_root: Path | None = None
     locale: str = "de_DE"
     timezone: str = "Europe/Berlin"
     max_articles: int = Field(default=250, ge=0)
     # fail = reject over-limit tickets; cap_and_continue = truncate article list and warn.
-    article_limit_mode: str = "fail"
+    article_limit_mode: Literal["fail", "cap_and_continue"] = "fail"
     # Optional binary attachment export. Default PDF snapshots keep attachment metadata only.
     include_attachment_binary: bool = False
     max_attachment_bytes_per_file: int = Field(default=10 * 1024 * 1024, ge=0)  # 10 MiB
@@ -130,8 +154,6 @@ class PdfSettings(_BaseSection):
 
 class SigningPadesSettings(_BaseSection):
     cert_path: Path | None = None
-    key_path: Path | None = None
-    key_password: SecretStr | None = None
     reason: str = "Ticket Archivierung"
     location: str = "Datacenter"
 
@@ -177,8 +199,7 @@ class SigningSettings(_BaseSection):
 
 class ObservabilitySettings(_BaseSection):
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
-    log_format: str | None = None  # json|human (overrides LOG_FORMAT/env when set)
-    json_logs: bool = False
+    log_format: str | None = None  # json|human
     metrics_enabled: bool = False
     # When set, GET /metrics requires Authorization: Bearer <this token> (constant-time compare).
     metrics_bearer_token: SecretStr | None = None
@@ -282,7 +303,19 @@ class Settings(BaseSettings):
         Useful in tests where we want to pass nested dicts and keep mypy happy.
         """
 
-        return _InitOnlySettings(**dict(data))
+        class _MappingOnlySettings(Settings):
+            @classmethod
+            def settings_customise_sources(
+                cls,
+                settings_cls: type[BaseSettings],
+                init_settings: PydanticBaseSettingsSource,
+                env_settings: PydanticBaseSettingsSource,
+                dotenv_settings: PydanticBaseSettingsSource,
+                file_secret_settings: PydanticBaseSettingsSource,
+            ) -> tuple[PydanticBaseSettingsSource, ...]:
+                return (init_settings,)
+
+        return _MappingOnlySettings(**dict(data))
 
     @classmethod
     def settings_customise_sources(
@@ -300,16 +333,3 @@ class Settings(BaseSettings):
             dotenv_settings,
             file_secret_settings,
         )
-
-
-class _InitOnlySettings(Settings):
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (init_settings,)

@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.adapters.signing.sign_pdf import sign_pdf
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.errors import PermanentError
@@ -90,11 +92,11 @@ def _make_settings(*, pfx_path: Path | None, pfx_password: str | None) -> Signin
 
 def test_sign_pdf_returns_pdf_bytes(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password="secret")
+    _write_test_pfx(pfx_path, password=fake_credential("secret"))
 
-    signing = _make_settings(pfx_path=pfx_path, pfx_password="secret")
+    signing = _make_settings(pfx_path=pfx_path, pfx_password=fake_credential("secret"))
     signed = sign_pdf(_minimal_pdf_bytes(), signing)
-    assert signed.startswith(b"%PDF-")
+    check(not not signed.startswith(b"%PDF-"), "assertion failed")
 
 
 def test_sign_pdf_missing_pfx_path_raises() -> None:
@@ -113,8 +115,8 @@ def test_sign_pdf_nonexistent_pfx_raises(tmp_path: Path) -> None:
 def test_sign_pdf_empty_bytes_raises(tmp_path: Path) -> None:
     """Empty pdf_bytes raises ValueError."""
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password="pw")
-    signing = _make_settings(pfx_path=pfx_path, pfx_password="pw")
+    _write_test_pfx(pfx_path, password=fake_credential("pw"))
+    signing = _make_settings(pfx_path=pfx_path, pfx_password=fake_credential("pw"))
     with pytest.raises(ValueError, match="pdf_bytes"):
         sign_pdf(b"", signing)
 
@@ -122,8 +124,8 @@ def test_sign_pdf_empty_bytes_raises(tmp_path: Path) -> None:
 def test_sign_pdf_wrong_password_raises(tmp_path: Path) -> None:
     """Wrong PFX password causes a PermanentError about loading PKCS#12."""
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password="correct")
-    signing = _make_settings(pfx_path=pfx_path, pfx_password="wrong")
+    _write_test_pfx(pfx_path, password=fake_credential("correct"))
+    signing = _make_settings(pfx_path=pfx_path, pfx_password=fake_credential("wrong"))
     with pytest.raises(PermanentError):
         sign_pdf(_minimal_pdf_bytes(), signing)
 
@@ -202,24 +204,27 @@ def test_sign_pdf_not_yet_valid_cert_raises(tmp_path: Path) -> None:
         sign_pdf(_minimal_pdf_bytes(), signing)
 
 
-def test_sign_pdf_signer_cache_cert_recheck(tmp_path: Path) -> None:
-    """After 1h the cert is re-validated from the cache without rebuilding the signer."""
-
+def test_sign_pdf_validates_cert_on_each_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import zammad_pdf_archiver.adapters.signing.sign_pdf as _mod
 
     pfx_path = tmp_path / "valid.pfx"
-    _write_test_pfx(pfx_path, password="cachetest")
+    _write_test_pfx(pfx_path, password=fake_credential("cachetest"))
 
-    signing = _make_settings(pfx_path=pfx_path, pfx_password="cachetest")
+    signing = _make_settings(pfx_path=pfx_path, pfx_password=fake_credential("cachetest"))
+    validation_calls = 0
+    real_validate = _mod._validate_cert_not_expired  # noqa: SLF001
 
-    # First call — populates the cache.
+    def _count_validation(pfx_bytes: bytes, password: bytes | None) -> None:
+        nonlocal validation_calls
+        validation_calls += 1
+        real_validate(pfx_bytes, password)
+
+    monkeypatch.setattr(_mod, "_validate_cert_not_expired", _count_validation)
+
     sign_pdf(_minimal_pdf_bytes(), signing)
-
-    # Backdate last_cert_check so re-check threshold is crossed.
-    with _mod._signer_cache_lock:  # noqa: SLF001
-        entry = _mod._signer_cache[str(pfx_path)]  # noqa: SLF001
-        entry.last_cert_check -= _mod._CERT_CHECK_INTERVAL_SECONDS + 1  # noqa: SLF001
-
-    # Second call should hit the re-check path (lines 98-114) without raising.
     signed = sign_pdf(_minimal_pdf_bytes(), signing)
-    assert signed.startswith(b"%PDF-")
+
+    check(not not signed.startswith(b"%PDF-"), "assertion failed")
+    check(not not validation_calls == 2, "assertion failed")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from html import escape
 from html.parser import HTMLParser
 from typing import Final
@@ -88,16 +87,11 @@ def _sanitize_href(raw: str) -> str | None:
     return href
 
 
-@dataclass
-class _OpenTag:
-    name: str
-
-
 class _AllowlistHTMLSanitizer(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self._out: list[str] = []
-        self._open: list[_OpenTag] = []
+        self._open: list[str] = []
         self._skip_stack: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -117,7 +111,7 @@ class _AllowlistHTMLSanitizer(HTMLParser):
             return
 
         self._out.append(f"<{tag}{attr_text}>")
-        self._open.append(_OpenTag(tag))
+        self._open.append(tag)
 
     def _mark_skip_depth(self, tag: str) -> bool:
         if tag in _DROP_WITH_CONTENT:
@@ -177,16 +171,16 @@ class _AllowlistHTMLSanitizer(HTMLParser):
     def _close_matching_open_tag(self, tag: str) -> bool:
         if not self._open:
             return False
-        if self._open[-1].name == tag:
+        if self._open[-1] == tag:
             self._open.pop()
             self._out.append(f"</{tag}>")
             return True
         # Browser-style error recovery: search backwards for a matching open tag.
         for i in range(len(self._open) - 1, -1, -1):
-            if self._open[i].name == tag:
+            if self._open[i] == tag:
                 # Close all intermediate unclosed tags, then the matching one.
                 for j in range(len(self._open) - 1, i - 1, -1):
-                    self._out.append(f"</{self._open[j].name}>")
+                    self._out.append(f"</{self._open[j]}>")
                 del self._open[i:]
                 return True
         return False
@@ -213,7 +207,7 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         super().close()
         # Close any still-open tags to keep output well-formed.
         while self._open:
-            tag = self._open.pop().name
+            tag = self._open.pop()
             self._out.append(f"</{tag}>")
 
     def sanitized_html(self) -> str:
@@ -229,8 +223,10 @@ def sanitize_html_fragment(html: str) -> str:
       - Remove event-handler attributes (onclick, ...).
       - Neutralize dangerous URL schemes (javascript:, data:, file:, ...).
 
-    This is intended for rendering ticket content into PDFs (print output), not for general-purpose
-    HTML.
+    This is intended for rendering ticket content into PDFs (print output), not
+    for general-purpose HTML or browser UI. It is a local allowlist sanitizer,
+    not an externally audited replacement for a dedicated HTML sanitization
+    library.
     """
     if not isinstance(html, str) or not html:
         return ""

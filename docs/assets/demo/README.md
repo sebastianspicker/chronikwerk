@@ -4,7 +4,11 @@ This directory contains generated demo screenshots and seed reports.
 
 Expected screenshot set is defined in `screenshot-manifest.json`.
 
-Generated artifacts (not committed by default):
+The current reference screenshots and seed report are committed so README and
+demo checks have stable assets. Regenerate them with `make demo-shots` after
+intentional admin UI changes.
+
+Reference artifacts:
 - `01-admin-token-screen.png`
 - `02-admin-queue-stats.png`
 - `03-admin-history-all.png`

@@ -9,8 +9,8 @@ make verify
 For focused Python checks, run:
 
 ```bash
-ruff check .
-pytest
+python -m ruff check .
+python -m pytest -q
 ```
 
 For shell script changes, run ShellCheck on the touched scripts, for example:

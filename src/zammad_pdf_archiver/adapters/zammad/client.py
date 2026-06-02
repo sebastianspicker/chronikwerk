@@ -20,17 +20,20 @@ from zammad_pdf_archiver.adapters.zammad.models import Article, TagList, Ticket
 
 _T = TypeVar("_T")
 
+_MAX_RETRIES = 3
+_BACKOFF_BASE_SECONDS = 0.2
 
-@dataclass(frozen=True, slots=True)
-class _RetryPolicy:
-    # "retry up to 3 times" => 1 initial attempt + 3 retries = 4 total attempts.
-    max_retries: int = 3
-    backoff_base_seconds: float = 0.2
 
-    def backoff_seconds(self, attempt: int) -> float:
-        """Return the exponential backoff delay in seconds for a zero-based retry attempt."""
-        # attempt is 0-based for *retry count* (i.e., after the first failure).
-        return self.backoff_base_seconds * (2**attempt)
+@dataclass(frozen=True)
+class ZammadClientTransportOptions:
+    timeout_seconds: float = 10.0
+    verify_tls: bool = True
+    trust_env: bool = False
+
+
+def _backoff_seconds(attempt: int) -> float:
+    # attempt is 0-based for retry count, i.e. after the first failure.
+    return _BACKOFF_BASE_SECONDS * (2**attempt)
 
 
 class AsyncZammadClient:
@@ -41,13 +44,11 @@ class AsyncZammadClient:
         *,
         base_url: str,
         api_token: str,
-        timeout_seconds: float = 10.0,
-        verify_tls: bool = True,
-        trust_env: bool = False,
-        retry_policy: _RetryPolicy | None = None,
+        transport: ZammadClientTransportOptions | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        transport = transport or ZammadClientTransportOptions()
         url = httpx.URL(base_url)
         if not url.scheme or not url.host:
             raise ValueError("base_url must include scheme and host, e.g. https://zammad.example")
@@ -57,7 +58,6 @@ class AsyncZammadClient:
         self._base_url = url.copy_with(path=base_path)
 
         self._sleep = sleep
-        self._retry = retry_policy or _RetryPolicy()
 
         self._owns_http_client = http_client is None
         self._http = http_client or httpx.AsyncClient(
@@ -66,14 +66,14 @@ class AsyncZammadClient:
                 "Authorization": f"Token token={api_token}",
                 "Accept": "application/json",
             },
-            timeout=timeouts_for(timeout_seconds),
+            timeout=timeouts_for(transport.timeout_seconds),
             limits=httpx.Limits(
                 max_connections=10,
                 max_keepalive_connections=5,
                 keepalive_expiry=30.0,
             ),
-            verify=verify_tls,
-            trust_env=trust_env,
+            verify=transport.verify_tls,
+            trust_env=transport.trust_env,
             follow_redirects=False,
         )
 
@@ -122,20 +122,22 @@ class AsyncZammadClient:
 
     async def add_tag(self, ticket_id: int, tag: str) -> None:
         """Add a tag to a ticket (idempotent)."""
-        await self._request_json(
+        resp = await self._request_json(
             "POST",
             "api/v1/tags/add",
             json={"object": "Ticket", "o_id": ticket_id, "item": tag},
         )
+        _require_tag_mutation_success(resp, operation="add", ticket_id=ticket_id, tag=tag)
 
     async def remove_tag(self, ticket_id: int, tag: str) -> None:
         """Remove a tag from a ticket (idempotent)."""
         # Using POST keeps this client compatible with the documented `/tags/remove` endpoint.
-        await self._request_json(
+        resp = await self._request_json(
             "POST",
             "api/v1/tags/remove",
             json={"object": "Ticket", "o_id": ticket_id, "item": tag},
         )
+        _require_tag_mutation_success(resp, operation="remove", ticket_id=ticket_id, tag=tag)
 
     async def create_internal_article(
         self, ticket_id: int, subject: str, body_html: str
@@ -195,8 +197,8 @@ class AsyncZammadClient:
         json: Any | None = None,
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        # Total attempts = 1 initial + max_retries
-        max_attempts = self._retry.max_retries + 1
+        # Total attempts = 1 initial + retry budget.
+        max_attempts = _MAX_RETRIES + 1
         retry_count = 0
 
         while True:
@@ -243,14 +245,14 @@ class AsyncZammadClient:
         exc: Exception,
         timeout_path: str | None = None,
     ) -> int:
-        if retry_count >= self._retry.max_retries:
+        if retry_count >= _MAX_RETRIES:
             if isinstance(exc, httpx.TimeoutException):
                 path = timeout_path or "<unknown>"
                 raise ServerError(
                     f"Zammad API timeout after {max_attempts} attempts at {path}"
                 ) from exc
             raise ServerError(f"Network error after {max_attempts} attempts") from exc
-        await self._sleep(self._retry.backoff_seconds(retry_count))
+        await self._sleep(_backoff_seconds(retry_count))
         return retry_count + 1
 
     def _retry_delay_for_response(
@@ -262,18 +264,18 @@ class AsyncZammadClient:
     ) -> float | None:
         status = response.status_code
         if status >= 500:
-            if retry_count >= self._retry.max_retries:
+            if retry_count >= _MAX_RETRIES:
                 raise ServerError(
                     f"Zammad server error (status={status}) after {max_attempts} attempts"
                 )
-            return self._retry.backoff_seconds(retry_count)
+            return _backoff_seconds(retry_count)
         if status == 429:
-            if retry_count >= self._retry.max_retries:
+            if retry_count >= _MAX_RETRIES:
                 raise RateLimitError(
                     f"Zammad rate limit (status=429) after {max_attempts} attempts"
                 )
             retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
-            return retry_after or self._retry.backoff_seconds(retry_count)
+            return retry_after or _backoff_seconds(retry_count)
         return None
 
     def _raise_for_status(self, response: httpx.Response) -> NoReturn:
@@ -307,3 +309,17 @@ def _parse_retry_after_seconds(value: str | None) -> float | None:
     if seconds < 0:
         return None
     return min(seconds, 60)
+
+
+def _require_tag_mutation_success(
+    response: Any,
+    *,
+    operation: str,
+    ticket_id: int,
+    tag: str,
+) -> None:
+    if isinstance(response, dict) and response.get("success") is True:
+        return
+    raise ClientError(
+        f"Zammad tag {operation} for ticket {ticket_id} and tag {tag!r} did not confirm success"
+    )

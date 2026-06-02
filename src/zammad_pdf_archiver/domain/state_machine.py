@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Protocol
+from typing import Any
 
 TRIGGER_TAG = "pdf:sign"
 PROCESSING_TAG = "pdf:processing"
@@ -25,20 +25,20 @@ ERROR_TAG = "pdf:error"
 # the processing pipeline for the same ticket.
 
 
-class TicketTagger(Protocol):
-    async def add_tag(self, ticket_id: int, tag: str) -> None: ...
-    async def remove_tag(self, ticket_id: int, tag: str) -> None: ...
-
-
 def should_process(
     tags: Iterable[str] | None,
     *,
-    trigger_tag: str = TRIGGER_TAG,
+    trigger_tag: str,
     require_trigger_tag: bool = True,
 ) -> bool:
     """Return True if the ticket's tags indicate it should be processed."""
     tag_set = set(tags or [])
     if DONE_TAG in tag_set:
+        return False
+    # A processing tag means another worker already moved the ticket into the
+    # in-flight state; even if the trigger tag is still present, do not start a
+    # second archive attempt.
+    if PROCESSING_TAG in tag_set:
         return False
     if require_trigger_tag:
         return trigger_tag in tag_set
@@ -46,10 +46,10 @@ def should_process(
 
 
 async def apply_processing(
-    client: TicketTagger,
+    client: Any,
     ticket_id: int,
     *,
-    trigger_tag: str = TRIGGER_TAG,
+    trigger_tag: str,
     force_reprocess: bool = False,
 ) -> None:
     """Idempotent tag transition: any state -> processing."""
@@ -60,9 +60,7 @@ async def apply_processing(
     await client.add_tag(ticket_id, PROCESSING_TAG)
 
 
-async def apply_done(
-    client: TicketTagger, ticket_id: int, *, trigger_tag: str = TRIGGER_TAG
-) -> None:
+async def apply_done(client: Any, ticket_id: int, *, trigger_tag: str) -> None:
     """Idempotent tag transition: any state -> done."""
     await client.remove_tag(ticket_id, PROCESSING_TAG)
     await client.remove_tag(ticket_id, ERROR_TAG)
@@ -71,11 +69,11 @@ async def apply_done(
 
 
 async def apply_error(
-    client: TicketTagger,
+    client: Any,
     ticket_id: int,
     *,
     keep_trigger: bool = True,
-    trigger_tag: str = TRIGGER_TAG,
+    trigger_tag: str,
 ) -> None:
     """Idempotent tag transition: any state -> error."""
     await client.remove_tag(ticket_id, PROCESSING_TAG)

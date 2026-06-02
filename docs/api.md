@@ -8,18 +8,22 @@ This document defines the HTTP contract for `zammad-pdf-archiver`.
 
 Webhook ingestion endpoint.
 
-#### Query parameters
+Path variants such as `/ingest/` and `/ingest%2F` are treated as protected
+ingest paths by HMAC, body-size, and rate-limit middleware before routing or
+redirect handling.
 
-- `dry_run` (bool, optional, default `false`) -- when `true`, validates the payload and returns `202` with `{"status":"dry_run_accepted","ticket_id":<int>}` without dispatching any background work. Useful for integration testing.
+#### Ingest query parameters
 
-#### Request headers
+None. Unknown query parameters have no special route-level behavior.
+
+#### Ingest request headers
 
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
 - `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
-#### Request body
+#### Ingest request body
 
 JSON object. Ticket ID is extracted from either:
 - `ticket.id`
@@ -30,13 +34,13 @@ If ticket ID is missing or invalid, the request is rejected with `422` (schema v
 Example payload:
 - [`../examples/webhook-payload.sample.json`](../examples/webhook-payload.sample.json)
 
-#### Success response
+#### Ingest success response
 
 - status: `202`
 - body: `{"status":"accepted","ticket_id":123}`
 - header: `X-Request-Id` is always returned
 
-#### Error responses
+#### Ingest error responses
 
 - `400` `{"detail":"missing_delivery_id"}`
 - `403` `{"detail":"forbidden"}`
@@ -49,18 +53,21 @@ Example payload:
 
 Batch webhook ingestion endpoint.
 
-#### Query parameters
+Path variants such as `/ingest/batch/` are treated as protected ingest paths by
+HMAC, body-size, and rate-limit middleware before routing or redirect handling.
 
-- `dry_run` (bool, optional, default `false`) -- when `true`, validates the payload and returns `202` with `{"status":"dry_run_accepted","count":<int>}` without dispatching any background work. Useful for integration testing.
+#### Batch query parameters
 
-#### Request headers
+None. Unknown query parameters have no special route-level behavior.
+
+#### Batch request headers
 
 - `Content-Type: application/json` (recommended)
 - `X-Request-Id: <id>` (optional)
 - `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>` (required when secret is configured)
 - `X-Zammad-Delivery: <id>` (required by default; disable only for controlled tests with `hardening.webhook.require_delivery_id=false`)
 
-#### Request body
+#### Batch request body
 
 JSON array of ingest payload objects (maximum **100** items per request). Each item must contain either:
 - `ticket.id`
@@ -68,13 +75,13 @@ JSON array of ingest payload objects (maximum **100** items per request). Each i
 
 When `X-Zammad-Delivery` is present, the service derives per-item delivery IDs as `<delivery-id>:<index>` (zero-based) before applying idempotency checks.
 
-#### Success response
+#### Batch success response
 
 - status: `202`
 - body: `{"status":"accepted","count":<int>}`
 - header: `X-Request-Id` is always returned
 
-#### Error responses
+#### Batch error responses
 
 - `400` `{"detail":"missing_delivery_id"}`
 - `403` `{"detail":"forbidden"}`
@@ -82,6 +89,7 @@ When `X-Zammad-Delivery` is present, the service derives per-item delivery IDs a
 - `413` `{"detail":"request_too_large","code":"request_too_large"}`; requests with an over-limit `Content-Length` are rejected before the application reads the body, and streaming requests stop at the first chunk that exceeds the limit.
 - `429` `{"detail":"rate_limited"}`
 - `503` `{"detail":"webhook_auth_not_configured"}` or `{"detail":"shutting_down"}`
+- `503` `{"status":"partial_failure","code":"batch_dispatch_failed","accepted":<int>,"failed_index":<int>,"failed_ticket_id":<int>}` when dispatch fails after earlier items were accepted. The accepted count is the number of jobs already dispatched; clients should not assume the whole batch was rejected.
 
 ### `POST /retry/{ticket_id}`
 
@@ -93,34 +101,34 @@ Behavior notes:
 - bypasses `pdf:signed` skip behavior
 - still skips delivery-ID dedupe by using no delivery ID
 
-#### Request headers
+#### Retry request headers
 
 - `Authorization: Bearer <ADMIN_BEARER_TOKEN>` (required)
 
-#### Path parameters
+#### Retry path parameters
 
 - `ticket_id` (int, required)
 
-#### Success response
+#### Retry success response
 
 - status: `202`
 - body: `{"status":"accepted","ticket_id":<int>}`
 
-#### Error responses
+#### Retry error responses
 
 - `401` missing/invalid bearer token
 - `503` `{"detail":"admin_token_not_configured"}` or `{"detail":"settings_not_configured"}`
 
 ### `GET /jobs/{ticket_id}`
 
-Returns process-local job status for one ticket.
+Returns best-known job status for one ticket.
 Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 
-#### Request headers
+#### Job status request headers
 
 - `Authorization: Bearer <ADMIN_BEARER_TOKEN>` (required)
 
-#### Response
+#### Job status response
 
 - status: `200`
 - body:
@@ -129,25 +137,28 @@ Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 {
   "ticket_id": 123,
   "in_flight": false,
+  "process_local_in_flight": false,
+  "distributed_in_flight": null,
   "shutting_down": false
 }
 ```
 
 Notes:
-- `in_flight` is process-local and non-persistent.
-- Status is reset on process restart.
+- `in_flight` is the best-known union of process-local state and Redis ticket-lock state.
+- `process_local_in_flight` is non-persistent and resets on process restart.
+- `distributed_in_flight` is `true` or `false` when Redis ticket-lock state is configured and readable; otherwise it is `null`.
 
-#### Error responses
+#### Job status error responses
 
 - `401` missing/invalid bearer token
-- `503` `{"detail":"admin_token_not_configured"}` or `{"detail":"settings_not_configured"}`
+- `503` `{"detail":"admin_token_not_configured"}`, `{"detail":"settings_not_configured"}`, or `{"detail":"ticket_lock_unavailable"}`
 
 ### `GET /jobs/queue/stats`
 
 Returns queue status for the configured execution backend.
 Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 
-#### Request headers
+#### Queue stats request headers
 
 - `Authorization: Bearer <ADMIN_BEARER_TOKEN>` (required)
 
@@ -173,19 +184,21 @@ Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
   "pending": 0,
   "dlq_stream": "zammad:jobs:dlq",
   "dlq_depth": 0,
-  "retry_max_attempts": 3
+  "retry_max_attempts": 3,
+  "history_stream": "zammad:jobs:history",
+  "history_retention_maxlen": 5000
 }
 ```
 
-#### Error responses
+#### Queue stats error responses
 
 - `401` missing/invalid bearer token
-- `503` `{"detail":"admin_token_not_configured"}`
-- `200` `{"status":"error","detail":"queue_unavailable"}` when the queue backend is unavailable
+- `503` `{"detail":"admin_token_not_configured"}` or `{"detail":"settings_not_configured"}`
+- `503` `{"detail":"queue_unavailable"}` when the queue backend is unavailable
 
 ### `GET /jobs/history`
 
-Returns processing history events from Redis history stream.
+Returns processing history events from Redis history stream when history is enabled.
 Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
 
 Query parameters:
@@ -201,7 +214,9 @@ Response:
 ```json
 {
   "status": "ok",
+  "available": true,
   "count": 2,
+  "truncated": false,
   "items": [
     {
       "id": "1710000000000-0",
@@ -216,6 +231,25 @@ Response:
   ]
 }
 ```
+
+When history retention/backend is disabled, the response is:
+
+```json
+{
+  "status": "disabled",
+  "available": false,
+  "count": 0,
+  "truncated": false,
+  "items": []
+}
+```
+
+Known history status values include `processed`,
+`processed_done_update_failed`, `failed_transient`, `failed_permanent`, and
+`skipped_*`. `processed_done_update_failed` means the archive was written, but
+the final Zammad done-tag transition failed and needs operator attention.
+`truncated: true` means the response reached the requested limit and more
+history may exist.
 
 ### `POST /jobs/queue/dlq/drain`
 
@@ -234,17 +268,23 @@ Response:
 ```json
 {
   "status": "ok",
-  "drained": 12
+  "drained": 12,
+  "selected": 12,
+  "deleted": 12,
+  "not_deleted": 0
 }
 ```
+
+`status` is `partial` when Redis did not confirm deletion for every selected
+DLQ entry. `drained` is kept as an alias for the confirmed `deleted` count.
 
 ### `GET /healthz`
 
 Always available.
 
-#### Query parameters
+#### Health query parameters
 
-- `deep` (bool, optional, default `false`) -- when `true`, performs deep health checks (Redis ping, storage write test) and includes a `checks` object in the response. The top-level `status` field may return `"degraded"` if any deep check fails.
+  - `deep` (bool, optional, default `false`) -- when `true`, performs deep health checks (Redis ping, storage write/free-space test) and includes a `checks` object in the response. The top-level `status` field may return `"degraded"` if any deep check fails.
 
 #### Example response (shallow)
 
@@ -252,7 +292,7 @@ Always available.
 {
   "status": "ok",
   "service": "zammad-pdf-archiver",
-  "version": "0.1.0",
+  "version": "...",
   "time": "2026-02-07T12:00:00+00:00"
 }
 ```
@@ -263,11 +303,11 @@ Always available.
 {
   "status": "ok",
   "service": "zammad-pdf-archiver",
-  "version": "0.1.0",
+  "version": "...",
   "time": "2026-02-07T12:00:00+00:00",
   "checks": {
     "redis": { "available": true },
-    "storage": { "writable": true }
+    "storage": { "writable": true, "free_bytes": 1073741824 }
   }
 }
 ```
@@ -278,11 +318,11 @@ When a deep check fails, the response may look like:
 {
   "status": "degraded",
   "service": "zammad-pdf-archiver",
-  "version": "0.1.0",
+  "version": "...",
   "time": "2026-02-07T12:00:00+00:00",
   "checks": {
     "redis": { "available": false, "reason": "not_configured" },
-    "storage": { "writable": true }
+    "storage": { "writable": true, "free_bytes": 1073741824 }
   }
 }
 ```
@@ -291,6 +331,7 @@ Notes:
 - `version` comes from installed package metadata; fallback may be `0.0.0` in some non-packaged contexts.
 - When `HEALTHZ_OMIT_VERSION=true`, the response contains only `status` and `time` (no `service` or `version`).
 - The `checks` object is only present when `deep=true`.
+- `checks.storage.free_bytes` is reported when the storage write probe and filesystem free-space probe both succeed.
 
 ### `GET /metrics`
 
@@ -325,11 +366,11 @@ Endpoints:
 
 Replays dead-letter queue entries back to the main processing queue.
 
-#### Query parameters
+#### DLQ replay query parameters
 
 - `limit` (int, optional, default `10`, max `1000`)
 
-#### Success response
+#### DLQ replay success response
 
 - status: `200`
 - body:
@@ -337,11 +378,30 @@ Replays dead-letter queue entries back to the main processing queue.
 ```json
 {
   "status": "ok",
-  "replayed": 5
+  "idempotent": false,
+  "duplicate_risk": 0,
+  "selected": 6,
+  "replayed": 5,
+  "deleted": 5,
+  "skipped": 1,
+  "errors": 0,
+  "not_deleted": 0
 }
 ```
 
-#### Error responses
+`status` is `partial` when any selected DLQ entry was skipped, failed to
+enqueue, or was replayed without Redis confirming deletion of the original DLQ
+entry.
+
+Replay is not idempotent. If a replayed entry cannot be deleted from the DLQ,
+calling replay again can enqueue the same ticket again. `duplicate_risk` is the
+count of replayed entries whose original DLQ entry was not confirmed deleted;
+`not_deleted` is kept as the raw compatibility alias.
+
+Malformed DLQ entries are not deleted during replay. They are counted as
+`skipped` so operators can inspect or drain them explicitly.
+
+#### DLQ replay error responses
 
 - `401` missing/invalid bearer token
 - `404` admin disabled
@@ -351,7 +411,7 @@ Replays dead-letter queue entries back to the main processing queue.
 
 Returns configuration validation status, including whether the current settings pass all validation checks and the state of key runtime dependencies.
 
-#### Success response
+#### Config check success response
 
 - status: `200`
 - body:
@@ -386,7 +446,7 @@ When validation issues are found:
 Notes:
 - `checks.pfx_file_exists` is only present when signing is enabled and a PFX path is configured.
 
-#### Error responses
+#### Config check error responses
 
 - `401` missing/invalid bearer token
 - `404` admin disabled
@@ -402,6 +462,9 @@ When a secret is configured:
 - algorithms: HMAC-SHA1 and HMAC-SHA256 (sender chooses; prefer SHA-256 for new setups)
 - message: raw request body bytes
 
+Set `hardening.webhook.webhook_reject_sha1=true` to reject SHA-1 signatures and
+accept SHA-256 only.
+
 Secret sources:
 - preferred: `zammad.webhook_hmac_secret` (`WEBHOOK_HMAC_SECRET`)
 - legacy fallback: `server.webhook_shared_secret` (`WEBHOOK_SHARED_SECRET`)
@@ -412,6 +475,8 @@ Default is fail-closed.
 
 To allow unsigned requests (internal testing only):
 - `hardening.webhook.allow_unsigned=true`
+- if no webhook secret is configured, also set
+  `hardening.webhook.allow_unsigned_when_no_secret=true`
 
 ### Delivery ID requirement
 

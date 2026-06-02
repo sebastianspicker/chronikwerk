@@ -8,6 +8,8 @@ import pytest
 import respx
 from pydantic import SecretStr
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.adapters.signing.sign_pdf import sign_pdf
 from zammad_pdf_archiver.config.settings import (
     SigningPadesSettings,
@@ -143,7 +145,7 @@ def _make_signing_with_tsa(
 
 def test_sign_pdf_with_tsa_enabled_calls_tsa(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password="secret")
+    _write_test_pfx(pfx_path, password=fake_credential("secret"))
 
     tsa_url = "https://tsa.test/rfc3161"
     signing = _make_signing_with_tsa(pfx_path, "secret", tsa_url)
@@ -161,13 +163,13 @@ def test_sign_pdf_with_tsa_enabled_calls_tsa(tmp_path: Path) -> None:
         route.mock(side_effect=_handler)
 
         signed = sign_pdf(_minimal_pdf_bytes(), signing)
-        assert signed.startswith(b"%PDF-")
-        assert route.called
+        check(not not signed.startswith(b"%PDF-"), "assertion failed")
+        check(not not route.called, "assertion failed")
 
 
 def test_sign_pdf_with_unreachable_tsa_is_transient(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password="secret")
+    _write_test_pfx(pfx_path, password=fake_credential("secret"))
 
     tsa_url = "https://tsa.test/rfc3161"
     signing = _make_signing_with_tsa(pfx_path, "secret", tsa_url, timeout_seconds=0.1)

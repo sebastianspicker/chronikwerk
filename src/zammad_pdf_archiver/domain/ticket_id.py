@@ -8,20 +8,27 @@ def coerce_ticket_id(value: Any) -> int | None:
         return None
 
     if isinstance(value, int):
-        return value if value > 0 else None
+        return _positive_ticket_id(value)
 
     if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        if text.startswith("+"):
-            text = text[1:]
-        if not text.isdigit():
-            return None
-        ticket_id = int(text)
-        return ticket_id if ticket_id > 0 else None
+        return _coerce_ticket_id_text(value)
 
     return None
+
+
+def _positive_ticket_id(value: int) -> int | None:
+    return value if value > 0 else None
+
+
+def _coerce_ticket_id_text(value: str) -> int | None:
+    text = value.strip()
+    if not text:
+        return None
+    if text.startswith("+"):
+        text = text[1:]
+    if not text.isdigit():
+        return None
+    return _positive_ticket_id(int(text))
 
 
 def extract_ticket_id(payload: dict[str, Any]) -> int | None:
