@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0rc2] - 2026-04-09
 
-### Added
+### 0.2.0rc2 Added
+
 - Coverage threshold enforcement in CI (76% minimum with branch coverage)
 - Batch size limit (100 items) on POST /ingest/batch endpoint
 - Redis URL scheme validation (redis://, rediss://, unix://)
@@ -17,24 +18,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Async retry helper utility for exponential backoff
 - 82+ new tests across CLI, adapters, input validation, and async retry
 
-### Changed
+### 0.2.0rc2 Changed
+
 - Tightened exception handling in CLI, sanitizer, and adapter modules
 - Deduplicated CLI error handling with shared decorator
 - Extracted async_retry helper from process_ticket
 - Improved type annotations across server, settings, and middleware
 - Rate limit header fallback prevents bypass when header is missing
 
-### Fixed
+### 0.2.0rc2 Fixed
+
 - Pre-existing mypy arg-type error in tsa_rfc3161.py (auth parameter placement)
 - Line-too-long lint violation in render_pdf.py
 
-### Security
+### 0.2.0rc2 Security
+
 - Positive integer validation on all ticket_id parameters
 - Rate limit `rps` and `burst` upper bounds (le=10000)
 - `--no-cache-dir` on all CI pip install commands
 - Input validation hardening across webhook and admin endpoints
 
-### Documentation
+### 0.2.0rc2 Documentation
+
 - Added 34 missing docstrings across core source modules
 - Updated config-reference.md with missing fields (pdf.templates_root, TSA user/password)
 - Updated api.md with 2 missing admin endpoints and 3 undocumented query parameters
@@ -42,14 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0-rc.1] - 2026-02-26
 
-### Added
+### 0.2.0-rc.1 Added
+
 - Redis-backed job history stream with API and CLI access (`/jobs/history`, `queue-history`).
 - Dead-letter queue drain operations for jobs and admin APIs.
 - Optional admin dashboard and admin API surface (`/admin`, `/admin/api/*`) protected by bearer token.
 - Additive configuration keys for admin and workflow history (`admin.*`, `workflow.history_*`).
 - Additional regression tests for cancellation flow, template-root rendering, and history redaction.
 
-### Changed
+### 0.2.0-rc.1 Changed
+
 - Refactored ticket processing and queue modules to reduce complexity and improve failure isolation.
 - Hardened job/admin routes with clearer `401`/`503` behavior on auth/backend failures.
 - Improved PDF template styling consistency across default, compact, and minimal variants.
@@ -57,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-02-07
 
-### Added
+### 0.1.0 Added
+
 - FastAPI ingress endpoint (`POST /ingest`) with optional HMAC verification.
 - Zammad API client integration for reading tickets and writing internal notes/tags.
 - Snapshot model + template-based HTML rendering + PDF generation (WeasyPrint).

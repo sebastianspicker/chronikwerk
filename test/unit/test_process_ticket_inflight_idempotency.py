@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from test.support.checks import check
 from test.support.credentials import fake_credential
@@ -31,8 +32,63 @@ def _settings(storage_root: Path) -> Settings:
     )
 
 
+def _patch_process_ticket_dependencies(
+    monkeypatch,
+    tmp_path: Path,
+    client_type: type,
+) -> dict[str, int]:
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.app.jobs.process_ticket.AsyncZammadClient",
+        client_type,
+    )
+
+    calls = {"n": 0}
+
+    async def _flaky_build_and_render_pdf(
+        client,
+        ticket,
+        tags,
+        ticket_id: int,
+        settings,  # noqa: ANN001, ARG001
+    ) -> tuple[bytes, SimpleNamespace, bool, int]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TransientError("transient-render-failure")
+        return b"%PDF-1.7\n%%EOF\n", SimpleNamespace(ticket=ticket), False, 0
+
+    def _fake_store_ticket_files(*args, **kwargs) -> SimpleNamespace:  # noqa: ANN002, ANN003
+        target_path = tmp_path / "archived.pdf"
+        return SimpleNamespace(
+            target_path=target_path,
+            sidecar_path=target_path.with_suffix(".pdf.json"),
+            sha256_hex="deadbeef",
+            size_bytes=42,
+        )
+
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.app.jobs.process_ticket.build_and_render_pdf",
+        _flaky_build_and_render_pdf,
+    )
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.app.jobs.process_ticket.store_ticket_files",
+        _fake_store_ticket_files,
+    )
+    return calls
+
+
+async def _process_concurrent_deliveries(
+    payload: dict[str, Any],
+    settings: Settings,
+) -> None:
+    await asyncio.gather(
+        process_ticket("d-1", payload, settings),
+        process_ticket("d-2", payload, settings),
+    )
+
+
 def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
-    monkeypatch, tmp_path: Path
+    monkeypatch,
+    tmp_path: Path,
 ) -> None:
     ticket_stores._reset_for_tests()
 
@@ -90,53 +146,11 @@ def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
                 type(self)._success_notes += 1
             return SimpleNamespace(id=type(self)._error_notes + type(self)._success_notes)
 
-    monkeypatch.setattr(
-        "zammad_pdf_archiver.app.jobs.process_ticket.AsyncZammadClient",
-        _FakeClient,
-    )
-
-    calls = {"n": 0}
-
-    async def _flaky_build_and_render_pdf(
-        client,
-        ticket,
-        tags,
-        ticket_id: int,
-        settings,  # noqa: ANN001, ARG001
-    ) -> tuple[bytes, SimpleNamespace, bool, int]:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise TransientError("transient-render-failure")
-        return b"%PDF-1.7\n%%EOF\n", SimpleNamespace(ticket=ticket), False, 0
-
-    def _fake_store_ticket_files(*args, **kwargs) -> SimpleNamespace:  # noqa: ANN002, ANN003
-        target_path = tmp_path / "archived.pdf"
-        return SimpleNamespace(
-            target_path=target_path,
-            sidecar_path=target_path.with_suffix(".pdf.json"),
-            sha256_hex="deadbeef",
-            size_bytes=42,
-        )
-
-    monkeypatch.setattr(
-        "zammad_pdf_archiver.app.jobs.process_ticket.build_and_render_pdf",
-        _flaky_build_and_render_pdf,
-    )
-    monkeypatch.setattr(
-        "zammad_pdf_archiver.app.jobs.process_ticket.store_ticket_files",
-        _fake_store_ticket_files,
-    )
-
+    _patch_process_ticket_dependencies(monkeypatch, tmp_path, _FakeClient)
     settings = _settings(tmp_path)
     payload = {"ticket": {"id": 321}}
 
-    async def _run_concurrent_once() -> None:
-        await asyncio.gather(
-            process_ticket("d-1", payload, settings),
-            process_ticket("d-2", payload, settings),
-        )
-
-    asyncio.run(_run_concurrent_once())
+    asyncio.run(_process_concurrent_deliveries(payload, settings))
 
     # Retry delivery d-2 after the in-flight run is over.
     asyncio.run(process_ticket("d-2", payload, settings))

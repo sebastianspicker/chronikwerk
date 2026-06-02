@@ -243,12 +243,7 @@ def _auth_dependency(state: AppState):
     return _verify
 
 
-def create_app(*, dataset_path: Path, api_token: str) -> FastAPI:
-    config = AppConfig(dataset_path=dataset_path, api_token=api_token)
-    state = AppState(config)
-    app = FastAPI(title="mock-zammad-api", version="1.0")
-    auth = _auth_dependency(state)
-
+def _register_demo_routes(app: FastAPI, state: AppState) -> None:
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {"status": "ok", "time": _iso_now(), "tickets": state.store.state()["ticket_count"]}
@@ -261,6 +256,8 @@ def create_app(*, dataset_path: Path, api_token: str) -> FastAPI:
     async def demo_state() -> dict[str, Any]:
         return state.store.state()
 
+
+def _register_ticket_routes(app: FastAPI, state: AppState, auth) -> None:  # noqa: ANN001
     @app.get("/api/v1/tickets/{ticket_id}")
     async def get_ticket(ticket_id: int, _: None = Depends(auth)) -> dict[str, Any]:
         try:
@@ -268,6 +265,22 @@ def create_app(*, dataset_path: Path, api_token: str) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="ticket_not_found") from exc
 
+    @app.get("/api/v1/ticket_articles/by_ticket/{ticket_id}")
+    async def list_articles(ticket_id: int, _: None = Depends(auth)) -> list[dict[str, Any]]:
+        try:
+            return state.store.list_articles(ticket_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="ticket_not_found") from exc
+
+    @app.post("/api/v1/ticket_articles")
+    async def create_article(payload: NewArticle, _: None = Depends(auth)) -> dict[str, Any]:
+        try:
+            return state.store.add_article(payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="ticket_not_found") from exc
+
+
+def _register_tag_routes(app: FastAPI, state: AppState, auth) -> None:  # noqa: ANN001
     @app.get("/api/v1/tags")
     async def get_tags(
         object_type: str | None = Query(default=None, alias="object"),
@@ -296,20 +309,16 @@ def create_app(*, dataset_path: Path, api_token: str) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="ticket_not_found") from exc
 
-    @app.get("/api/v1/ticket_articles/by_ticket/{ticket_id}")
-    async def list_articles(ticket_id: int, _: None = Depends(auth)) -> list[dict[str, Any]]:
-        try:
-            return state.store.list_articles(ticket_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="ticket_not_found") from exc
 
-    @app.post("/api/v1/ticket_articles")
-    async def create_article(payload: NewArticle, _: None = Depends(auth)) -> dict[str, Any]:
-        try:
-            return state.store.add_article(payload)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="ticket_not_found") from exc
+def create_app(*, dataset_path: Path, api_token: str) -> FastAPI:
+    config = AppConfig(dataset_path=dataset_path, api_token=api_token)
+    state = AppState(config)
+    app = FastAPI(title="mock-zammad-api", version="1.0")
+    auth = _auth_dependency(state)
 
+    _register_demo_routes(app, state)
+    _register_ticket_routes(app, state, auth)
+    _register_tag_routes(app, state, auth)
     return app
 
 
