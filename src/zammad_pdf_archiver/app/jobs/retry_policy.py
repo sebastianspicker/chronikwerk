@@ -11,12 +11,20 @@ from zammad_pdf_archiver.adapters.zammad.errors import (
     RateLimitError,
     ServerError,
 )
-from zammad_pdf_archiver.domain.error_messages import (
-    ErrorMessages,
-    format_fs_error,
-    format_http_error,
-)
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError, wrap_exception
+
+_HTTP_TIMEOUT = "HTTP timeout"
+_HTTP_REQUEST_ERROR = "HTTP connection/request error"
+_HTTP_UPSTREAM_ERROR = "HTTP {status} from upstream"
+_HTTP_AUTH_ERROR = "HTTP {status} (auth/permission) from upstream"
+
+_FS_TEMPORARY_ERROR = "Temporary filesystem error (errno={errno})"
+_FS_POLICY_ERROR = "Filesystem policy/permission error (errno={errno})"
+_FS_GENERIC_ERROR = "Filesystem error"
+
+_ZAMMAD_TRANSIENT_ERROR = "Zammad transient error"
+_ZAMMAD_PERMANENT_ERROR = "Zammad permanent error"
+_ZAMMAD_CLIENT_ERROR = "Zammad client error"
 
 _TRANSIENT_ERRNOS: set[int] = {
     # Temporary / retryable.
@@ -50,24 +58,44 @@ _PERMANENT_ERRNOS: set[int] = {
 }
 
 
+def _format_http_error(status: int | None, *, is_auth: bool = False) -> str:
+    if status is None:
+        return _HTTP_REQUEST_ERROR
+
+    if is_auth:
+        return _HTTP_AUTH_ERROR.format(status=status)
+
+    return _HTTP_UPSTREAM_ERROR.format(status=status)
+
+
+def _format_fs_error(error_number: int | None, *, is_temporary: bool = False) -> str:
+    if error_number is None:
+        return _FS_GENERIC_ERROR
+
+    if is_temporary:
+        return _FS_TEMPORARY_ERROR.format(errno=error_number)
+
+    return _FS_POLICY_ERROR.format(errno=error_number)
+
+
 def _classify_http_status(exc: httpx.HTTPStatusError) -> TransientError | PermanentError:
     status = exc.response.status_code
     if 500 <= status <= 599:
-        return TransientError(format_http_error(status))
+        return TransientError(_format_http_error(status))
     if status in (401, 403):
-        return PermanentError(format_http_error(status, is_auth=True))
-    return PermanentError(format_http_error(status))
+        return PermanentError(_format_http_error(status, is_auth=True))
+    return PermanentError(_format_http_error(status))
 
 
 def _classify_os_error(exc: OSError) -> TransientError | PermanentError:
     err = exc.errno
     if isinstance(err, int) and err in _TRANSIENT_ERRNOS:
-        return TransientError(format_fs_error(err, is_temporary=True))
+        return TransientError(_format_fs_error(err, is_temporary=True))
     if isinstance(err, int) and err in _PERMANENT_ERRNOS:
-        return PermanentError(format_fs_error(err, is_temporary=False))
+        return PermanentError(_format_fs_error(err, is_temporary=False))
 
     # Unknown OS errors default to permanent to avoid endless reprocessing loops.
-    return PermanentError(ErrorMessages.FS_GENERIC_ERROR)
+    return PermanentError(_FS_GENERIC_ERROR)
 
 
 def classify(exc: BaseException) -> TransientError | PermanentError:
@@ -82,30 +110,46 @@ def classify(exc: BaseException) -> TransientError | PermanentError:
     if isinstance(exc, (TransientError, PermanentError)):
         return exc
 
-    # httpx network & timeout errors.
-    if isinstance(exc, httpx.TimeoutException):
-        return TransientError(ErrorMessages.HTTP_TIMEOUT)
-    if isinstance(exc, httpx.RequestError):
-        return TransientError(ErrorMessages.HTTP_REQUEST_ERROR)
-    if isinstance(exc, httpx.HTTPStatusError):
-        return _classify_http_status(exc)
+    classified = _classify_http_exception(exc)
+    if classified is not None:
+        return classified
 
-    # Zammad API exceptions (already normalized by the client).
-    if isinstance(exc, (ServerError, RateLimitError)):
-        return TransientError(str(exc) or ErrorMessages.ZAMMAD_TRANSIENT_ERROR)
-    if isinstance(exc, (AuthError, NotFoundError)):
-        return PermanentError(str(exc) or ErrorMessages.ZAMMAD_PERMANENT_ERROR)
-    if isinstance(exc, ClientError):
-        # Includes validation/path policy issues surfaced via 4xx responses.
-        return PermanentError(str(exc) or ErrorMessages.ZAMMAD_CLIENT_ERROR)
+    classified = _classify_zammad_exception(exc)
+    if classified is not None:
+        return classified
 
-    # Filesystem issues (local or network share).
-    if isinstance(exc, OSError):
-        return _classify_os_error(exc)
-
-    # Validation/data issues (e.g. missing required ticket fields, path policy violations).
-    if isinstance(exc, (ValueError, TypeError)):
-        return PermanentError(str(exc) or exc.__class__.__name__)
+    classified = _classify_local_exception(exc)
+    if classified is not None:
+        return classified
 
     # Fail-safe default: stop automatic reprocessing unless explicitly classified transient.
     return wrap_exception(exc)
+
+
+def _classify_http_exception(exc: BaseException) -> TransientError | PermanentError | None:
+    if isinstance(exc, httpx.TimeoutException):
+        return TransientError(_HTTP_TIMEOUT)
+    if isinstance(exc, httpx.RequestError):
+        return TransientError(_HTTP_REQUEST_ERROR)
+    if isinstance(exc, httpx.HTTPStatusError):
+        return _classify_http_status(exc)
+    return None
+
+
+def _classify_zammad_exception(exc: BaseException) -> TransientError | PermanentError | None:
+    if isinstance(exc, (ServerError, RateLimitError)):
+        return TransientError(str(exc) or _ZAMMAD_TRANSIENT_ERROR)
+    if isinstance(exc, (AuthError, NotFoundError)):
+        return PermanentError(str(exc) or _ZAMMAD_PERMANENT_ERROR)
+    if isinstance(exc, ClientError):
+        # Includes validation/path policy issues surfaced via 4xx responses.
+        return PermanentError(str(exc) or _ZAMMAD_CLIENT_ERROR)
+    return None
+
+
+def _classify_local_exception(exc: BaseException) -> TransientError | PermanentError | None:
+    if isinstance(exc, OSError):
+        return _classify_os_error(exc)
+    if isinstance(exc, (ValueError, TypeError)):
+        return PermanentError(str(exc) or exc.__class__.__name__)
+    return None

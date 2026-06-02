@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, overload
 
 
 def _as_str(value: Any) -> str:
@@ -20,19 +20,19 @@ def _parse_float(value: Any, *, default: float = 0.0) -> float:
         return default
 
 
-def _parse_int(value: Any, *, default: int = 0) -> int:
+@overload
+def _parse_int(value: Any, *, default: None) -> int | None: ...
+
+
+@overload
+def _parse_int(value: Any, *, default: int = 0) -> int: ...
+
+
+def _parse_int(value: Any, *, default: int | None = 0) -> int | None:
     try:
         return int(_as_str(value))
     except Exception:
         return default
-
-
-def _merge_min_delay(current: float | None, candidate: float | None) -> float | None:
-    if candidate is None or candidate <= 0:
-        return current
-    if current is None or candidate < current:
-        return candidate
-    return current
 
 
 @dataclass(frozen=True)
