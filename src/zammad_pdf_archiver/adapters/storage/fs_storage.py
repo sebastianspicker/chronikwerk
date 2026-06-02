@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 from zammad_pdf_archiver.domain.path_policy import ensure_within_root
@@ -84,71 +83,6 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
         except OSError as exc:
             # If the path is unreadable, treat it as unsafe.
             raise ValueError("target path validation failed (unreadable component)") from exc
-
-
-def write_atomic_bytes(
-    target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True
-) -> None:
-    """Write data atomically to target_path via a temp file and os.replace within storage_root."""
-    target, parent = _validate_and_prepare(target_path, storage_root)
-
-    tmp_path: Path | None = None
-    fd: int | None = None
-
-    try:
-        fd, tmp_name = tempfile.mkstemp(dir=str(parent), prefix=".tmp-")
-        tmp_path = Path(tmp_name)
-        _write_tmp_file(fd, data, fsync=fsync)
-        fd = None
-
-        _replace_tmp_with_target(tmp_path, target)
-
-        if fsync:
-            _fsync_dir_best_effort(parent)
-    except Exception:
-        _safe_close(fd)
-        _safe_unlink(tmp_path)
-        raise
-
-
-def _write_tmp_file(fd: int, data: bytes, *, fsync: bool) -> None:
-    """Write data to the temp fd with correct permissions, optionally fsyncing."""
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-        f.flush()
-        # Set mode on the temp fd before replace so the final target gets correct permissions.
-        os.fchmod(f.fileno(), 0o640)
-        if fsync:
-            os.fsync(f.fileno())
-
-
-def _replace_tmp_with_target(tmp_path: Path, target: Path) -> None:
-    """Atomically replace target with the temp file; cleans up the temp on failure."""
-    try:
-        os.replace(tmp_path, target)
-    except Exception:
-        _safe_unlink(tmp_path)
-        raise
-
-
-def _safe_close(fd: int | None) -> None:
-    """Close a file descriptor if non-None, swallowing OSError."""
-    if fd is None:
-        return
-    try:
-        os.close(fd)
-    except OSError:
-        pass
-
-
-def _safe_unlink(path: Path | None) -> None:
-    """Remove a file if non-None, swallowing FileNotFoundError and OSError."""
-    if path is None:
-        return
-    try:
-        path.unlink()
-    except (FileNotFoundError, OSError):
-        pass
 
 
 def move_file_within_root(
