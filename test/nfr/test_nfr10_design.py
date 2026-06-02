@@ -1,8 +1,11 @@
 """NFR10: No mandatory external queue; in-memory dedupe and in-flight guard."""
+
 from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+
+from test.support.checks import check
 
 
 def test_nfr10_no_redis_or_celery_in_dependencies() -> None:
@@ -15,6 +18,7 @@ def test_nfr10_no_redis_or_celery_in_dependencies() -> None:
     for dep in deps:
         dep_lower = dep.lower()
         for word in forbidden:
-            assert word not in dep_lower, (
-                f"NFR10: required dependency {dep!r} must not contain {word!r}"
+            check(
+                not not word not in dep_lower,
+                f"NFR10: required dependency {dep!r} must not contain {word!r}",
             )

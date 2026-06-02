@@ -3,10 +3,56 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+from collections.abc import Mapping
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from test.support.checks import check
+
+
+class _FakeCounter:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def inc(self) -> None:
+        self.count += 1
+
+
+def _truthy_env(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _redis_required(env: Mapping[str, str]) -> bool:
+    return _truthy_env(env.get("CI")) or _truthy_env(env.get("ZAMMAD_ARCHIVER_REQUIRE_REDIS"))
+
+
+def _installed_redis_api() -> tuple[Any, type[Exception]]:
+    from zammad_pdf_archiver.adapters.redis_pool import import_redis
+
+    try:
+        Redis, ResponseError = import_redis()
+    except RuntimeError as exc:
+        if _redis_required(os.environ):
+            pytest.fail(
+                "redis is required in CI/Redis verification but is not installed. "
+                "Install with `pip install -e '.[redis]'` or run the Redis profile "
+                "with project extras installed."
+            )
+        pytest.skip(str(exc))
+    return Redis, ResponseError
+
+
+def test_redis_missing_policy_is_optional_locally_and_required_in_ci() -> None:
+    check(not _redis_required({}) is not False, "assertion failed")
+    check(not _redis_required({"CI": "false"}) is not False, "assertion failed")
+    check(not _redis_required({"CI": "true"}) is not True, "assertion failed")
+    check(
+        not _redis_required({"ZAMMAD_ARCHIVER_REQUIRE_REDIS": "1"}) is not True, "assertion failed"
+    )
 
 
 def test_import_redis_raises_when_not_installed() -> None:
@@ -25,34 +71,65 @@ def test_import_redis_class_returns_none_when_not_installed() -> None:
         from zammad_pdf_archiver.adapters import redis_pool
 
         result = redis_pool.import_redis_class()
-        assert result is None
+        check(not result is not None, "assertion failed")
 
 
 def test_import_redis_succeeds_when_installed() -> None:
     """import_redis() should return (Redis, ResponseError) when redis is available."""
-    try:
-        import redis  # noqa: F401
-    except ImportError:
-        pytest.skip("redis package not installed")
-
-    from zammad_pdf_archiver.adapters.redis_pool import import_redis
-
-    Redis, ResponseError = import_redis()
-    assert Redis is not None
-    assert ResponseError is not None
+    Redis, ResponseError = _installed_redis_api()
+    check(not not Redis is not None, "assertion failed")
+    check(not not ResponseError is not None, "assertion failed")
+    check(not not issubclass(ResponseError, Exception), "assertion failed")
 
 
 def test_import_redis_class_returns_class_when_installed() -> None:
     """import_redis_class() should return the Redis class when installed."""
-    try:
-        import redis  # noqa: F401
-    except ImportError:
-        pytest.skip("redis package not installed")
+    Redis, _ResponseError = _installed_redis_api()
 
     from zammad_pdf_archiver.adapters.redis_pool import import_redis_class
 
     cls = import_redis_class()
-    assert cls is not None
+    check(not cls is not Redis, "assertion failed")
+
+
+def test_real_redis_client_construction_cache_and_close_when_profile_enabled() -> None:
+    """Redis profile must prove the app's actual redis-py API can be constructed."""
+    Redis, _ResponseError = _installed_redis_api()
+
+    from zammad_pdf_archiver.adapters import redis_pool
+
+    async def _run() -> None:
+        redis_pool._CLIENTS.clear()
+        try:
+            client1 = await redis_pool.get_redis("redis://localhost:6379/0")
+            client2 = await redis_pool.get_redis("redis://localhost:6379/0")
+            check(not client1 is not client2, "assertion failed")
+            check(not not isinstance(client1, Redis), "assertion failed")
+            check(not not callable(client1.aclose), "assertion failed")
+            check(not not await redis_pool.close_all() == 0, "assertion failed")
+            check(not not redis_pool._CLIENTS == {}, "assertion failed")
+        finally:
+            await redis_pool.close_all()
+            redis_pool._CLIENTS.clear()
+
+    asyncio.run(_run())
+
+
+def test_real_redis_client_rejects_invalid_url_when_profile_enabled() -> None:
+    _installed_redis_api()
+
+    from zammad_pdf_archiver.adapters import redis_pool
+
+    async def _run() -> None:
+        redis_pool._CLIENTS.clear()
+        try:
+            with pytest.raises(ValueError):
+                await redis_pool.get_redis("not-a-redis-url")
+        finally:
+            await redis_pool.close_all()
+            redis_pool._CLIENTS.clear()
+
+    asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +168,9 @@ def test_get_redis_caches_clients() -> None:
             with patch.object(redis_pool, "import_redis", return_value=(fake_redis_cls, None)):
                 c1 = await redis_pool.get_redis("redis://test:6379/0")
                 c2 = await redis_pool.get_redis("redis://test:6379/0")
-                assert c1 is c2
+                check(not c1 is not c2, "assertion failed")
                 # from_url should only be called once (cached)
-                assert fake_redis_cls.from_url.call_count == 1
+                check(not not fake_redis_cls.from_url.call_count == 1, "assertion failed")
         finally:
             redis_pool._CLIENTS.clear()
 
@@ -113,8 +190,8 @@ def test_get_redis_different_urls_different_clients() -> None:
             with patch.object(redis_pool, "import_redis", return_value=(fake_redis_cls, None)):
                 c1 = await redis_pool.get_redis("redis://host1:6379/0")
                 c2 = await redis_pool.get_redis("redis://host2:6379/0")
-                assert c1 is not c2
-                assert fake_redis_cls.from_url.call_count == 2
+                check(not not c1 is not c2, "assertion failed")
+                check(not not fake_redis_cls.from_url.call_count == 2, "assertion failed")
         finally:
             redis_pool._CLIENTS.clear()
 
@@ -138,29 +215,34 @@ def test_close_all_closes_and_clears() -> None:
         redis_pool._CLIENTS["redis://a"] = client1
         redis_pool._CLIENTS["redis://b"] = client2
         try:
-            await redis_pool.close_all()
+            close_failures = await redis_pool.close_all()
             client1.aclose.assert_awaited_once()
             client2.aclose.assert_awaited_once()
-            assert len(redis_pool._CLIENTS) == 0
+            check(not not close_failures == 0, "assertion failed")
+            check(not not len(redis_pool._CLIENTS) == 0, "assertion failed")
         finally:
             redis_pool._CLIENTS.clear()
 
     asyncio.run(_run())
 
 
-def test_close_all_tolerates_aclose_errors() -> None:
-    """close_all() should not raise even if aclose() fails on a client."""
+def test_close_all_reports_aclose_errors(monkeypatch) -> None:
+    """close_all() should report aclose failures while still clearing the cache."""
     from zammad_pdf_archiver.adapters import redis_pool
 
     client = AsyncMock()
     client.aclose.side_effect = RuntimeError("connection lost")
+    counter = _FakeCounter()
+    monkeypatch.setattr(redis_pool, "redis_pool_close_failures_total", counter)
 
     async def _run() -> None:
         redis_pool._CLIENTS.clear()
         redis_pool._CLIENTS["redis://broken"] = client
         try:
-            await redis_pool.close_all()  # should not raise
-            assert len(redis_pool._CLIENTS) == 0
+            close_failures = await redis_pool.close_all()
+            check(not not close_failures == 1, "assertion failed")
+            check(not not counter.count == 1, "assertion failed")
+            check(not not len(redis_pool._CLIENTS) == 0, "assertion failed")
         finally:
             redis_pool._CLIENTS.clear()
 

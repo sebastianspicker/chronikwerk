@@ -1,20 +1,10 @@
-"""Maps flat env var names to nested settings keys; deprecated names emit DeprecationWarning."""
+"""Maps supported flat env var names to nested settings keys."""
 
 from __future__ import annotations
 
 import os
-import warnings
 from collections.abc import Iterable, Mapping
 from typing import Any
-
-
-def _warn_deprecated_env_var(old_name: str, new_name: str) -> None:
-    warnings.warn(
-        f"Environment variable '{old_name}' is deprecated. Use '{new_name}' instead. "
-        f"Support for '{old_name}' will be removed in a future version.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
 
 
 def _set_nested(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
@@ -37,21 +27,6 @@ def _apply_alias_mappings(
         value = env.get(env_name)
         if value:
             _set_nested(data, path, value)
-
-
-def _apply_deprecated_aliases(
-    env: Mapping[str, str],
-    data: dict[str, Any],
-    deprecated_mappings: Iterable[tuple[str, str, tuple[str, ...]]],
-) -> None:
-    for old_name, new_name, path in deprecated_mappings:
-        old_value = env.get(old_name)
-        if not old_value:
-            continue
-        if env.get(new_name):
-            continue
-        _warn_deprecated_env_var(old_name, new_name)
-        _set_nested(data, path, old_value)
 
 
 _CANONICAL_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -88,7 +63,6 @@ _CANONICAL_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("FIELDS_ARCHIVE_USER", ("fields", "archive_user")),
     # Storage
     ("STORAGE_ROOT", ("storage", "root")),
-    ("STORAGE_ATOMIC_WRITE", ("storage", "atomic_write")),
     ("STORAGE_FSYNC", ("storage", "fsync")),
     # PDF
     ("PDF_TEMPLATE_VARIANT", ("pdf", "template_variant")),
@@ -105,8 +79,6 @@ _CANONICAL_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SIGNING_PFX_PATH", ("signing", "pfx_path")),
     ("SIGNING_PFX_PASSWORD", ("signing", "pfx_password")),
     ("SIGNING_CERT_PATH", ("signing", "pades", "cert_path")),
-    ("SIGNING_KEY_PATH", ("signing", "pades", "key_path")),
-    ("SIGNING_KEY_PASSWORD", ("signing", "pades", "key_password")),
     ("SIGNING_REASON", ("signing", "pades", "reason")),
     ("SIGNING_LOCATION", ("signing", "pades", "location")),
     ("TSA_ENABLED", ("signing", "timestamp", "enabled")),
@@ -118,7 +90,6 @@ _CANONICAL_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Observability
     ("LOG_LEVEL", ("observability", "log_level")),
     ("LOG_FORMAT", ("observability", "log_format")),
-    ("LOG_JSON", ("observability", "json_logs")),
     ("METRICS_ENABLED", ("observability", "metrics_enabled")),
     ("METRICS_BEARER_TOKEN", ("observability", "metrics_bearer_token")),
     ("HEALTHZ_OMIT_VERSION", ("observability", "healthz_omit_version")),
@@ -154,30 +125,11 @@ _CANONICAL_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("ADMIN_HISTORY_LIMIT", ("admin", "history_limit")),
 )
 
-_DEPRECATED_VALUE_MAPPINGS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("ZAMMAD_URL", "ZAMMAD_BASE_URL", ("zammad", "base_url")),
-    ("TEMPLATE_VARIANT", "PDF_TEMPLATE_VARIANT", ("pdf", "template_variant")),
-    ("RENDER_LOCALE", "PDF_LOCALE", ("pdf", "locale")),
-    ("RENDER_TIMEZONE", "PDF_TIMEZONE", ("pdf", "timezone")),
-    (
-        "OBSERVABILITY_METRICS_ENABLED",
-        "METRICS_ENABLED",
-        ("observability", "metrics_enabled"),
-    ),
-)
-
-# Mapping of deprecated env vars to their canonical names, derived from the
-# runtime alias table used by settings loading.
-_DEPRECATED_ALIASES: dict[str, str] = {
-    old_name: new_name for old_name, new_name, _path in _DEPRECATED_VALUE_MAPPINGS
-}
-
 
 def get_flat_env_settings_source() -> dict[str, Any]:
     env = os.environ
     data: dict[str, Any] = {}
 
     _apply_alias_mappings(env, data, _CANONICAL_MAPPINGS)
-    _apply_deprecated_aliases(env, data, _DEPRECATED_VALUE_MAPPINGS)
 
     return data

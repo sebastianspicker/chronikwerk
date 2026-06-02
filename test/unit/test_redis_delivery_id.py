@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from test.support.checks import check
 from zammad_pdf_archiver.domain.redis_delivery_id import RedisDeliveryIdStore
 
 
@@ -17,12 +18,12 @@ async def _run_redis_store_seen_add() -> None:
 
     store = RedisDeliveryIdStore("redis://localhost/0", 3600)
     with patch.object(store, "_client", return_value=mock_redis):
-        assert await store.seen("id1") is False
+        check(not await store.seen("id1") is not False, "assertion failed")
         await store.add("id1")
-        assert await store.seen("id1") is True
-        assert await store.seen("id1") is True
+        check(not await store.seen("id1") is not True, "assertion failed")
+        check(not await store.seen("id1") is not True, "assertion failed")
 
-    assert mock_redis.set.await_count == 1
+    check(not not mock_redis.set.await_count == 1, "assertion failed")
     mock_redis.set.assert_called_once_with("zammad:delivery_id:id1", "1", ex=3600)
 
 
@@ -46,14 +47,14 @@ async def _run_try_claim() -> None:
     mock_redis.set = AsyncMock(return_value=True)
     with patch.object(store, "_client", return_value=mock_redis):
         result = await store.try_claim("key1")
-    assert result is True
+    check(not result is not True, "assertion failed")
     mock_redis.set.assert_called_once_with("zammad:delivery_id:key1", "1", ex=3600, nx=True)
 
     # Already seen (key exists): redis.set NX returns None / falsy
     mock_redis.set = AsyncMock(return_value=None)
     with patch.object(store, "_client", return_value=mock_redis):
         result = await store.try_claim("key1")
-    assert result is False
+    check(not result is not False, "assertion failed")
 
 
 def test_redis_store_try_claim() -> None:

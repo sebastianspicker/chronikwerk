@@ -254,9 +254,23 @@
       width: 8px;
       height: 8px;
       border-radius: 50%;
+      margin-right: 8px;
+    }
+    .status-indicator.status-unknown {
+      background: var(--fg-secondary);
+      box-shadow: 0 0 8px rgba(148, 163, 184, 0.6);
+    }
+    .status-indicator.status-ok {
       background: var(--success-color);
       box-shadow: 0 0 8px var(--success-color);
-      margin-right: 8px;
+    }
+    .status-indicator.status-error {
+      background: var(--danger-color);
+      box-shadow: 0 0 8px var(--danger-color);
+    }
+    .status-indicator.status-loading {
+      background: var(--accent-color);
+      box-shadow: 0 0 8px var(--accent-color);
     }
 
     /* Toast notification */
@@ -304,7 +318,10 @@
     <div class="panel full-width header-panel">
       <div>
         <h1>Zammad Archiver Admin</h1>
-        <p class="status"><span class="status-indicator"></span>System Dashboard &amp; Maintenance</p>
+        <p class="status">
+          <span id="dashboardStatusIndicator" class="status-indicator status-unknown"></span>
+          <span id="dashboardStatusText">Status unknown</span>
+        </p>
       </div>
       <div class="row" style="margin: 0;">
         <input id="token" type="password" placeholder="Admin Bearer Token" autocomplete="off" autofocus />
@@ -359,7 +376,7 @@
       </div>
       <div class="pre-wrap">
         <button class="btn-copy" onclick="copyPre('actions')">Copy</button>
-        <pre id="actions">Ready.</pre>
+        <pre id="actions">No action run.</pre>
       </div>
     </div>
   </div>
@@ -385,11 +402,19 @@
       const pre = document.getElementById(preId);
       if (!pre) return;
       const text = pre.textContent;
-      if (!text || text === 'No data loaded.' || text === 'Ready.') return;
+      if (!text || text === 'No data loaded.' || text === 'No action run.') return;
       navigator.clipboard.writeText(text).then(
         () => showToast('Copied to clipboard'),
         () => showToast('Copy failed', true),
       );
+    }
+
+    function setDashboardStatus(kind, message) {
+      const indicator = document.getElementById('dashboardStatusIndicator');
+      const text = document.getElementById('dashboardStatusText');
+      indicator.classList.remove('status-unknown', 'status-ok', 'status-error', 'status-loading');
+      indicator.classList.add('status-' + kind);
+      text.textContent = message;
     }
 
     function requireToken() {
@@ -449,28 +474,59 @@
       document.getElementById(elId).textContent = JSON.stringify(data, null, 2);
     }
 
+    function requestSucceeded(out) {
+      return out.status >= 200 && out.status < 300;
+    }
+
+    function failureDetail(out) {
+      const data = out.data || {};
+      if (typeof data.detail === 'string' && data.detail) return data.detail;
+      if (typeof data.error === 'string' && data.error) return data.error;
+      if (typeof data.raw === 'string' && data.raw) return data.raw;
+      return 'No error detail returned';
+    }
+
+    function failureMessage(label, out) {
+      const status = out.status === 0 ? 'network/timeout' : 'HTTP ' + out.status;
+      return label + ' failed (' + status + '): ' + failureDetail(out);
+    }
+
+    function renderRequestOutcome(elId, out, successMessage, failureLabel) {
+      renderJson(elId, out);
+      if (requestSucceeded(out)) {
+        setDashboardStatus('ok', successMessage);
+        showToast(successMessage);
+        return true;
+      }
+
+      const message = failureMessage(failureLabel, out);
+      setDashboardStatus('error', message);
+      showToast(message, true);
+      return false;
+    }
+
     async function loadQueue() {
-      if (!requireToken()) return;
+      if (!requireToken()) return false;
       toggleLoading('btn-refresh', true);
+      setDashboardStatus('loading', 'Loading queue stats');
       try {
         const out = await requestJson('/admin/api/queue/stats');
-        renderJson('queue', out);
-        if (out.status >= 200 && out.status < 300) showToast('Stats loaded');
+        return renderRequestOutcome('queue', out, 'Stats loaded', 'Stats');
       } finally {
         toggleLoading('btn-refresh', false);
       }
     }
 
     async function loadHistory() {
-      if (!requireToken()) return;
+      if (!requireToken()) return false;
       toggleLoading('btn-history', true);
+      setDashboardStatus('loading', 'Loading history');
       try {
         const limit = encodeURIComponent(document.getElementById('historyLimit').value || '100');
         const tid = document.getElementById('historyTicket').value.trim();
         const suffix = tid ? `&ticket_id=${encodeURIComponent(tid)}` : '';
         const out = await requestJson(`/admin/api/history?limit=${limit}${suffix}`);
-        renderJson('history', out);
-        if (out.status >= 200 && out.status < 300) showToast('History loaded');
+        return renderRequestOutcome('history', out, 'History loaded', 'History');
       } finally {
         toggleLoading('btn-history', false);
       }
@@ -484,13 +540,13 @@
         return;
       }
       toggleLoading('btn-retry', true);
+      setDashboardStatus('loading', 'Submitting retry');
       try {
         const out = await requestJson(
           `/admin/api/retry/${encodeURIComponent(id)}`,
           { method: 'POST' },
         );
-        renderJson('actions', out);
-        if (out.status >= 200 && out.status < 300) showToast('Retry accepted');
+        renderRequestOutcome('actions', out, 'Retry accepted', 'Retry');
       } finally {
         toggleLoading('btn-retry', false);
       }
@@ -499,14 +555,19 @@
     async function drainDlq() {
       if (!requireToken()) return;
       toggleLoading('btn-drain', true);
+      setDashboardStatus('loading', 'Draining DLQ');
       try {
         const limit = encodeURIComponent(document.getElementById('drainLimit').value || '100');
         const out = await requestJson(`/admin/api/dlq/drain?limit=${limit}`, { method: 'POST' });
-        renderJson('actions', out);
-        if (out.status >= 200 && out.status < 300) showToast('DLQ drained');
-
-        loadQueue();
-        loadHistory();
+        const ok = renderRequestOutcome('actions', out, 'DLQ drained', 'DLQ drain');
+        if (ok) {
+          const refreshed = await Promise.all([loadQueue(), loadHistory()]);
+          if (refreshed.every(Boolean)) {
+            setDashboardStatus('ok', 'DLQ drained and dashboard refreshed');
+          } else {
+            setDashboardStatus('error', 'DLQ drained, but dashboard refresh incomplete');
+          }
+        }
       } finally {
         toggleLoading('btn-drain', false);
       }
@@ -515,14 +576,19 @@
     async function replayDlq() {
       if (!requireToken()) return;
       toggleLoading('btn-replay', true);
+      setDashboardStatus('loading', 'Replaying DLQ');
       try {
         const limit = encodeURIComponent(document.getElementById('replayLimit').value || '10');
         const out = await requestJson(`/admin/api/dlq/replay?limit=${limit}`, { method: 'POST' });
-        renderJson('actions', out);
-        if (out.status >= 200 && out.status < 300) showToast('DLQ replayed');
-
-        loadQueue();
-        loadHistory();
+        const ok = renderRequestOutcome('actions', out, 'DLQ replayed', 'DLQ replay');
+        if (ok) {
+          const refreshed = await Promise.all([loadQueue(), loadHistory()]);
+          if (refreshed.every(Boolean)) {
+            setDashboardStatus('ok', 'DLQ replayed and dashboard refreshed');
+          } else {
+            setDashboardStatus('error', 'DLQ replayed, but dashboard refresh incomplete');
+          }
+        }
       } finally {
         toggleLoading('btn-replay', false);
       }
@@ -530,7 +596,13 @@
 
     async function loadAll() {
       if (!requireToken()) return;
-      await Promise.all([loadQueue(), loadHistory()]);
+      setDashboardStatus('loading', 'Loading dashboard');
+      const refreshed = await Promise.all([loadQueue(), loadHistory()]);
+      if (refreshed.every(Boolean)) {
+        setDashboardStatus('ok', 'Dashboard loaded');
+      } else {
+        setDashboardStatus('error', 'Dashboard refresh incomplete');
+      }
     }
   </script>
 </body>

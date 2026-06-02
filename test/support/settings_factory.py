@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.config.settings import Settings
 
 
@@ -26,7 +27,10 @@ def make_settings(
     overrides: dict[str, Any] | None = None,
 ) -> Settings:
     data: dict[str, Any] = {
-        "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+        "zammad": {
+            "base_url": "https://zammad.example.local",
+            "api_token": fake_credential("test-token"),
+        },
         "storage": {"root": storage_root},
         "hardening": {
             "webhook": {
@@ -41,4 +45,3 @@ def make_settings(
     if overrides:
         data = _deep_merge(data, overrides)
     return Settings.from_mapping(data)
-

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from html.parser import HTMLParser
-from typing import Any, Protocol
+from typing import Any
 
 import structlog
 
@@ -26,22 +26,6 @@ _HTML_TAG_HINT_RE = re.compile(
     r"<\s*(?:p|div|br|span|a|ul|ol|li|pre|code|blockquote|table|tr|td|th|strong|em|b|i|u)\b",
     re.IGNORECASE,
 )
-
-
-class ZammadSnapshotClient(Protocol):
-    async def get_ticket(self, ticket_id: int) -> ZammadTicket: ...
-
-    async def list_tags(self, ticket_id: int) -> TagList: ...
-
-    async def list_articles(self, ticket_id: int) -> list[ZammadArticle]: ...
-
-
-class ZammadAttachmentClient(Protocol):
-    """Client that can fetch attachment binaries for optional filesystem export."""
-
-    async def get_attachment_content(
-        self, ticket_id: int, article_id: int, attachment_id: int
-    ) -> bytes: ...
 
 
 class _HTMLToText(HTMLParser):
@@ -83,6 +67,7 @@ def _strip_html_to_text(html: str) -> str:
         parser.close()
         return parser.get_text()
     except Exception:
+        log.warning("html_strip_failed", exc_info=True)
         return ""
 
 
@@ -107,39 +92,7 @@ def _party_from_zammad_ref(ref: Any) -> PartyRef | None:
 
 def _article_to_snapshot(article: ZammadArticle) -> Article:
     """Convert a Zammad API article into a domain-layer Article with sanitized HTML/text."""
-    body_raw = article.body if isinstance(article.body, str) else ""
-    body_html = ""
-    body_text = ""
-
-    if body_raw:
-        if _has_html_hint(content_type=article.content_type, body=body_raw):
-            body_html = sanitize_html_fragment(body_raw)
-            if body_html:
-                body_text = _strip_html_to_text(body_html)
-            else:
-                # Sanitizer failure is fail-closed for HTML; keep only a text fallback.
-                body_text = _strip_html_to_text(body_raw)
-        else:
-            body_text = body_raw
-
-    # Best-effort for body_text: if decoding/stripping yielded nothing but we have raw input,
-    # keep it as text (will be escaped by Jinja anyway).
-    if not body_text and body_raw:
-        body_text = body_raw
-
-    attachments: list[AttachmentMeta] = []
-    if isinstance(article.attachments, list):
-        for att in article.attachments:
-            attachment_id = getattr(att, "id", None)
-            attachments.append(
-                AttachmentMeta(
-                    article_id=article.id,
-                    attachment_id=attachment_id if isinstance(attachment_id, int) else None,
-                    filename=getattr(att, "filename", None),
-                    size=getattr(att, "size", None),
-                    content_type=getattr(att, "content_type", None),
-                )
-            )
+    body_html, body_text = _article_body_fields(article)
 
     return Article(
         id=article.id,
@@ -149,7 +102,36 @@ def _article_to_snapshot(article: ZammadArticle) -> Article:
         subject=article.subject,
         body_html=body_html,
         body_text=body_text,
-        attachments=attachments,
+        attachments=_article_attachment_metadata(article),
+    )
+
+
+def _article_body_fields(article: ZammadArticle) -> tuple[str, str]:
+    body_raw = article.body if isinstance(article.body, str) else ""
+    if not body_raw:
+        return "", ""
+    if not _has_html_hint(content_type=article.content_type, body=body_raw):
+        return "", body_raw
+
+    body_html = sanitize_html_fragment(body_raw)
+    body_text = _strip_html_to_text(body_html) if body_html else _strip_html_to_text(body_raw)
+    return body_html, body_text or body_raw
+
+
+def _article_attachment_metadata(article: ZammadArticle) -> list[AttachmentMeta]:
+    if not isinstance(article.attachments, list):
+        return []
+    return [_attachment_metadata(article.id, attachment) for attachment in article.attachments]
+
+
+def _attachment_metadata(article_id: int, attachment: Any) -> AttachmentMeta:
+    attachment_id = getattr(attachment, "id", None)
+    return AttachmentMeta(
+        article_id=article_id,
+        attachment_id=attachment_id if isinstance(attachment_id, int) else None,
+        filename=getattr(attachment, "filename", None),
+        size=getattr(attachment, "size", None),
+        content_type=getattr(attachment, "content_type", None),
     )
 
 
@@ -164,7 +146,7 @@ def _sort_key(article: Article) -> tuple[bool, datetime, int]:
 
 
 async def build_snapshot(
-    client: ZammadSnapshotClient,
+    client: Any,
     ticket_id: int,
     *,
     ticket: ZammadTicket | None = None,
@@ -199,150 +181,175 @@ async def build_snapshot(
 
 async def enrich_attachment_content(
     snapshot: Snapshot,
-    client: ZammadAttachmentClient,
+    client: Any,
     *,
     include_attachment_binary: bool,
     max_attachment_bytes_per_file: int,
     max_total_attachment_bytes: int,
 ) -> Snapshot:
-    """Fetch attachment binaries and set AttachmentMeta.content when within configured limits."""
-    if not _attachment_enrichment_enabled(
-        include_attachment_binary=include_attachment_binary,
-        max_total_attachment_bytes=max_total_attachment_bytes,
-    ):
-        return snapshot
+    """Fetch attachment binaries and record why any binary payload was omitted."""
+    if not include_attachment_binary:
+        return _snapshot_with_omitted_attachment_content(
+            snapshot,
+            reason="binary_inclusion_disabled",
+        )
+    if max_total_attachment_bytes <= 0:
+        return _snapshot_with_omitted_attachment_content(
+            snapshot,
+            reason="total_budget_not_positive",
+        )
 
-    ticket_id = snapshot.ticket.id
-    content_map = await _fetch_attachment_content_with_budget(
+    return await _snapshot_with_fetched_attachment_content(
         snapshot=snapshot,
         client=client,
-        ticket_id=ticket_id,
         max_attachment_bytes_per_file=max_attachment_bytes_per_file,
         max_total_attachment_bytes=max_total_attachment_bytes,
     )
-    return _snapshot_with_attachment_content(
-        snapshot=snapshot,
-        content_map=content_map,
-        max_total_attachment_bytes=max_total_attachment_bytes,
-    )
 
 
-def _attachment_enrichment_enabled(
-    *,
-    include_attachment_binary: bool,
-    max_total_attachment_bytes: int,
-) -> bool:
-    """Guard: only enabled when opted in with a positive byte budget."""
-    return include_attachment_binary and max_total_attachment_bytes > 0
-
-
-async def _fetch_attachment_content_with_budget(
+async def _snapshot_with_fetched_attachment_content(
     *,
     snapshot: Snapshot,
-    client: ZammadAttachmentClient,
-    ticket_id: int,
+    client: Any,
     max_attachment_bytes_per_file: int,
     max_total_attachment_bytes: int,
-) -> dict[tuple[int, int], bytes]:
-    """Fetch attachment binaries without exceeding the configured total byte budget."""
-    content_map: dict[tuple[int, int], bytes] = {}
-    total_so_far = 0
-    for article in snapshot.articles:
-        for att in article.attachments:
-            if att.attachment_id is None:
-                continue
-
-            remaining_budget = max_total_attachment_bytes - total_so_far
-            if remaining_budget <= 0:
-                return content_map
-
-            if att.size is not None and att.size > max_attachment_bytes_per_file:
-                continue
-            if att.size is not None and att.size > remaining_budget:
-                return content_map
-
-            try:
-                raw = await client.get_attachment_content(ticket_id, article.id, att.attachment_id)
-            except Exception:
-                log.warning(
-                    "attachment_fetch_failed",
-                    ticket_id=ticket_id,
-                    article_id=article.id,
-                    attachment_id=att.attachment_id,
-                    exc_info=True,
-                )
-                continue
-            if len(raw) > max_attachment_bytes_per_file:
-                continue
-            if len(raw) > remaining_budget:
-                return content_map
-
-            content_map[(article.id, att.attachment_id)] = raw
-            total_so_far += len(raw)
-
-    return content_map
-
-
-def _snapshot_with_attachment_content(
-    *,
-    snapshot: Snapshot,
-    content_map: dict[tuple[int, int], bytes],
-    max_total_attachment_bytes: int,
 ) -> Snapshot:
+    """Fetch attachment binaries without exceeding the configured total byte budget."""
+    ticket_id = snapshot.ticket.id
     total_so_far = 0
+    budget_exhausted = False
     new_articles: list[Article] = []
     for article in snapshot.articles:
         new_attachments: list[AttachmentMeta] = []
         for att in article.attachments:
-            content, total_so_far = _bounded_content_for_attachment(
+            updated, bytes_added, budget_exhausted = await _attachment_with_content_budget(
+                att,
+                client=client,
+                ticket_id=ticket_id,
                 article_id=article.id,
-                attachment=att,
-                content_map=content_map,
-                total_so_far=total_so_far,
-                max_total_attachment_bytes=max_total_attachment_bytes,
+                budget_exhausted=budget_exhausted,
+                remaining_budget=max_total_attachment_bytes - total_so_far,
+                max_attachment_bytes_per_file=max_attachment_bytes_per_file,
             )
-            new_attachments.append(_copy_attachment(att, content=content))
-        new_articles.append(_copy_article(article, attachments=new_attachments))
+            total_so_far += bytes_added
+            new_attachments.append(updated)
+        new_articles.append(article.model_copy(update={"attachments": new_attachments}))
     return Snapshot(ticket=snapshot.ticket, articles=new_articles)
 
 
-def _bounded_content_for_attachment(
+async def _attachment_with_content_budget(
+    att: AttachmentMeta,
     *,
+    client: Any,
+    ticket_id: int,
     article_id: int,
-    attachment: AttachmentMeta,
-    content_map: dict[tuple[int, int], bytes],
-    total_so_far: int,
-    max_total_attachment_bytes: int,
-) -> tuple[bytes | None, int]:
-    if attachment.attachment_id is None:
-        return None, total_so_far
-    content = content_map.get((article_id, attachment.attachment_id))
-    if not content:
-        return None, total_so_far
-    if total_so_far + len(content) > max_total_attachment_bytes:
-        return None, total_so_far
-    return content, total_so_far + len(content)
+    budget_exhausted: bool,
+    remaining_budget: int,
+    max_attachment_bytes_per_file: int,
+) -> tuple[AttachmentMeta, int, bool]:
+    content: bytes | None = None
+    omission_reason, budget_exhausted = _prefetch_attachment_omission_reason(
+        att,
+        budget_exhausted=budget_exhausted,
+        remaining_budget=remaining_budget,
+        max_attachment_bytes_per_file=max_attachment_bytes_per_file,
+    )
+    bytes_added = 0
+    if omission_reason is None:
+        attachment_id = _required_attachment_id(att)
+        raw = await _fetch_attachment_content(
+            client,
+            ticket_id=ticket_id,
+            article_id=article_id,
+            attachment_id=attachment_id,
+        )
+        content, omission_reason, budget_exhausted, bytes_added = _fetched_attachment_outcome(
+            raw,
+            remaining_budget=remaining_budget,
+            max_attachment_bytes_per_file=max_attachment_bytes_per_file,
+        )
 
-
-def _copy_attachment(att: AttachmentMeta, *, content: bytes | None) -> AttachmentMeta:
-    return AttachmentMeta(
-        article_id=att.article_id,
-        attachment_id=att.attachment_id,
-        filename=att.filename,
-        size=att.size,
-        content_type=att.content_type,
-        content=content,
+    return (
+        att.model_copy(
+            update={
+                "content": content,
+                "content_omission_reason": omission_reason,
+            }
+        ),
+        bytes_added,
+        budget_exhausted,
     )
 
 
-def _copy_article(article: Article, *, attachments: list[AttachmentMeta]) -> Article:
-    return Article(
-        id=article.id,
-        created_at=article.created_at,
-        internal=article.internal,
-        sender=article.sender,
-        subject=article.subject,
-        body_html=article.body_html,
-        body_text=article.body_text,
-        attachments=attachments,
-    )
+def _required_attachment_id(att: AttachmentMeta) -> int:
+    if att.attachment_id is None:
+        raise RuntimeError("attachment id unexpectedly missing after prefetch validation")
+    return att.attachment_id
+
+
+async def _fetch_attachment_content(
+    client: Any,
+    *,
+    ticket_id: int,
+    article_id: int,
+    attachment_id: int,
+) -> bytes:
+    try:
+        return await client.get_attachment_content(ticket_id, article_id, attachment_id)
+    except Exception:
+        log.warning(
+            "attachment_fetch_failed",
+            ticket_id=ticket_id,
+            article_id=article_id,
+            attachment_id=attachment_id,
+            exc_info=True,
+        )
+        raise
+
+
+def _fetched_attachment_outcome(
+    raw: bytes,
+    *,
+    remaining_budget: int,
+    max_attachment_bytes_per_file: int,
+) -> tuple[bytes | None, str | None, bool, int]:
+    if len(raw) > max_attachment_bytes_per_file:
+        return None, "per_file_limit_fetched_size", False, 0
+    if len(raw) > remaining_budget:
+        return None, "total_budget_exhausted", True, 0
+    return raw, None, False, len(raw)
+
+
+def _prefetch_attachment_omission_reason(
+    att: AttachmentMeta,
+    *,
+    budget_exhausted: bool,
+    remaining_budget: int,
+    max_attachment_bytes_per_file: int,
+) -> tuple[str | None, bool]:
+    if att.attachment_id is None:
+        return "missing_attachment_id", budget_exhausted
+    if budget_exhausted or remaining_budget <= 0:
+        return "total_budget_exhausted", True
+    if att.size is not None and att.size > max_attachment_bytes_per_file:
+        return "per_file_limit_declared_size", budget_exhausted
+    if att.size is not None and att.size > remaining_budget:
+        return "total_budget_exhausted", True
+    return None, budget_exhausted
+
+
+def _snapshot_with_omitted_attachment_content(snapshot: Snapshot, *, reason: str) -> Snapshot:
+    new_articles: list[Article] = []
+    for article in snapshot.articles:
+        new_attachments: list[AttachmentMeta] = []
+        for att in article.attachments:
+            new_attachments.append(
+                att.model_copy(
+                    update={
+                        "content": None,
+                        "content_omission_reason": reason,
+                    }
+                )
+            )
+        new_articles.append(article.model_copy(update={"attachments": new_attachments}))
+    return Snapshot(ticket=snapshot.ticket, articles=new_articles)

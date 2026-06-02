@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.jobs.shutdown import clear_shutting_down, set_shutting_down
 from zammad_pdf_archiver.config.settings import Settings
@@ -17,6 +19,7 @@ from zammad_pdf_archiver.domain.redis_delivery_id import RedisDeliveryIdStore
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_settings(
     *,
@@ -34,12 +37,15 @@ def _make_settings(
         overrides["workflow"]["redis_url"] = redis_url
     return Settings.from_mapping(
         {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": "/tmp/test-ticket-stores"},
+            "zammad": {
+                "base_url": "https://zammad.example.local",
+                "api_token": fake_credential("test-token"),
+            },
+            "storage": {"root": "/var/lib/test-ticket-stores"},
             "hardening": {
                 "webhook": {
                     "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": True,
+                    "allow_unsigned_when_no_secret": bool(1),
                 }
             },
             **overrides,
@@ -57,6 +63,14 @@ def _reset_stores():
     clear_shutting_down()
 
 
+class _FakeCounter:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def inc(self) -> None:
+        self.count += 1
+
+
 # ===================================================================
 # 1. Delivery ID store selection
 # ===================================================================
@@ -72,7 +86,7 @@ class TestDeliveryIdStoreSelection:
         async def _run() -> None:
             async with ticket_stores._STORE_GUARD:
                 store = ticket_stores._get_delivery_id_store(settings)
-            assert store is None
+            check(not store is not None, "assertion failed")
 
         asyncio.run(_run())
 
@@ -83,7 +97,7 @@ class TestDeliveryIdStoreSelection:
         async def _run() -> None:
             async with ticket_stores._STORE_GUARD:
                 store = ticket_stores._get_delivery_id_store(settings)
-            assert isinstance(store, InMemoryTTLSet)
+            check(not not isinstance(store, InMemoryTTLSet), "assertion failed")
 
         asyncio.run(_run())
 
@@ -93,10 +107,10 @@ class TestDeliveryIdStoreSelection:
 
         async def _run() -> None:
             result = await ticket_stores.try_claim_delivery_id(settings, "any-id")
-            assert result is True
+            check(not result is not True, "assertion failed")
             # Should be True every time -- no deduplication.
             result2 = await ticket_stores.try_claim_delivery_id(settings, "any-id")
-            assert result2 is True
+            check(not result2 is not True, "assertion failed")
 
         asyncio.run(_run())
 
@@ -116,7 +130,7 @@ class TestTicketLockStore:
         async def _run() -> None:
             async with ticket_stores._STORE_GUARD:
                 store = ticket_stores._get_ticket_lock_store(settings)
-            assert store is None
+            check(not store is not None, "assertion failed")
 
         asyncio.run(_run())
 
@@ -128,7 +142,7 @@ class TestTicketLockStore:
         async def _run() -> None:
             async with ticket_stores._STORE_GUARD:
                 store = ticket_stores._get_ticket_lock_store(settings)
-            assert store is None
+            check(not store is not None, "assertion failed")
 
         asyncio.run(_run())
 
@@ -147,8 +161,8 @@ class TestTryAcquireTicket:
 
         async def _run() -> None:
             acquired = await ticket_stores.try_acquire_ticket(settings, 1)
-            assert acquired is True
-            assert ticket_stores.is_ticket_in_flight(1)
+            check(not acquired is not True, "assertion failed")
+            check(not not ticket_stores.is_ticket_in_flight(1), "assertion failed")
 
         asyncio.run(_run())
 
@@ -158,9 +172,9 @@ class TestTryAcquireTicket:
 
         async def _run() -> None:
             first = await ticket_stores.try_acquire_ticket(settings, 42)
-            assert first is True
+            check(not first is not True, "assertion failed")
             second = await ticket_stores.try_acquire_ticket(settings, 42)
-            assert second is False
+            check(not second is not False, "assertion failed")
 
         asyncio.run(_run())
 
@@ -179,7 +193,7 @@ class TestTryAcquireTicket:
             ):
                 with pytest.raises(TransientError, match="Redis ticket lock unavailable"):
                     await ticket_stores.try_acquire_ticket(settings, 99)
-            assert not ticket_stores.is_ticket_in_flight(99)
+            check(not not not ticket_stores.is_ticket_in_flight(99), "assertion failed")
 
         asyncio.run(_run())
 
@@ -198,9 +212,9 @@ class TestReleaseTicket:
 
         async def _run() -> None:
             await ticket_stores.try_acquire_ticket(settings, 7)
-            assert ticket_stores.is_ticket_in_flight(7)
+            check(not not ticket_stores.is_ticket_in_flight(7), "assertion failed")
             await ticket_stores.release_ticket(settings, 7)
-            assert not ticket_stores.is_ticket_in_flight(7)
+            check(not not not ticket_stores.is_ticket_in_flight(7), "assertion failed")
 
         asyncio.run(_run())
 
@@ -211,7 +225,7 @@ class TestReleaseTicket:
         async def _run() -> None:
             # Should succeed silently.
             await ticket_stores.release_ticket(settings, 999)
-            assert not ticket_stores.is_ticket_in_flight(999)
+            check(not not not ticket_stores.is_ticket_in_flight(999), "assertion failed")
 
         asyncio.run(_run())
 
@@ -230,13 +244,64 @@ class TestIsTicketInFlight:
 
         async def _run() -> None:
             await ticket_stores.try_acquire_ticket(settings, 10)
-            assert ticket_stores.is_ticket_in_flight(10) is True
+            check(not ticket_stores.is_ticket_in_flight(10) is not True, "assertion failed")
 
         asyncio.run(_run())
 
     def test_is_ticket_in_flight_false(self) -> None:
         """Returns False when ticket is not in the local in-flight set."""
-        assert ticket_stores.is_ticket_in_flight(12345) is False
+        check(not ticket_stores.is_ticket_in_flight(12345) is not False, "assertion failed")
+
+    def test_is_ticket_distributed_in_flight_without_redis_returns_none(self) -> None:
+        """Without a distributed lock store, status has no Redis visibility."""
+        settings = _make_settings(backend="memory")
+
+        async def _run() -> None:
+            check(
+                not await ticket_stores.is_ticket_distributed_in_flight(settings, 12345)
+                is not None,
+                "assertion failed",
+            )
+
+        asyncio.run(_run())
+
+    def test_is_ticket_distributed_in_flight_reads_redis_lock(self) -> None:
+        """With a Redis lock store, status reflects the distributed lock."""
+        settings = _make_settings(backend="redis", redis_url="redis://localhost:6379/0")
+        mock_store = AsyncMock()
+        mock_store.seen = AsyncMock(return_value=True)
+
+        async def _run() -> None:
+            with patch.object(
+                ticket_stores,
+                "_get_ticket_lock_store",
+                return_value=mock_store,
+            ):
+                check(
+                    not await ticket_stores.is_ticket_distributed_in_flight(settings, 404)
+                    is not True,
+                    "assertion failed",
+                )
+            mock_store.seen.assert_awaited_once_with("404")
+
+        asyncio.run(_run())
+
+    def test_is_ticket_distributed_in_flight_redis_failure_raises_transient(self) -> None:
+        """Redis status failures fail closed instead of reporting a false idle state."""
+        settings = _make_settings(backend="redis", redis_url="redis://localhost:6379/0")
+        mock_store = AsyncMock()
+        mock_store.seen = AsyncMock(side_effect=ConnectionError("redis down"))
+
+        async def _run() -> None:
+            with patch.object(
+                ticket_stores,
+                "_get_ticket_lock_store",
+                return_value=mock_store,
+            ):
+                with pytest.raises(TransientError, match="Redis ticket lock unavailable"):
+                    await ticket_stores.is_ticket_distributed_in_flight(settings, 404)
+
+        asyncio.run(_run())
 
 
 # ===================================================================
@@ -249,28 +314,26 @@ class TestDeliveryIdStoreRedisBackend:
 
     def test_delivery_id_store_redis_backend(self) -> None:
         """Redis backend with positive ttl returns a RedisDeliveryIdStore."""
-        settings = _make_settings(
-            ttl=120, backend="redis", redis_url="redis://localhost:6379/0"
-        )
+        settings = _make_settings(ttl=120, backend="redis", redis_url="redis://localhost:6379/0")
 
         async def _run() -> None:
             async with ticket_stores._STORE_GUARD:
                 store = ticket_stores._get_delivery_id_store(settings)
-            assert isinstance(store, RedisDeliveryIdStore)
+            if not isinstance(store, RedisDeliveryIdStore):
+                raise AssertionError("assertion failed")
+            check(not not store._prefix == "zammad:delivery_id:", "assertion failed")
 
         asyncio.run(_run())
 
     def test_delivery_id_store_redis_cached(self) -> None:
         """Repeated calls with same params return the same store instance."""
-        settings = _make_settings(
-            ttl=120, backend="redis", redis_url="redis://localhost:6379/0"
-        )
+        settings = _make_settings(ttl=120, backend="redis", redis_url="redis://localhost:6379/0")
 
         async def _run() -> None:
             async with ticket_stores._STORE_GUARD:
                 store1 = ticket_stores._get_delivery_id_store(settings)
                 store2 = ticket_stores._get_delivery_id_store(settings)
-            assert store1 is store2
+            check(not store1 is not store2, "assertion failed")
 
         asyncio.run(_run())
 
@@ -285,15 +348,14 @@ class TestTicketLockRedisBackend:
 
     def test_ticket_lock_store_with_redis(self) -> None:
         """Redis backend returns a RedisDeliveryIdStore with ticket lock prefix."""
-        settings = _make_settings(
-            backend="redis", redis_url="redis://localhost:6379/0"
-        )
+        settings = _make_settings(backend="redis", redis_url="redis://localhost:6379/0")
 
         async def _run() -> None:
             async with ticket_stores._STORE_GUARD:
                 store = ticket_stores._get_ticket_lock_store(settings)
-            assert isinstance(store, RedisDeliveryIdStore)
-            assert store._prefix == ticket_stores._TICKET_LOCK_PREFIX
+            if not isinstance(store, RedisDeliveryIdStore):
+                raise AssertionError("assertion failed")
+            check(not not store._prefix == ticket_stores._TICKET_LOCK_PREFIX, "assertion failed")
 
         asyncio.run(_run())
 
@@ -320,9 +382,9 @@ class TestTryAcquireDistributed:
                 return_value=mock_store,
             ):
                 acquired = await ticket_stores.try_acquire_ticket(settings, 77)
-            assert acquired is False
+            check(not acquired is not False, "assertion failed")
             # Local lock must also be released.
-            assert not ticket_stores.is_ticket_in_flight(77)
+            check(not not not ticket_stores.is_ticket_in_flight(77), "assertion failed")
 
         asyncio.run(_run())
 
@@ -350,18 +412,21 @@ class TestReleaseTicketDistributed:
                 "_get_ticket_lock_store",
                 return_value=mock_store,
             ):
-                await ticket_stores.release_ticket(settings, 55)
-            assert not ticket_stores.is_ticket_in_flight(55)
+                released = await ticket_stores.release_ticket(settings, 55)
+            check(not released is not True, "assertion failed")
+            check(not not not ticket_stores.is_ticket_in_flight(55), "assertion failed")
             mock_store.release.assert_awaited_once_with("55")
 
         asyncio.run(_run())
 
-    def test_release_ticket_distributed_failure(self) -> None:
-        """Redis release failure is swallowed (only logs warning)."""
+    def test_release_ticket_distributed_failure(self, monkeypatch) -> None:
+        """Redis release failure is returned and counted while local state is cleared."""
         settings = _make_settings(backend="redis", redis_url="redis://localhost:6379/0")
 
         mock_store = AsyncMock()
         mock_store.release = AsyncMock(side_effect=ConnectionError("redis down"))
+        counter = _FakeCounter()
+        monkeypatch.setattr(ticket_stores, "ticket_lock_redis_release_failures_total", counter)
 
         async def _run() -> None:
             ticket_stores._IN_FLIGHT_TICKETS.add(56)
@@ -370,9 +435,10 @@ class TestReleaseTicketDistributed:
                 "_get_ticket_lock_store",
                 return_value=mock_store,
             ):
-                # Should not raise.
-                await ticket_stores.release_ticket(settings, 56)
-            assert not ticket_stores.is_ticket_in_flight(56)
+                released = await ticket_stores.release_ticket(settings, 56)
+            check(not released is not False, "assertion failed")
+            check(not not not ticket_stores.is_ticket_in_flight(56), "assertion failed")
+            check(not not counter.count == 1, "assertion failed")
 
         asyncio.run(_run())
 
@@ -396,28 +462,32 @@ class TestAcloseStores:
             ticket_stores._DELIVERY_ID_SETS[60] = InMemoryTTLSet(ttl_seconds=60.0)
             ticket_stores._IN_FLIGHT_TICKETS.add(1)
 
-            await ticket_stores.aclose_stores()
+            close_failures = await ticket_stores.aclose_stores()
 
             mock_store.aclose.assert_awaited_once()
-            assert len(ticket_stores._REDIS_STORES) == 0
-            assert len(ticket_stores._DELIVERY_ID_SETS) == 0
-            assert len(ticket_stores._IN_FLIGHT_TICKETS) == 0
+            check(not not close_failures == 0, "assertion failed")
+            check(not not len(ticket_stores._REDIS_STORES) == 0, "assertion failed")
+            check(not not len(ticket_stores._DELIVERY_ID_SETS) == 0, "assertion failed")
+            check(not not len(ticket_stores._IN_FLIGHT_TICKETS) == 0, "assertion failed")
 
         asyncio.run(_run())
 
-    def test_aclose_stores_handles_error(self) -> None:
-        """aclose_stores swallows errors from individual store.aclose calls."""
+    def test_aclose_stores_handles_error(self, monkeypatch) -> None:
+        """aclose_stores reports errors from individual store.aclose calls."""
         mock_store = AsyncMock()
         mock_store.aclose = AsyncMock(side_effect=RuntimeError("close failed"))
+        counter = _FakeCounter()
+        monkeypatch.setattr(ticket_stores, "redis_store_close_failures_total", counter)
 
         async def _run() -> None:
             ticket_stores._REDIS_STORES[("redis://x", 300, None)] = mock_store
 
-            # Should not raise despite the store failing to close.
-            await ticket_stores.aclose_stores()
+            close_failures = await ticket_stores.aclose_stores()
 
             mock_store.aclose.assert_awaited_once()
+            check(not not close_failures == 1, "assertion failed")
+            check(not not counter.count == 1, "assertion failed")
             # Caches are still cleared even after the error.
-            assert len(ticket_stores._REDIS_STORES) == 0
+            check(not not len(ticket_stores._REDIS_STORES) == 0, "assertion failed")
 
         asyncio.run(_run())

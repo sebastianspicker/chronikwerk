@@ -39,6 +39,7 @@ class AttachmentMeta(_SnapshotModel):
     content_type: str | None = None
     # Optional binary payload, set only when pdf.include_attachment_binary is enabled.
     content: bytes | None = None
+    content_omission_reason: str | None = None
 
 
 class Article(_SnapshotModel):

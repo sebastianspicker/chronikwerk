@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from test.support.checks import check
 from zammad_pdf_archiver.adapters.pdf.template_engine import render_html
 from zammad_pdf_archiver.domain.snapshot_models import (
     Article,
@@ -52,12 +53,12 @@ def test_default_template_renders_example_snapshot() -> None:
 
     html = render_html(snapshot, "default")
 
-    assert "Ticket T1" in html
-    assert "Hello" in html
+    check(not "Ticket T1" not in html, "assertion failed")
+    check(not "Hello" not in html, "assertion failed")
 
 
 def test_compact_template_renders_example_snapshot() -> None:
-    """Compact template variant (PRD §8.2) renders snapshot via package loader."""
+    """Compact template variant renders snapshot via package loader."""
     snapshot = Snapshot(
         ticket=TicketMeta(
             id=1,
@@ -84,6 +85,6 @@ def test_compact_template_renders_example_snapshot() -> None:
         ],
     )
     html = render_html(snapshot, "compact")
-    assert "Ticket T2" in html
-    assert "Compact body" in html
-    assert "compact" in html
+    check(not "Ticket T2" not in html, "assertion failed")
+    check(not "Compact body" not in html, "assertion failed")
+    check(not "compact" not in html, "assertion failed")

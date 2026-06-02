@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test.support.checks import check
+
 
 def _parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -22,7 +24,7 @@ def test_systemd_env_template_does_not_force_missing_config_path() -> None:
     env = _parse_env_file(env_path)
 
     # The YAML config is optional; default template should not force a missing file.
-    assert env.get("CONFIG_PATH", "") == ""
+    check(not not env.get("CONFIG_PATH", "") == "", "assertion failed")
 
 
 def test_systemd_env_template_marks_webhook_secret_as_required_by_default() -> None:
@@ -30,5 +32,8 @@ def test_systemd_env_template_marks_webhook_secret_as_required_by_default() -> N
     env_path = repo_root / "infra" / "systemd" / "zammad-archiver.env"
     text = env_path.read_text("utf-8")
 
-    assert "Webhook auth (required unless you explicitly enable unsigned mode" in text
-    assert "WEBHOOK_HMAC_SECRET" in text
+    check(
+        not "Webhook auth (required unless you explicitly enable unsigned mode" not in text,
+        "assertion failed",
+    )
+    check(not "WEBHOOK_HMAC_SECRET" not in text, "assertion failed")

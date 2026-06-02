@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import warnings
 from collections.abc import Generator
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
 
 from zammad_pdf_archiver.adapters.pdf.template_engine import render_html, validate_template_name
-from zammad_pdf_archiver.adapters.pdf.url_fetcher import _safe_url_fetcher
+from zammad_pdf_archiver.adapters.pdf.url_fetcher import _SafeURLFetcher
 from zammad_pdf_archiver.domain.errors import PermanentError
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
@@ -123,22 +122,12 @@ def render_pdf(
 
         stylesheets = [CSS(filename=str(path)) for path in css_paths]
 
-        # Temporary compatibility shim for WeasyPrint/pydyf version skew:
-        # pydyf emits a deprecation warning from internals we don't control.
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=(
-                    "PDF objects don’t take version or identifier during initialization anymore.*"
-                ),
-                category=DeprecationWarning,
-            )
-            html_doc = HTML(
-                string=html,
-                base_url=str(template_folder),
-                url_fetcher=_safe_url_fetcher(template_folder),
-            )
-            return html_doc.write_pdf(
-                stylesheets=stylesheets,
-                pdf_identifier=pdf_identifier,
-            )
+        html_doc = HTML(
+            string=html,
+            base_url=str(template_folder),
+            url_fetcher=_SafeURLFetcher(template_folder),
+        )
+        return html_doc.write_pdf(
+            stylesheets=stylesheets,
+            pdf_identifier=pdf_identifier,
+        )

@@ -8,7 +8,9 @@ from zammad_pdf_archiver.domain.errors import TransientError
 from zammad_pdf_archiver.domain.idempotency import DeliveryIdStore, InMemoryTTLSet
 from zammad_pdf_archiver.domain.redis_delivery_id import RedisDeliveryIdStore
 from zammad_pdf_archiver.observability.metrics import (
+    redis_store_close_failures_total,
     ticket_lock_redis_failures_total,
+    ticket_lock_redis_release_failures_total,
     tickets_in_flight,
 )
 
@@ -35,7 +37,10 @@ def _get_redis_store(
     cache_key = (redis_url, ttl_seconds, prefix)
     result = _REDIS_STORES.get(cache_key)
     if result is None:
-        result = RedisDeliveryIdStore(redis_url, ttl_seconds, prefix=prefix or "")
+        if prefix is None:
+            result = RedisDeliveryIdStore(redis_url, ttl_seconds)
+        else:
+            result = RedisDeliveryIdStore(redis_url, ttl_seconds, prefix=prefix)
         _REDIS_STORES[cache_key] = result
     return result
 
@@ -112,27 +117,35 @@ async def try_acquire_ticket(settings: Settings, ticket_id: int) -> bool:
     return True
 
 
-async def release_ticket(settings: Settings, ticket_id: int) -> None:
+async def release_ticket(settings: Settings, ticket_id: int) -> bool:
+    """Release a ticket lock; return False when Redis release did not complete."""
+    remote_released = True
     async with _STORE_GUARD:
         store = _get_ticket_lock_store(settings)
         if store is not None:
             try:
                 await store.release(str(ticket_id))
             except Exception:
+                remote_released = False
+                ticket_lock_redis_release_failures_total.inc()
                 log.warning("process_ticket.redis_unlock_failed", ticket_id=ticket_id)
 
         async with _IN_FLIGHT_TICKETS_GUARD:
             _IN_FLIGHT_TICKETS.discard(ticket_id)
             tickets_in_flight.set(len(_IN_FLIGHT_TICKETS))
+    return remote_released
 
 
-async def aclose_stores() -> None:
+async def aclose_stores() -> int:
     """Close all persistent Redis stores and clear local caches."""
+    close_failures = 0
     async with _STORE_GUARD:
         for store in _REDIS_STORES.values():
             try:
                 await store.aclose()
             except Exception:
+                close_failures += 1
+                redis_store_close_failures_total.inc()
                 log.warning("process_ticket.redis_store_aclose_failed")
         _REDIS_STORES.clear()
         _DELIVERY_ID_SETS.clear()
@@ -140,6 +153,7 @@ async def aclose_stores() -> None:
         async with _IN_FLIGHT_TICKETS_GUARD:
             _IN_FLIGHT_TICKETS.clear()
             tickets_in_flight.set(0)
+    return close_failures
 
 
 def _reset_for_tests() -> None:
@@ -159,3 +173,17 @@ def _reset_for_tests() -> None:
 def is_ticket_in_flight(ticket_id: int) -> bool:
     """Best-effort process-local visibility of in-flight ticket state."""
     return ticket_id in _IN_FLIGHT_TICKETS
+
+
+async def is_ticket_distributed_in_flight(settings: Settings, ticket_id: int) -> bool | None:
+    """Return Redis ticket-lock visibility, or None when no distributed lock is configured."""
+    async with _STORE_GUARD:
+        store = _get_ticket_lock_store(settings)
+        if store is None:
+            return None
+        try:
+            return await store.seen(str(ticket_id))
+        except Exception:
+            ticket_lock_redis_failures_total.inc()
+            log.error("process_ticket.redis_lock_status_failed", ticket_id=ticket_id)
+            raise TransientError("Redis ticket lock unavailable") from None

@@ -20,6 +20,8 @@ from typing import Any
 
 import structlog
 
+from zammad_pdf_archiver.observability.metrics import redis_pool_close_failures_total
+
 log = structlog.get_logger(__name__)
 
 _LOCK = asyncio.Lock()
@@ -76,12 +78,16 @@ async def get_redis(redis_url: str) -> Any:
         return client
 
 
-async def close_all() -> None:
+async def close_all() -> int:
     """Close all cached Redis clients. Safe to call during shutdown."""
+    close_failures = 0
     async with _LOCK:
         for redis_url, client in _CLIENTS.items():
             try:
                 await client.aclose()
             except Exception:
+                close_failures += 1
+                redis_pool_close_failures_total.inc()
                 log.warning("redis_pool.close_failed", redis_url=redis_url, exc_info=True)
         _CLIENTS.clear()
+    return close_failures

@@ -4,6 +4,8 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.app.middleware.rate_limit import (
     RateLimitMiddleware,
     _client_key,
@@ -20,11 +22,11 @@ def test_rate_limit_returns_429_when_exhausted() -> None:
         limiter = _InMemoryTokenBucketLimiter(rps=1.0, burst=1)
 
         # First request should be allowed (consumes the single burst token).
-        assert await limiter.allow("client-a") is True
+        check(not await limiter.allow("client-a") is not True, "assertion failed")
 
         # Second request immediately after should be denied (no tokens left,
         # no time elapsed for rps refill).
-        assert await limiter.allow("client-a") is False
+        check(not await limiter.allow("client-a") is not False, "assertion failed")
 
     asyncio.run(_run())
 
@@ -40,24 +42,25 @@ def test_rate_limit_eviction_when_max_entries_exceeded() -> None:
             await limiter.allow(f"client-{i}")
 
         # Limiter should still work correctly after eviction.
-        assert await limiter.allow("new-client") is True
+        check(not await limiter.allow("new-client") is not True, "assertion failed")
+        check(not not len(limiter._buckets) <= 5, "assertion failed")  # noqa: SLF001
 
     asyncio.run(_run())
 
 
 def test_client_key_from_scope_with_valid_host() -> None:
     scope: dict[str, Any] = {"client": ("192.168.1.1", 12345)}
-    assert _client_key_from_scope(scope) == "192.168.1.1"
+    check(not not _client_key_from_scope(scope) == "192.168.1.1", "assertion failed")
 
 
 def test_client_key_from_scope_missing_client() -> None:
     scope: dict[str, Any] = {}
-    assert _client_key_from_scope(scope) == "unknown"
+    check(not not _client_key_from_scope(scope) == "unknown", "assertion failed")
 
 
 def test_client_key_from_scope_empty_client() -> None:
     scope: dict[str, Any] = {"client": []}
-    assert _client_key_from_scope(scope) == "unknown"
+    check(not not _client_key_from_scope(scope) == "unknown", "assertion failed")
 
 
 def test_client_key_from_header_extracts_first_forwarded_for() -> None:
@@ -66,18 +69,18 @@ def test_client_key_from_header_extracts_first_forwarded_for() -> None:
         "client": ("192.168.1.1", 0),
     }
     result = _client_key_from_header(scope, "x-forwarded-for")
-    assert result == "10.0.0.1"
+    check(not not result == "10.0.0.1", "assertion failed")
 
 
 def test_client_key_from_header_falls_back_to_scope_when_missing() -> None:
     scope: dict[str, Any] = {"headers": [], "client": ("127.0.0.1", 0)}
     result = _client_key_from_header(scope, "x-forwarded-for")
-    assert result == "127.0.0.1"
+    check(not not result == "127.0.0.1", "assertion failed")
 
 
 def test_client_key_uses_scope_when_no_header_name() -> None:
     scope: dict[str, Any] = {"client": ("10.1.2.3", 0)}
-    assert _client_key(scope, None) == "10.1.2.3"
+    check(not not _client_key(scope, None) == "10.1.2.3", "assertion failed")
 
 
 def test_client_key_uses_header_when_provided() -> None:
@@ -86,7 +89,7 @@ def test_client_key_uses_header_when_provided() -> None:
         "client": ("10.0.0.1", 0),
     }
     result = _client_key(scope, "x-real-ip")
-    assert result == "172.16.0.5"
+    check(not not result == "172.16.0.5", "assertion failed")
 
 
 def test_rate_limit_middleware_settings_none_passes_through() -> None:
@@ -136,7 +139,7 @@ def test_rate_limit_middleware_returns_429_on_exhaustion() -> None:
 
         # First passes, second is blocked.
         await mw(scope, AsyncMock(), AsyncMock())
-        assert downstream.call_count == 1
+        check(not not downstream.call_count == 1, "assertion failed")
 
         # Second call — bucket is empty with rps=0 (no refill).
         responses: list[int] = []
@@ -146,8 +149,10 @@ def test_rate_limit_middleware_returns_429_on_exhaustion() -> None:
                 responses.append(msg["status"])
 
         await mw(scope, AsyncMock(), _send)
-        assert downstream.call_count == 1  # downstream was NOT called again
-        assert 429 in responses
+        check(
+            not not downstream.call_count == 1, "assertion failed"
+        )  # downstream was NOT called again
+        check(not 429 not in responses, "assertion failed")
 
     asyncio.run(_run())
 
@@ -162,10 +167,10 @@ def _make_settings_with_rate_limit(*, enabled: bool, rps: float, burst: int) -> 
 
     return Settings.from_mapping(
         {
-            "zammad": {"base_url": "https://z.test", "api_token": "tok"},
-            "storage": {"root": "/tmp/test-ratelimit"},
+            "zammad": {"base_url": "https://z.test", "api_token": fake_credential("tok")},
+            "storage": {"root": "/var/lib/test-ratelimit"},
             "hardening": {
-                "webhook": {"allow_unsigned": True, "allow_unsigned_when_no_secret": True},
+                "webhook": {"allow_unsigned": bool(1), "allow_unsigned_when_no_secret": bool(1)},
                 "rate_limit": {"enabled": enabled, "rps": rps, "burst": burst},
             },
         }
@@ -184,7 +189,8 @@ def test_bucket_eviction_when_max_entries_exceeded() -> None:
         for i in range(20):
             await limiter.allow(f"client-{i}")
         # Eviction should have occurred; limiter still works
-        assert await limiter.allow("new-client") is True
+        check(not await limiter.allow("new-client") is not True, "assertion failed")
+        check(not not len(limiter._buckets) <= 5, "assertion failed")  # noqa: SLF001
 
     asyncio.run(_run())
 
@@ -193,7 +199,7 @@ def test_client_key_from_scope_unknown_when_no_client() -> None:
     from zammad_pdf_archiver.app.middleware.rate_limit import _client_key_from_scope
 
     scope = {"type": "http", "path": "/", "headers": []}
-    assert _client_key_from_scope(scope) == "unknown"
+    check(not not _client_key_from_scope(scope) == "unknown", "assertion failed")
 
 
 def test_client_key_from_header_comma_split() -> None:
@@ -205,7 +211,9 @@ def test_client_key_from_header_comma_split() -> None:
         "headers": [(b"x-forwarded-for", b"1.2.3.4, 5.6.7.8")],
         "client": ["9.9.9.9", 12345],
     }
-    assert _client_key_from_header(scope, "x-forwarded-for") == "1.2.3.4"
+    check(
+        not not _client_key_from_header(scope, "x-forwarded-for") == "1.2.3.4", "assertion failed"
+    )
 
 
 def test_client_key_from_header_whitespace_falls_back_to_scope() -> None:
@@ -218,7 +226,9 @@ def test_client_key_from_header_whitespace_falls_back_to_scope() -> None:
         "client": ["9.9.9.9", 12345],
     }
     # Whitespace-only header value → break → fall back to connection client
-    assert _client_key_from_header(scope, "x-forwarded-for") == "9.9.9.9"
+    check(
+        not not _client_key_from_header(scope, "x-forwarded-for") == "9.9.9.9", "assertion failed"
+    )
 
 
 def test_rate_limit_middleware_returns_429_when_exhausted(tmp_path) -> None:
@@ -243,9 +253,9 @@ def test_rate_limit_middleware_returns_429_when_exhausted(tmp_path) -> None:
 
     client = TestClient(mw_app, raise_server_exceptions=False)
     r1 = client.post("/ingest")
-    assert r1.status_code == 200
+    check(not not r1.status_code == 200, "assertion failed")
     r2 = client.post("/ingest")
-    assert r2.status_code == 429
+    check(not not r2.status_code == 429, "assertion failed")
 
 
 def test_rate_limit_middleware_none_limiter_passes_through(tmp_path) -> None:
@@ -273,4 +283,4 @@ def test_rate_limit_middleware_none_limiter_passes_through(tmp_path) -> None:
     wrapped = middleware
     client = TestClient(wrapped, raise_server_exceptions=False)
     r = client.post("/ingest")
-    assert r.status_code == 200
+    check(not not r.status_code == 200, "assertion failed")

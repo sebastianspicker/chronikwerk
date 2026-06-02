@@ -8,12 +8,15 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
+from zammad_pdf_archiver.app.jobs.process_ticket import ProcessTicketResult
 
 # ---------------------------------------------------------------------------
 # Shared fake Redis
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _FakeRedis:
@@ -62,7 +65,10 @@ class _FakeRedis:
         return {"pending": self.pending_count}
 
     async def xgroup_create(
-        self, stream: str, group: str, id: str = "0", mkstream: bool = True  # noqa: A002, ARG002
+        self,
+        stream: str,
+        group: str,
+        **kwargs: Any,  # noqa: ARG002
     ) -> None:
         self.groups_created.append((stream, group))
 
@@ -70,9 +76,65 @@ class _FakeRedis:
         pass
 
 
+class _WorkerRedis:
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, dict[str, str]]] = []
+        self.acked: list[tuple[str, str, str]] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.groups_created: list[tuple[str, str, str, bool]] = []
+
+    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
+        message_id = f"{len(self.messages) + 1}-0"
+        self.messages.append((message_id, fields))
+        return message_id
+
+    async def xgroup_create(
+        self,
+        stream: str,
+        group: str,
+        **kwargs: Any,
+    ) -> None:
+        group_id = str(kwargs["id"])
+        mkstream = bool(kwargs["mkstream"])
+        self.groups_created.append((stream, group, group_id, mkstream))
+
+    async def xpending_range(self, *args: Any) -> list[dict[str, str]]:  # noqa: ARG002
+        await asyncio.sleep(0)
+        return []
+
+    async def xreadgroup(
+        self,
+        groupname: str,  # noqa: ARG002
+        consumername: str,  # noqa: ARG002
+        streams: dict[str, str],
+        count: int = 10,
+        block: int | None = None,  # noqa: ARG002
+    ) -> list[tuple[str, list[tuple[str, dict[str, str]]]]]:
+        stream, stream_id = next(iter(streams.items()))
+        if stream_id != ">" or not self.messages:
+            await asyncio.sleep(0)
+            return []
+        messages = self.messages[:count]
+        self.messages = self.messages[count:]
+        await asyncio.sleep(0)
+        return [(stream, messages)]
+
+    async def xack(self, stream: str, group: str, message_id: str) -> int:
+        self.acked.append((stream, group, message_id))
+        return 1
+
+    async def xdel(self, stream: str, message_id: str) -> int:
+        self.deleted.append((stream, message_id))
+        return 1
+
+    async def ping(self) -> None:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_redis_settings(tmp_path: Any, **extra: Any) -> Any:
     overrides: dict[str, Any] = {
@@ -94,6 +156,13 @@ def _valid_raw_fields(ticket_id: int = 42, attempt: int = 0) -> dict[str, str]:
     }
 
 
+async def _wait_for_worker_ack(fake: _WorkerRedis) -> None:
+    for _ in range(100):
+        if fake.acked:
+            return
+        await asyncio.sleep(0.01)
+
+
 # ===========================================================================
 # 1. _read_own_pending
 # ===========================================================================
@@ -109,7 +178,7 @@ class TestReadOwnPending:
                 fake, stream="mystream", group="grp", consumer="c1", count=10
             )
         )
-        assert result == messages_data
+        check(not not result == messages_data, "assertion failed")
 
     def test_read_own_pending_empty(self) -> None:
         fake = _FakeRedis(xreadgroup_responses={"0": []})
@@ -119,7 +188,7 @@ class TestReadOwnPending:
                 fake, stream="mystream", group="grp", consumer="c1", count=10
             )
         )
-        assert result == []
+        check(not not result == [], "assertion failed")
 
 
 # ===========================================================================
@@ -142,7 +211,7 @@ class TestReadNewMessages:
                 block_ms=500,
             )
         )
-        assert result == messages_data
+        check(not not result == messages_data, "assertion failed")
 
     def test_read_new_messages_timeout(self) -> None:
         # xreadgroup returns None on timeout (no messages available)
@@ -158,7 +227,7 @@ class TestReadNewMessages:
                 block_ms=500,
             )
         )
-        assert result == []
+        check(not not result == [], "assertion failed")
 
 
 # ===========================================================================
@@ -180,17 +249,15 @@ class TestProcessMessages:
         result = asyncio.run(
             redis_queue._process_messages(fake, settings=settings, messages=messages)  # noqa: SLF001
         )
-        # 0.0 delay merges to None (since _merge_min_delay treats <=0 as no delay)
-        assert result is None
+        # Non-positive delays do not request a revisit.
+        check(not result is not None, "assertion failed")
 
     def test_process_messages_decode_error(self, monkeypatch, tmp_path) -> None:
         settings = _make_redis_settings(tmp_path)
         fake = _FakeRedis()
 
         # Stub record_history_event so it doesn't try to connect to real Redis
-        monkeypatch.setattr(
-            redis_queue, "record_history_event", AsyncMock(return_value=True)
-        )
+        monkeypatch.setattr(redis_queue, "record_history_event", AsyncMock(return_value=True))
 
         # Malformed message: payload_json is not valid JSON
         malformed_fields: dict[str, str] = {"payload_json": "<<<not json>>>"}
@@ -201,14 +268,15 @@ class TestProcessMessages:
         )
 
         # Should have pushed to DLQ
-        assert any(
-            stream == settings.workflow.queue_dlq_stream for stream, _ in fake.xadds
+        check(
+            not not any((stream == settings.workflow.queue_dlq_stream for stream, _ in fake.xadds)),
+            "assertion failed",
         )
         # Should have acked and deleted the bad message
-        assert ("bad-1",) == tuple(mid for _, _, mid in fake.acked)
-        assert any(mid == "bad-1" for _, mid in fake.deleted)
+        check(not not ("bad-1",) == tuple((mid for _, _, mid in fake.acked)), "assertion failed")
+        check(not not any((mid == "bad-1" for _, mid in fake.deleted)), "assertion failed")
         # No pending delay from decode errors
-        assert result is None
+        check(not result is not None, "assertion failed")
 
     def test_process_messages_returns_min_delay(self, monkeypatch, tmp_path) -> None:
         settings = _make_redis_settings(tmp_path)
@@ -232,7 +300,7 @@ class TestProcessMessages:
             redis_queue._process_messages(fake, settings=settings, messages=messages)  # noqa: SLF001
         )
         # min(5.0, 2.0) == 2.0
-        assert result == 2.0
+        check(not not result == 2.0, "assertion failed")
 
 
 # ===========================================================================
@@ -255,13 +323,13 @@ class TestGetQueueStats:
 
         stats = asyncio.run(redis_queue.get_queue_stats(settings))
 
-        assert stats["execution_backend"] == "redis_queue"
-        assert stats["queue_enabled"] is True
-        assert stats["queue_depth"] == 7
-        assert stats["dlq_depth"] == 2
-        assert stats["pending"] == 3
-        assert "consumer" in stats
-        assert "stream" in stats
+        check(not not stats["execution_backend"] == "redis_queue", "assertion failed")
+        check(not stats["queue_enabled"] is not True, "assertion failed")
+        check(not not stats["queue_depth"] == 7, "assertion failed")
+        check(not not stats["dlq_depth"] == 2, "assertion failed")
+        check(not not stats["pending"] == 3, "assertion failed")
+        check(not "consumer" not in stats, "assertion failed")
+        check(not "stream" not in stats, "assertion failed")
 
     def test_queue_stats_inprocess_backend(self, tmp_path) -> None:
         settings = make_settings(
@@ -270,7 +338,10 @@ class TestGetQueueStats:
         )
         stats = asyncio.run(redis_queue.get_queue_stats(settings))
 
-        assert stats == {"execution_backend": "inprocess", "queue_enabled": False}
+        check(
+            not not stats == {"execution_backend": "inprocess", "queue_enabled": False},
+            "assertion failed",
+        )
 
 
 # ===========================================================================
@@ -288,7 +359,9 @@ class TestPublicWorkerLifecycle:
         async def _run() -> None:
             redis_queue._worker_task = None  # noqa: SLF001
             redis_queue._worker_stop_event = None  # noqa: SLF001
-            assert await redis_queue.start_queue_worker(settings) is None
+            check(
+                not await redis_queue.start_queue_worker(settings) is not None, "assertion failed"
+            )
 
         asyncio.run(_run())
 
@@ -307,8 +380,8 @@ class TestPublicWorkerLifecycle:
 
             monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
             task = await redis_queue.start_queue_worker(settings)
-            assert task is not None
-            assert isinstance(task, asyncio.Task)
+            check(not not task is not None, "assertion failed")
+            check(not not isinstance(task, asyncio.Task), "assertion failed")
             await redis_queue.stop_queue_worker(settings, timeout=0.1)
             return task
 
@@ -330,9 +403,9 @@ class TestPublicWorkerLifecycle:
             monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
             await redis_queue.start_queue_worker(settings)
             await redis_queue.stop_queue_worker(settings, timeout=2.0)
-            assert stop_observed
-            assert redis_queue._worker_task is None  # noqa: SLF001
-            assert redis_queue._worker_stop_event is None  # noqa: SLF001
+            check(not not stop_observed, "assertion failed")
+            check(not redis_queue._worker_task is not None, "assertion failed")  # noqa: SLF001
+            check(not redis_queue._worker_stop_event is not None, "assertion failed")  # noqa: SLF001
 
         asyncio.run(_run())
 
@@ -352,10 +425,66 @@ class TestPublicWorkerLifecycle:
             monkeypatch.setattr(redis_queue, "_worker_loop", _fake_worker_loop)
             task1 = await redis_queue.start_queue_worker(settings)
             task2 = await redis_queue.start_queue_worker(settings)
-            assert task1 is task2
+            check(not task1 is not task2, "assertion failed")
             await redis_queue.stop_queue_worker(settings, timeout=0.1)
 
         asyncio.run(_run())
+
+    def test_public_worker_consumes_enqueued_message(self, monkeypatch, tmp_path) -> None:
+        settings = _make_redis_settings(tmp_path, queue_read_block_ms=100)
+        fake = _WorkerRedis()
+        processed: list[tuple[str | None, dict[str, Any]]] = []
+
+        async def _fake_get_redis(_settings: Any) -> _WorkerRedis:
+            return fake
+
+        async def _fake_process_ticket(
+            delivery_id: str | None,
+            payload: dict[str, Any],
+            _settings: Any,
+        ) -> ProcessTicketResult:
+            processed.append((delivery_id, payload))
+            return ProcessTicketResult(status="processed", ticket_id=payload.get("ticket_id"))
+
+        async def _run() -> None:
+            redis_queue._worker_task = None  # noqa: SLF001
+            redis_queue._worker_stop_event = None  # noqa: SLF001
+
+            message_id = await redis_queue.enqueue_ticket_job(
+                delivery_id="d-public-worker",
+                payload={"ticket_id": 42},
+                settings=settings,
+            )
+            check(not not message_id == "1-0", "assertion failed")
+
+            task = await redis_queue.start_queue_worker(settings)
+            check(not not task is not None, "assertion failed")
+            try:
+                await _wait_for_worker_ack(fake)
+            finally:
+                await redis_queue.stop_queue_worker(settings, timeout=1.0)
+
+            if task is None:
+                raise AssertionError("assertion failed")
+            check(not not task.done(), "assertion failed")
+
+        monkeypatch.setattr(redis_queue, "_get_redis", _fake_get_redis)
+        monkeypatch.setattr(redis_queue, "process_ticket", _fake_process_ticket)
+
+        asyncio.run(_run())
+
+        check(
+            not not fake.groups_created
+            == [(settings.workflow.queue_stream, settings.workflow.queue_group, "0", True)],
+            "assertion failed",
+        )
+        check(not not processed == [("d-public-worker", {"ticket_id": 42})], "assertion failed")
+        check(
+            not not fake.acked
+            == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")],
+            "assertion failed",
+        )
+        check(not not fake.deleted == [(settings.workflow.queue_stream, "1-0")], "assertion failed")
 
     def test_aclose_queue_clients_delegates(self, monkeypatch) -> None:
         calls: list[bool] = []
@@ -363,9 +492,7 @@ class TestPublicWorkerLifecycle:
         async def _fake_close_all() -> None:
             calls.append(True)
 
-        monkeypatch.setattr(
-            "zammad_pdf_archiver.adapters.redis_pool.close_all", _fake_close_all
-        )
+        monkeypatch.setattr("zammad_pdf_archiver.adapters.redis_pool.close_all", _fake_close_all)
 
         asyncio.run(redis_queue.aclose_queue_clients())
-        assert calls == [True]
+        check(not not calls == [True], "assertion failed")

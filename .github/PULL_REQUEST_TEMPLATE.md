@@ -2,18 +2,24 @@
 
 <!-- What does this PR change? -->
 
-## Motivation / Context
+## Motivation
 
-<!-- Why is this change needed? -->
+<!-- What problem does this solve? Link issues when applicable. -->
+
+## Runtime / Operator Impact
+
+<!-- Note API, config, storage, queue, security, deployment, or docs-only impact. -->
 
 ## Testing
 
-- [ ] `make lint`
-- [ ] `make test`
+- [ ] Targeted checks for the changed surface
+- [ ] `make verify`
+<!-- Paste the exact commands run and their results. -->
 
 ## Checklist
 
 - [ ] Docs updated (if applicable)
+- [ ] Config/schema/examples updated (if applicable)
 - [ ] No secrets added
-- [ ] Ops/Security impact documented (if applicable)
-
+- [ ] Security-sensitive behavior stays fail-closed
+- [ ] Ops/security impact documented (if applicable)

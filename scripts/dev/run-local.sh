@@ -13,7 +13,7 @@ Usage:
   scripts/dev/run-local.sh [--reload] [--dry-run]
 
 Environment:
-  SERVER_HOST (default: 0.0.0.0)
+  SERVER_HOST (default: 127.0.0.1)
   SERVER_PORT (default: 8080)
 
 Notes:
@@ -49,7 +49,7 @@ done
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 
-host="${SERVER_HOST:-0.0.0.0}"
+host="${SERVER_HOST:-127.0.0.1}"
 port="${SERVER_PORT:-8080}"
 
 cmd=(python -m uvicorn zammad_pdf_archiver.asgi:app --host "${host}" --port "${port}")

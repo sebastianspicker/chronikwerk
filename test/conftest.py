@@ -7,16 +7,18 @@ from pathlib import Path
 
 import pytest
 
+from test.support.credentials import fake_credential
+
 
 def pytest_configure() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     src_path = repo_root / "src"
     sys.path.insert(0, str(src_path))
-    
+
     # Set required env vars for Settings validation during test collection
     os.environ["ZAMMAD_BASE_URL"] = "http://localhost:8080"
-    os.environ["ZAMMAD_API_TOKEN"] = "fake-token"
-    os.environ["STORAGE_ROOT"] = "/tmp/zammad-pdf-archiver-test"
+    os.environ["ZAMMAD_API_TOKEN"] = fake_credential("fake-token")
+    os.environ["STORAGE_ROOT"] = str(repo_root / ".pytest-storage-root")
 
 
 @pytest.fixture(autouse=True)

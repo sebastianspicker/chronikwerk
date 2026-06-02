@@ -7,6 +7,9 @@ from datetime import UTC, datetime
 import httpx
 import respx
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
+from test.support.time_control import freeze_process_ticket_now
 from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
@@ -17,7 +20,10 @@ from zammad_pdf_archiver.domain.state_machine import DONE_TAG, ERROR_TAG, PROCES
 def _settings(storage_root: str, *, workflow: dict | None = None) -> Settings:
     return Settings.from_mapping(
         {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "zammad": {
+                "base_url": "https://zammad.example.local",
+                "api_token": fake_credential("test-token"),
+            },
             "storage": {"root": storage_root},
             "workflow": workflow or {},
         }
@@ -85,7 +91,7 @@ def _mock_tag_routes() -> tuple[respx.Route, respx.Route]:
 def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"trigger_tag": "pdf:archive"})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
+    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-1"}
 
@@ -112,10 +118,10 @@ def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
         removed = _called_tag_items(remove_tag_route)
         added = _called_tag_items(add_tag_route)
 
-        assert "pdf:archive" in removed
-        assert PROCESSING_TAG in added
-        assert DONE_TAG in added
-        assert ERROR_TAG not in added
+        check(not "pdf:archive" not in removed, "assertion failed")
+        check(not PROCESSING_TAG not in added, "assertion failed")
+        check(not DONE_TAG not in added, "assertion failed")
+        check(not not ERROR_TAG not in added, "assertion failed")
 
         date_iso = fixed_now.date().isoformat()
         expected_filename = build_filename_from_pattern(
@@ -124,13 +130,13 @@ def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
             timestamp_utc=date_iso,
         )
         expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
-        assert expected_pdf_path.exists()
+        check(not not expected_pdf_path.exists(), "assertion failed")
 
 
 def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"require_tag": False})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
+    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-2"}
 
@@ -161,13 +167,13 @@ def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
             timestamp_utc=date_iso,
         )
         expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
-        assert expected_pdf_path.exists()
+        check(not not expected_pdf_path.exists(), "assertion failed")
 
 
 def test_workflow_acknowledge_on_success_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"acknowledge_on_success": False})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
+    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-3"}
 
@@ -191,4 +197,4 @@ def test_workflow_acknowledge_on_success_can_be_disabled(tmp_path, monkeypatch) 
 
         asyncio.run(process_ticket("delivery-workflow-3", payload, settings))
 
-        assert article_route.call_count == 0
+        check(not not article_route.call_count == 0, "assertion failed")

@@ -78,7 +78,6 @@ Default:
 Supported placeholders:
 - `{ticket_number}`
 - `{timestamp_utc}` (date string provided by job: `YYYY-MM-DD`)
-- `{date_utc}` (alias)
 
 Validation constraints:
 - single segment only (no path separators)

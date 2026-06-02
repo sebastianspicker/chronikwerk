@@ -6,11 +6,10 @@ from zammad_pdf_archiver._version import VERSION
 from zammad_pdf_archiver.adapters.zammad.errors import (
     AuthError,
     NotFoundError,
-    RateLimitError,
-    ServerError,
 )
-from zammad_pdf_archiver.config.redact import scrub_secrets_in_text
+from zammad_pdf_archiver.domain.archive_errors import ArchiveUserInputError
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
+from zammad_pdf_archiver.domain.exc_format import bounded_exc_message
 
 log = structlog.get_logger(__name__)
 
@@ -52,31 +51,8 @@ def success_note_html(
 
 def error_code_and_hint(exc: BaseException) -> tuple[str, str]:
     """Return (stable_code, short_hint) for permanent failures."""
-    msg = str(exc).strip().lower()
-    if "archive_path" in msg and "missing" in msg:
-        return ("missing_archive_path", "Set custom_fields.archive_path on the ticket.")
-    if "archive_path must not be empty" in msg or "all segments were empty" in msg:
-        return ("empty_archive_path", "Set archive_path to at least one non-empty segment.")
-    if "archive_path must be a string" in msg or "archive_path[" in msg:
-        return ("invalid_archive_path", "Use a string or list of strings for archive_path.")
-    if "allow_prefixes" in msg and "not allowed" in msg:
-        return ("path_not_allowed", "Check allow_prefixes; archive_path must match a prefix.")
-    if "allow_prefixes is empty" in msg:
-        return (
-            "allow_prefixes_empty",
-            "Configure at least one allow_prefixes entry or leave unset.",
-        )
-    if "owner.login" in msg or "updated_by.login" in msg:
-        return ("missing_user_login", "Ensure ticket has owner/updated_by with login.")
-    if "archive_user" in msg or "archive_user_mode" in msg:
-        return ("missing_archive_user", "Set custom_fields.archive_user for fixed mode.")
-    if "filename" in msg and ("pattern" in msg or "segment" in msg or "must not" in msg):
-        return (
-            "invalid_filename",
-            "Check filename_pattern and path policy (no ., .., separators).",
-        )
-    if "path segment" in msg or "path separators" in msg or "dot segments" in msg:
-        return ("path_validation", "Check archive_path segments (no ., .., empty, or separators).")
+    if isinstance(exc, ArchiveUserInputError):
+        return (exc.code, exc.hint)
     return ("permanent_error", "")
 
 
@@ -112,15 +88,12 @@ def error_note_html(
 
 
 def concise_exc_message(exc: BaseException) -> str:
-    text = f"{exc.__class__.__name__}: {exc}"
-    text = text.strip()
-    text = scrub_secrets_in_text(text)
-    return text[:500] if len(text) > 500 else text
+    return bounded_exc_message(exc)
 
 
-def action_hint(exc: BaseException, *, classified: TransientError | PermanentError | None) -> str:
+def action_hint(exc: BaseException, *, classified: TransientError | PermanentError) -> str:
     """Return a human-readable operator action hint for the given exception and classification."""
-    if classified is not None and isinstance(classified, TransientError):
+    if isinstance(classified, TransientError):
         return (
             "Transient failure. Verify Zammad/TSA reachability and storage availability; "
             "the ticket keeps pdf:sign so a retry can be triggered by saving the ticket "
@@ -134,11 +107,6 @@ def action_hint(exc: BaseException, *, classified: TransientError | PermanentErr
         return (
             "Ticket/resource not found in Zammad. Verify the ticket still exists, then reapply "
             "pdf:sign."
-        )
-    if isinstance(exc, (ServerError, RateLimitError)):
-        return (
-            "Upstream Zammad error was treated as permanent by policy. "
-            "If the issue is resolved, reapply the pdf:sign macro to reprocess."
         )
     if isinstance(exc, PermissionError):
         return (

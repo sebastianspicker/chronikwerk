@@ -7,6 +7,8 @@ import httpx
 import pytest
 import respx
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.config.settings import (
     SigningSettings,
     SigningTimestampRfc3161Settings,
@@ -16,7 +18,16 @@ from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 pytest.importorskip("pyhanko", reason="TSA adapter requires pyHanko")
 
+import zammad_pdf_archiver.adapters.signing.tsa_rfc3161 as tsa_module  # noqa: E402
 from zammad_pdf_archiver.adapters.signing.tsa_rfc3161 import build_timestamper  # noqa: E402
+
+
+class _CapturingLog:
+    def __init__(self) -> None:
+        self.debug_events: list[tuple[str, dict[str, Any]]] = []
+
+    def debug(self, event: str, **kwargs: Any) -> None:
+        self.debug_events.append((event, kwargs))
 
 
 def _tsa_req() -> Any:
@@ -121,7 +132,7 @@ def test_tsa_http_client_respects_transport_trust_env(
     with pytest.raises(TransientError, match="RFC3161 TSA returned HTTP 500"):
         asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
 
-    assert captured["trust_env"] is trust_env
+    check(not captured["trust_env"] is not trust_env, "assertion failed")
 
 
 def _make_signing_no_url() -> SigningSettings:
@@ -166,7 +177,7 @@ def test_build_timestamper_raises_when_user_without_password() -> None:
 
 def test_build_timestamper_raises_when_password_without_user() -> None:
     """Password set but no user → PermanentError."""
-    signing = _make_signing_with_auth(user=None, password="secret")
+    signing = _make_signing_with_auth(user=None, password=fake_credential("secret"))
     with pytest.raises(Exception, match="TSA basic auth requires both"):
         build_timestamper(signing)
 
@@ -175,7 +186,7 @@ def test_build_timestamper_returns_timestamper_with_valid_config() -> None:
     """build_timestamper succeeds with minimal valid config."""
     signing = _make_signing("https://tsa.test/rfc3161")
     timestamper = build_timestamper(signing)
-    assert timestamper is not None
+    check(not not timestamper is not None, "assertion failed")
 
 
 def test_tsa_malformed_response_body_is_permanent() -> None:
@@ -202,22 +213,20 @@ def test_tsa_ca_bundle_path_is_used_as_verify(
     """ca_bundle_path is passed as the 'verify' argument to httpx.AsyncClient."""
     from pathlib import Path
 
-    from zammad_pdf_archiver.adapters.signing.tsa_rfc3161 import (
-        _HttpxRFC3161TimeStamper,
-        _TsaConfig,
-    )
-
     tsa_url = "https://tsa.test/rfc3161"
     ca_bundle = Path("/fake/ca-bundle.pem")
 
-    config = _TsaConfig(
-        url=tsa_url,
-        timeout_seconds=10.0,
-        ca_bundle_path=ca_bundle,
-        auth=None,
-        trust_env=False,
+    signing = SigningSettings(
+        enabled=False,
+        timestamp=SigningTimestampSettings(
+            enabled=True,
+            rfc3161=SigningTimestampRfc3161Settings(
+                tsa_url=tsa_url,  # type: ignore[arg-type]
+                ca_bundle_path=ca_bundle,
+            ),
+        ),
     )
-    timestamper = _HttpxRFC3161TimeStamper(config)
+    timestamper = build_timestamper(signing)
     captured: dict[str, Any] = {}
 
     class _DummyClient:
@@ -240,7 +249,7 @@ def test_tsa_ca_bundle_path_is_used_as_verify(
     with pytest.raises(TransientError):
         asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
 
-    assert captured["verify"] == str(ca_bundle)
+    check(not not captured["verify"] == str(ca_bundle), "assertion failed")
 
 
 def test_tsa_rejection_status_raises_permanent() -> None:
@@ -260,9 +269,7 @@ def test_tsa_rejection_status_raises_permanent() -> None:
     )
 
     mock_resp = MagicMock()
-    mock_resp.__getitem__ = MagicMock(
-        side_effect=lambda key: {"status": mock_status_info}[key]
-    )
+    mock_resp.__getitem__ = MagicMock(side_effect=lambda key: {"status": mock_status_info}[key])
 
     with respx.mock:
         respx.post(tsa_url).mock(
@@ -273,6 +280,58 @@ def test_tsa_rejection_status_raises_permanent() -> None:
             )
         )
         from asn1crypto import tsp as _tsp
+
         with patch.object(_tsp.TimeStampResp, "load", return_value=mock_resp):
             with pytest.raises(PermanentError, match="rejected"):
                 asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
+
+
+def test_tsa_status_string_access_failure_is_logged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed TSA status detail is logged while preserving PermanentError behavior."""
+    from unittest.mock import MagicMock, patch
+
+    class _BrokenStatusString:
+        @property
+        def native(self) -> str:
+            raise ValueError("status string unavailable")
+
+    tsa_url = "https://tsa.test/rfc3161"
+    signing = _make_signing(tsa_url)
+    timestamper = build_timestamper(signing)
+    capture = _CapturingLog()
+    monkeypatch.setattr(tsa_module, "log", capture)
+
+    mock_status_info = MagicMock()
+    mock_status_info.__getitem__ = MagicMock(
+        side_effect=lambda key: {
+            "status": MagicMock(native="rejection"),
+            "status_string": _BrokenStatusString(),
+        }[key]
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.__getitem__ = MagicMock(side_effect=lambda key: {"status": mock_status_info}[key])
+
+    with respx.mock:
+        respx.post(tsa_url).mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Type": "application/timestamp-reply"},
+                content=b"\x30\x03\x30\x01\x02",
+            )
+        )
+        from asn1crypto import tsp as _tsp
+
+        with patch.object(_tsp.TimeStampResp, "load", return_value=mock_resp):
+            with pytest.raises(PermanentError, match="rejection"):
+                asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
+
+    check(not not len(capture.debug_events) == 1, "assertion failed")
+    event, fields = capture.debug_events[0]
+    check(not not event == "tsa_status_string_unavailable", "assertion failed")
+    check(not not set(fields) == {"exc_info"}, "assertion failed")
+    check(
+        not not isinstance(capture.debug_events[0][1]["exc_info"], ValueError), "assertion failed"
+    )

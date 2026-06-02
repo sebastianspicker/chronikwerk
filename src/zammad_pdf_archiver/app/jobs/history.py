@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
 
 import structlog
 
 from zammad_pdf_archiver.adapters.redis_pool import get_redis, import_redis_class
-from zammad_pdf_archiver.config.redact import scrub_secrets_in_text
+from zammad_pdf_archiver.app.jobs._queue_types import _parse_float, _parse_int
 from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.domain.exc_format import bounded_exc_message
 
 log = structlog.get_logger(__name__)
 
@@ -30,13 +30,6 @@ async def _redis_client(settings: Settings) -> Any | None:
     return await get_redis(redis_url)
 
 
-def _bounded_message(message: str) -> str:
-    cleaned = scrub_secrets_in_text((message or "").strip())
-    if len(cleaned) > 500:
-        return cleaned[:500]
-    return cleaned
-
-
 async def record_history_event(
     settings: Settings,
     *,
@@ -56,7 +49,7 @@ async def record_history_event(
         "status": status,
         "ticket_id": str(ticket_id) if ticket_id is not None else "",
         "classification": classification or "",
-        "message": _bounded_message(message),
+        "message": bounded_exc_message(message),
         "delivery_id": delivery_id or "",
         "request_id": request_id or "",
         "created_at": str(time.time()),
@@ -72,32 +65,14 @@ async def record_history_event(
         return False
 
 
-def _to_int(value: str | None, default: int | None = None) -> int | None:
-    if value is None or value == "":
-        return default
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-
-def _to_float(value: str | None, default: float = 0.0) -> float:
-    if value is None or value == "":
-        return default
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
 def _normalize_entry(message_id: str, fields: dict[str, Any]) -> dict[str, Any]:
     status = str(fields.get("status", ""))
-    ticket_id = _to_int(str(fields.get("ticket_id", "")), default=None)
+    ticket_id = _parse_int(fields.get("ticket_id"), default=None)
     classification = str(fields.get("classification", "")).strip() or None
     message = str(fields.get("message", ""))
     delivery_id = str(fields.get("delivery_id", "")).strip() or None
     request_id = str(fields.get("request_id", "")).strip() or None
-    created_at_ts = _to_float(str(fields.get("created_at", "")), default=0.0)
+    created_at_ts = _parse_float(fields.get("created_at"), default=0.0)
 
     return {
         "id": message_id,
@@ -120,54 +95,78 @@ async def read_history(
     """Read the most recent history events from the Redis stream, optionally filtered by ticket."""
     redis = await _redis_client(settings)
     if redis is None:
+        if _history_enabled(settings):
+            raise RuntimeError("history_unavailable")
         return []
 
     bounded_limit = max(1, min(int(limit), 5000))
-    fetch_count = bounded_limit if ticket_id is None else min(max(bounded_limit, 100), 1000)
+    fetch_count = _history_fetch_count(bounded_limit, ticket_id=ticket_id)
 
     max_id = "+"
     out: list[dict[str, Any]] = []
     while len(out) < bounded_limit:
-        try:
-            entries = await redis.xrevrange(
-                settings.workflow.history_stream,
-                max=max_id,
-                min="-",
-                count=fetch_count,
-            )
-        except Exception:
-            log.warning("history.read_failed")
-            return []
+        entries = await _read_history_batch(
+            redis,
+            stream=settings.workflow.history_stream,
+            max_id=max_id,
+            fetch_count=fetch_count,
+        )
         if not entries:
             break
 
-        for message_id, raw_fields in entries:
-            fields = {str(k): v for k, v in raw_fields.items()}
-            item = _normalize_entry(str(message_id), fields)
-            if ticket_id is None or item["ticket_id"] == ticket_id:
-                out.append(item)
-                if len(out) >= bounded_limit:
-                    break
-        if ticket_id is None or len(entries) < fetch_count:
+        _append_matching_history_entries(out, entries, ticket_id=ticket_id, limit=bounded_limit)
+        if _history_scan_complete(entries, fetch_count=fetch_count, ticket_id=ticket_id):
             break
-        max_id = f"({entries[-1][0]}"
+        max_id = _previous_history_max_id(entries)
 
     return out
 
 
-async def read_history_json(
-    settings: Settings,
+def _history_fetch_count(bounded_limit: int, *, ticket_id: int | None) -> int:
+    if ticket_id is None:
+        return bounded_limit
+    return min(max(bounded_limit, 100), 1000)
+
+
+async def _read_history_batch(
+    redis: Any,
     *,
+    stream: str,
+    max_id: str,
+    fetch_count: int,
+) -> list[tuple[Any, Any]]:
+    try:
+        return await redis.xrevrange(stream, max=max_id, min="-", count=fetch_count)
+    except Exception as exc:
+        log.warning("history.read_failed")
+        raise RuntimeError("history_unavailable") from exc
+
+
+def _append_matching_history_entries(
+    out: list[dict[str, Any]],
+    entries: list[tuple[Any, Any]],
+    *,
+    ticket_id: int | None,
     limit: int,
-    ticket_id: int | None = None,
-) -> str:
-    """Return history events as a JSON string with status, count, and items fields."""
-    payload = {
-        "status": "ok",
-        "count": 0,
-        "items": [],
-    }
-    items = await read_history(settings, limit=limit, ticket_id=ticket_id)
-    payload["count"] = len(items)
-    payload["items"] = items
-    return json.dumps(payload, indent=2)
+) -> None:
+    for message_id, raw_fields in entries:
+        item = _history_item(message_id, raw_fields)
+        if ticket_id is None or item["ticket_id"] == ticket_id:
+            out.append(item)
+            if len(out) >= limit:
+                return
+
+
+def _history_item(message_id: Any, raw_fields: dict[Any, Any]) -> dict[str, Any]:
+    fields = {str(k): v for k, v in raw_fields.items()}
+    return _normalize_entry(str(message_id), fields)
+
+
+def _history_scan_complete(
+    entries: list[tuple[Any, Any]], *, fetch_count: int, ticket_id: int | None
+) -> bool:
+    return ticket_id is None or len(entries) < fetch_count
+
+
+def _previous_history_max_id(entries: list[tuple[Any, Any]]) -> str:
+    return f"({entries[-1][0]}"

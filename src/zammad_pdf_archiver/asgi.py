@@ -12,7 +12,6 @@ def create_asgi_app() -> FastAPI:
     configure_logging(
         log_level=settings.observability.log_level,
         log_format=settings.observability.log_format,
-        json_logs=settings.observability.json_logs,
     )
     return create_app(settings)
 

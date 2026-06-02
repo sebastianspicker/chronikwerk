@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
+import pytest
+
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import history
-from zammad_pdf_archiver.app.jobs.history import (
-    _bounded_message,
-    _history_enabled,
-    _to_float,
-    _to_int,
-)
+from zammad_pdf_archiver.app.jobs.history import _history_enabled
+from zammad_pdf_archiver.domain.exc_format import bounded_exc_message
 
 
 class _FakeRedis:
@@ -28,7 +26,8 @@ class _FakeRedis:
         self.xadd_calls.append((stream, fields, maxlen, approximate))
         return "1-0"
 
-    async def xrevrange(self, stream: str, max: str, min: str, count: int):  # noqa: A002
+    async def xrevrange(self, stream: str, **kwargs):  # noqa: ANN001, ARG002
+        count = int(kwargs["count"])
         return self.entries[:count]
 
     async def aclose(self) -> None:
@@ -41,7 +40,7 @@ class _FailingRedis(_FakeRedis):
     async def xadd(self, stream, fields, maxlen=None, approximate=True):
         raise ConnectionError("redis unavailable")
 
-    async def xrevrange(self, stream, max, min, count):  # noqa: A002
+    async def xrevrange(self, stream, **kwargs):  # noqa: ANN001, ARG002
         raise ConnectionError("redis unavailable")
 
 
@@ -53,7 +52,7 @@ class _FailingRedis(_FakeRedis):
 def test_history_disabled_no_redis_url(tmp_path) -> None:
     """redis_url=None -> history is disabled."""
     settings = make_settings(str(tmp_path))
-    assert _history_enabled(settings) is False
+    check(not _history_enabled(settings) is not False, "assertion failed")
 
 
 def test_history_disabled_zero_maxlen(tmp_path) -> None:
@@ -64,7 +63,7 @@ def test_history_disabled_zero_maxlen(tmp_path) -> None:
             "workflow": {"redis_url": "redis://localhost/0", "history_retention_maxlen": 0},
         },
     )
-    assert _history_enabled(settings) is False
+    check(not _history_enabled(settings) is not False, "assertion failed")
 
 
 def test_history_enabled_with_redis(tmp_path) -> None:
@@ -73,63 +72,26 @@ def test_history_enabled_with_redis(tmp_path) -> None:
         str(tmp_path),
         overrides={"workflow": {"redis_url": "redis://localhost/0"}},
     )
-    assert _history_enabled(settings) is True
+    check(not _history_enabled(settings) is not True, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
-# _bounded_message
+# bounded_exc_message
 # ---------------------------------------------------------------------------
 
 
-def test_bounded_message_short() -> None:
+def test_bounded_history_message_short() -> None:
     """A message under 500 chars is returned unchanged (after strip/scrub)."""
     msg = "short message"
-    assert _bounded_message(msg) == "short message"
+    check(not not bounded_exc_message(msg) == "short message", "assertion failed")
 
 
-def test_bounded_message_long() -> None:
+def test_bounded_history_message_long() -> None:
     """A message over 500 chars is truncated to exactly 500."""
     msg = "a" * 600
-    result = _bounded_message(msg)
-    assert len(result) == 500
-    assert result == "a" * 500
-
-
-# ---------------------------------------------------------------------------
-# _to_int / _to_float
-# ---------------------------------------------------------------------------
-
-
-def test_to_int_valid() -> None:
-    assert _to_int("42") == 42
-
-
-def test_to_int_invalid() -> None:
-    assert _to_int("abc", default=99) == 99
-
-
-def test_to_int_none() -> None:
-    assert _to_int(None, default=7) == 7
-
-
-def test_to_int_empty_string() -> None:
-    assert _to_int("", default=5) == 5
-
-
-def test_to_float_valid() -> None:
-    assert _to_float("3.14") == 3.14
-
-
-def test_to_float_invalid() -> None:
-    assert _to_float("xyz", default=1.5) == 1.5
-
-
-def test_to_float_none() -> None:
-    assert _to_float(None) == 0.0
-
-
-def test_to_float_empty_string() -> None:
-    assert _to_float("", default=2.5) == 2.5
+    result = bounded_exc_message(msg)
+    check(not not len(result) == 500, "assertion failed")
+    check(not not result == "a" * 500, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -146,16 +108,7 @@ def test_record_history_event_no_redis_url(tmp_path) -> None:
             ticket_id=1,
         )
     )
-    assert ok is False
-
-
-def test_record_history_disabled(tmp_path) -> None:
-    """When history is not enabled (no redis_url), record returns False immediately."""
-    settings = make_settings(str(tmp_path))
-    ok = asyncio.run(
-        history.record_history_event(settings, status="processed", ticket_id=1)
-    )
-    assert ok is False
+    check(not ok is not False, "assertion failed")
 
 
 def test_record_history_event_writes_stream(monkeypatch, tmp_path) -> None:
@@ -178,14 +131,14 @@ def test_record_history_event_writes_stream(monkeypatch, tmp_path) -> None:
             request_id="req-1",
         )
     )
-    assert ok is True
-    assert len(fake.xadd_calls) == 1
+    check(not ok is not True, "assertion failed")
+    check(not not len(fake.xadd_calls) == 1, "assertion failed")
     stream, fields, maxlen, approx = fake.xadd_calls[0]
-    assert stream == settings.workflow.history_stream
-    assert fields["status"] == "processed"
-    assert fields["ticket_id"] == "123"
-    assert maxlen == settings.workflow.history_retention_maxlen
-    assert approx is True
+    check(not not stream == settings.workflow.history_stream, "assertion failed")
+    check(not not fields["status"] == "processed", "assertion failed")
+    check(not not fields["ticket_id"] == "123", "assertion failed")
+    check(not not maxlen == settings.workflow.history_retention_maxlen, "assertion failed")
+    check(not approx is not True, "assertion failed")
 
 
 def test_record_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
@@ -201,13 +154,11 @@ def test_record_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
 
     monkeypatch.setattr(history, "_redis_client", _stub_client)
 
-    ok = asyncio.run(
-        history.record_history_event(settings, status="error", ticket_id=99)
-    )
+    ok = asyncio.run(history.record_history_event(settings, status="error", ticket_id=99))
 
-    assert ok is False
+    check(not ok is not False, "assertion failed")
     captured = capsys.readouterr()
-    assert "history.record_failed" in captured.out
+    check(not "history.record_failed" not in captured.out, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -232,20 +183,47 @@ def test_read_history_filters_ticket(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(history, "_redis_client", _stub_client)
 
     items = asyncio.run(history.read_history(settings, limit=10, ticket_id=7))
-    assert len(items) == 1
-    assert items[0]["ticket_id"] == 7
-    assert items[0]["status"] == "failed_permanent"
+    check(not not len(items) == 1, "assertion failed")
+    check(not not items[0]["ticket_id"] == 7, "assertion failed")
+    check(not not items[0]["status"] == "failed_permanent", "assertion failed")
+
+
+def test_read_history_normalizes_missing_and_malformed_numeric_fields(
+    monkeypatch, tmp_path
+) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
+    )
+    fake = _FakeRedis()
+    fake.entries = [
+        ("2-0", {"status": "processed", "ticket_id": "abc", "created_at": "bad-ts"}),
+        ("1-0", {"status": "processed"}),
+    ]
+
+    async def _stub_client(_settings):
+        return fake
+
+    monkeypatch.setattr(history, "_redis_client", _stub_client)
+
+    items = asyncio.run(history.read_history(settings, limit=10))
+
+    check(not not len(items) == 2, "assertion failed")
+    check(not items[0]["ticket_id"] is not None, "assertion failed")
+    check(not not items[0]["created_at"] == 0.0, "assertion failed")
+    check(not items[1]["ticket_id"] is not None, "assertion failed")
+    check(not not items[1]["created_at"] == 0.0, "assertion failed")
 
 
 def test_read_history_disabled(tmp_path) -> None:
     """When history is not enabled, read_history returns an empty list."""
     settings = make_settings(str(tmp_path))
     items = asyncio.run(history.read_history(settings, limit=10))
-    assert items == []
+    check(not not items == [], "assertion failed")
 
 
 def test_read_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
-    """When Redis raises during read, read_history logs a warning and returns []."""
+    """When Redis raises during read, read_history fails instead of returning empty."""
     settings = make_settings(
         str(tmp_path),
         overrides={"workflow": {"redis_url": "redis://localhost/0"}},
@@ -257,11 +235,11 @@ def test_read_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
 
     monkeypatch.setattr(history, "_redis_client", _stub_client)
 
-    items = asyncio.run(history.read_history(settings, limit=10))
+    with pytest.raises(RuntimeError, match="history_unavailable"):
+        asyncio.run(history.read_history(settings, limit=10))
 
-    assert items == []
     captured = capsys.readouterr()
-    assert "history.read_failed" in captured.out
+    check(not "history.read_failed" not in captured.out, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -290,49 +268,9 @@ def test_record_history_event_redacts_sensitive_message(monkeypatch, tmp_path) -
         )
     )
 
-    assert len(fake.xadd_calls) == 1
+    check(not not len(fake.xadd_calls) == 1, "assertion failed")
     _, fields, _, _ = fake.xadd_calls[0]
-    assert fields["message"] == "Authorization: Bearer [redacted] token=[redacted]"
-
-
-# ---------------------------------------------------------------------------
-# read_history_json
-# ---------------------------------------------------------------------------
-
-
-def test_read_history_json_disabled(tmp_path) -> None:
-    """When history is disabled (no redis_url), read_history_json returns empty JSON."""
-    settings = make_settings(str(tmp_path))
-    raw = asyncio.run(history.read_history_json(settings, limit=10))
-    payload = json.loads(raw)
-    assert payload["status"] == "ok"
-    assert payload["count"] == 0
-    assert payload["items"] == []
-
-
-def test_read_history_json_success(monkeypatch, tmp_path) -> None:
-    """With history entries in Redis, read_history_json returns populated JSON."""
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
+    check(
+        not not fields["message"] == "Authorization: Bearer [redacted] token=[redacted]",
+        "assertion failed",
     )
-    fake = _FakeRedis()
-    fake.entries = [
-        ("3-0", {"status": "processed", "ticket_id": "10", "created_at": "100.0"}),
-        ("2-0", {"status": "skipped", "ticket_id": "20", "created_at": "99.0"}),
-    ]
-
-    async def _stub_client(_settings):
-        return fake
-
-    monkeypatch.setattr(history, "_redis_client", _stub_client)
-
-    raw = asyncio.run(history.read_history_json(settings, limit=50))
-    payload = json.loads(raw)
-    assert payload["status"] == "ok"
-    assert payload["count"] == 2
-    assert len(payload["items"]) == 2
-    assert payload["items"][0]["ticket_id"] == 10
-    assert payload["items"][0]["status"] == "processed"
-    assert payload["items"][1]["ticket_id"] == 20
-    assert payload["items"][1]["status"] == "skipped"

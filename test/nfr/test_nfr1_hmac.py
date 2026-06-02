@@ -1,4 +1,5 @@
 """NFR1: Verify webhook payload with HMAC-SHA1; fail closed when secret configured."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,6 +7,7 @@ import hmac
 
 from fastapi.testclient import TestClient
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
@@ -35,8 +37,10 @@ def test_nfr1_invalid_signature_returns_403(tmp_path) -> None:
         content=body,
         headers={"Content-Type": "application/json", "X-Hub-Signature": _sign(body, "wrong")},
     )
-    assert response.status_code == 403
-    assert response.json() == {"detail": "forbidden", "code": "forbidden"}
+    check(not not response.status_code == 403, "assertion failed")
+    check(
+        not not response.json() == {"detail": "forbidden", "code": "forbidden"}, "assertion failed"
+    )
 
 
 def test_nfr1_no_secret_returns_503_unless_allow_unsigned(tmp_path) -> None:
@@ -44,9 +48,13 @@ def test_nfr1_no_secret_returns_503_unless_allow_unsigned(tmp_path) -> None:
     app = create_app(_settings(str(tmp_path), secret=None))
     client = TestClient(app)
     response = client.post("/ingest", json={"ticket_id": 123})
-    assert response.status_code == 503
+    check(not not response.status_code == 503, "assertion failed")
     data = response.json()
-    assert data == {"detail": "webhook_auth_not_configured", "code": "webhook_auth_not_configured"}
+    check(
+        not not data
+        == {"detail": "webhook_auth_not_configured", "code": "webhook_auth_not_configured"},
+        "assertion failed",
+    )
 
 
 def test_nfr1_valid_signature_returns_202(tmp_path, monkeypatch) -> None:
@@ -65,5 +73,5 @@ def test_nfr1_valid_signature_returns_202(tmp_path, monkeypatch) -> None:
         content=body,
         headers={"Content-Type": "application/json", "X-Hub-Signature": _sign(body, "test-secret")},
     )
-    assert response.status_code == 202
-    assert response.json() == {"status": "accepted", "ticket_id": 456}
+    check(not not response.status_code == 202, "assertion failed")
+    check(not not response.json() == {"status": "accepted", "ticket_id": 456}, "assertion failed")

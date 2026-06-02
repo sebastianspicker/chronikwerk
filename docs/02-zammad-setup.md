@@ -20,7 +20,9 @@ flowchart TD
 - Reachable archiver endpoint, for example: `https://archiver.example.com/ingest`.
 - Archiver service configured with one of:
   - `WEBHOOK_HMAC_SECRET` (recommended)
-  - `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` (internal/testing only)
+  - both `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` and
+    `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET=true`
+    (internal/testing only)
 
 ## 2. Create Ticket Custom Fields
 

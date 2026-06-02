@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
@@ -30,13 +31,16 @@ def test_rate_limit_triggers_on_ingest(tmp_path, monkeypatch) -> None:
     client = TestClient(app)
 
     payload = {"ticket": {"id": 1}}
-    assert client.post("/ingest", json=payload).status_code == 202
-    assert client.post("/ingest", json=payload).status_code == 202
+    check(not not client.post("/ingest", json=payload).status_code == 202, "assertion failed")
+    check(not not client.post("/ingest", json=payload).status_code == 202, "assertion failed")
 
     resp = client.post("/ingest", json=payload)
-    assert resp.status_code == 429
-    assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}
-    assert resp.headers.get("X-Request-Id")
+    check(not not resp.status_code == 429, "assertion failed")
+    check(
+        not not resp.json() == {"detail": "rate_limited", "code": "rate_limited"},
+        "assertion failed",
+    )
+    check(not not resp.headers.get("X-Request-Id"), "assertion failed")
 
 
 def test_rate_limit_triggers_on_ingest_batch(tmp_path, monkeypatch) -> None:
@@ -50,13 +54,47 @@ def test_rate_limit_triggers_on_ingest_batch(tmp_path, monkeypatch) -> None:
     client = TestClient(app)
 
     payload = [{"ticket": {"id": 1}}]
-    assert client.post("/ingest/batch", json=payload).status_code == 202
-    assert client.post("/ingest/batch", json=payload).status_code == 202
+    check(not not client.post("/ingest/batch", json=payload).status_code == 202, "assertion failed")
+    check(not not client.post("/ingest/batch", json=payload).status_code == 202, "assertion failed")
 
     resp = client.post("/ingest/batch", json=payload)
-    assert resp.status_code == 429
-    assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}
-    assert resp.headers.get("X-Request-Id")
+    check(not not resp.status_code == 429, "assertion failed")
+    check(
+        not not resp.json() == {"detail": "rate_limited", "code": "rate_limited"},
+        "assertion failed",
+    )
+    check(not not resp.headers.get("X-Request-Id"), "assertion failed")
+
+
+def test_rate_limit_triggers_on_ingest_path_variants(tmp_path, monkeypatch) -> None:
+    async def _stub_process_ticket(delivery_id, payload, settings) -> None:  # noqa: ANN001, ARG001
+        return None
+
+    import zammad_pdf_archiver.app.routes.ingest as ingest_route
+
+    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+
+    payload = {"ticket": {"id": 1}}
+    for path in ("/ingest/", "/ingest%2F", "/ingest/batch/"):
+        app = create_app(_test_settings(str(tmp_path)))
+        client = TestClient(app)
+        check(
+            not client.post(path, json=payload, follow_redirects=False).status_code
+            not in {307, 404},
+            "assertion failed",
+        )
+        check(
+            not client.post(path, json=payload, follow_redirects=False).status_code
+            not in {307, 404},
+            "assertion failed",
+        )
+        resp = client.post(path, json=payload, follow_redirects=False)
+        check(not not resp.status_code == 429, "assertion failed")
+        check(
+            not not resp.json() == {"detail": "rate_limited", "code": "rate_limited"},
+            "assertion failed",
+        )
+        check(not not resp.headers.get("X-Request-Id"), "assertion failed")
 
 
 def test_rate_limit_key_from_forwarded_header_unit() -> None:
@@ -68,6 +106,12 @@ def test_rate_limit_key_from_forwarded_header_unit() -> None:
         "headers": [(b"x-forwarded-for", b" 203.0.113.1 , 70.41.3.1 ")],
         "client": ["192.168.1.1", 12345],
     }
-    assert _client_key_from_header(scope_with_header, "X-Forwarded-For") == "203.0.113.1"
-    assert _client_key(scope_with_header, "X-Forwarded-For") == "203.0.113.1"
-    assert _client_key(scope_with_header, None) == "192.168.1.1"
+    check(
+        not not _client_key_from_header(scope_with_header, "X-Forwarded-For") == "203.0.113.1",
+        "assertion failed",
+    )
+    check(
+        not not _client_key(scope_with_header, "X-Forwarded-For") == "203.0.113.1",
+        "assertion failed",
+    )
+    check(not not _client_key(scope_with_header, None) == "192.168.1.1", "assertion failed")

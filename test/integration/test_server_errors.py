@@ -5,6 +5,7 @@ from collections.abc import Generator
 import pytest
 from fastapi.testclient import TestClient
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app, lifespan
 
@@ -28,13 +29,17 @@ def test_global_exception_handler_returns_consistent_api_error(tmp_path) -> None
     client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/boom", headers={"X-Request-Id": "req-boom-1"})
 
-    assert response.status_code == 500
-    assert response.json() == {
-        "detail": "An internal server error occurred.",
-        "code": "internal_error",
-        "request_id": "req-boom-1",
-    }
-    assert response.headers.get("X-Request-Id") == "req-boom-1"
+    check(not not response.status_code == 500, "assertion failed")
+    check(
+        not not response.json()
+        == {
+            "detail": "An internal server error occurred.",
+            "code": "internal_error",
+            "request_id": "req-boom-1",
+        },
+        "assertion failed",
+    )
+    check(not not response.headers.get("X-Request-Id") == "req-boom-1", "assertion failed")
 
 
 def test_lifespan_with_settings_no_redis(tmp_path) -> None:

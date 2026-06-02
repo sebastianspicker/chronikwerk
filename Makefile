@@ -1,4 +1,4 @@
-.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build verify ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
+.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build build-check verify verify-local ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -49,7 +49,7 @@ test-cov:
 	python -m pytest --cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=85
 
 docs-check:
-	@for p in README.md docs/01-architecture.md docs/08-operations.md docs/api.md docs/config-reference.md docs/PRD.md; do \
+	@for p in README.md docs/01-architecture.md docs/08-operations.md docs/api.md docs/config-reference.md; do \
 		test -f $$p || (echo "Missing docs: $$p" && exit 1); \
 	done; \
 	echo "docs-check: OK"
@@ -65,7 +65,12 @@ qa: lint smoke
 build:
 	python -m build
 
+build-check:
+	python -m build --outdir /tmp/zammad-ticket-archiver-build-local
+
 verify: qa build
+
+verify-local: qa build-check
 
 ci: lint typecheck test
 

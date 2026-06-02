@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from test.support.checks import check
+
 
 def _load_compose(path: Path) -> dict:
     return yaml.safe_load(path.read_text("utf-8"))
@@ -15,7 +17,10 @@ def test_prod_compose_env_file_is_optional() -> None:
     service = compose["services"]["zammad-pdf-archiver"]
 
     env_file = service["env_file"]
-    assert env_file == [{"path": "${ARCHIVER_ENV_FILE:-.env}", "required": False}]
+    check(
+        not not env_file == [{"path": "${ARCHIVER_ENV_FILE:-.env}", "required": False}],
+        "assertion failed",
+    )
 
 
 def test_dev_compose_env_file_is_optional() -> None:
@@ -24,4 +29,4 @@ def test_dev_compose_env_file_is_optional() -> None:
     service = compose["services"]["zammad-pdf-archiver"]
 
     env_file = service["env_file"]
-    assert env_file == [{"path": ".env", "required": False}]
+    check(not not env_file == [{"path": ".env", "required": False}], "assertion failed")

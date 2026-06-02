@@ -10,20 +10,26 @@ This runbook is for deployment, monitoring, troubleshooting, and recovery.
 - `POST /ingest/batch`
   - returns `202` with `{"status":"accepted","count":...}`
   - schedules one background task per payload
+  - returns `503` with `partial_failure` details if dispatch fails after some
+    items were accepted
 - `POST /retry/{ticket_id}`
   - returns `202` with `{"status":"accepted","ticket_id":...}`
   - schedules one explicit forced reprocessing job without delivery-ID dedupe
 - `GET /jobs/{ticket_id}`
-  - returns process-local status: `ticket_id`, `in_flight`, `shutting_down`
+  - returns best-known status: `ticket_id`, `in_flight`, `process_local_in_flight`, `distributed_in_flight`, `shutting_down`
   - requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
 - `GET /jobs/queue/stats`
   - returns queue state (disabled for `inprocess`, depth/pending/DLQ for `redis_queue`)
   - requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
 - `GET /jobs/history`
-  - returns Redis-backed processing history (`processed`, `failed_*`, `skipped_*`)
+  - returns Redis-backed processing history when enabled (`processed`,
+    `processed_done_update_failed`, `failed_*`, `skipped_*`)
+  - returns `{"status":"disabled","available":false,...}` when history
+    retention/backend is disabled
   - requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
 - `POST /jobs/queue/dlq/drain`
-  - drains dead-letter stream entries (bounded by `limit`)
+  - drains dead-letter stream entries (bounded by `limit`) and reports
+    selected/deleted/not-deleted counts
   - requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`
 - `GET /healthz`
   - basic liveness/status payload (optionally omit version/service via `HEALTHZ_OMIT_VERSION`)
@@ -78,6 +84,12 @@ Execution mode is controlled by `workflow.execution_backend`:
 - `inprocess` (default): best-effort in-process tasks. If the process restarts before completion, work can be lost.
 - `redis_queue`: accepted jobs are enqueued in Redis stream, processed by worker loop, retried with backoff on transient failures, and moved to DLQ on permanent failures or retry exhaustion.
 
+`redis_queue` requires `workflow.idempotency_backend=redis` and a configured
+`workflow.redis_url`. Startup validation rejects `redis_queue` with memory
+idempotency because retry re-enqueue and acknowledgement are separate Redis
+operations; Redis-backed idempotency is the guard against duplicate ticket
+processing after a partial Redis failure.
+
 In `inprocess` mode operators can re-trigger by saving the ticket or reapplying the macro. In `redis_queue` mode use queue metrics and `GET /jobs/queue/stats` for queue health.
 
 ### Tag transitions
@@ -108,7 +120,7 @@ In `inprocess` mode operators can re-trigger by saving the ticket or reapplying 
 
 Operators should be aware of the following; some are documented-only recovery constraints, others are inherent to the current tag-driven design:
 
-- **In-flight lock is process-local:** Per-ticket concurrency is in-memory. Multiple processes or replicas can process the same ticket concurrently; use a single instance or accept possible tag races when scaling out.
+- **In-flight status depends on backend:** `idempotency_backend=memory` only has process-local per-ticket visibility. `idempotency_backend=redis` uses the Redis ticket lock for multi-worker visibility; if Redis status is unavailable, the job-status endpoint fails closed instead of reporting idle.
 - **should_process:** The gate skips when the “done” tag (`pdf:signed`) is present. Tickets in `pdf:processing` or `pdf:error` can be considered eligible depending on `require_tag` and tag state; a second worker may start if in-flight state is not shared.
 - **TOCTOU on tag updates:** Two workers can both pass `should_process`; the slower one may then call `apply_processing`, removing `pdf:signed` and setting `pdf:processing`, undoing the first worker’s completion. Conditional or atomic tag updates are not used; accept or avoid concurrent workers per ticket.
 - **Error path orphans:** If `apply_error` fails after the trigger was removed, the ticket can end with no state tags and be skipped when `require_tag=true`. Recovery: re-add trigger and remove stale `pdf:processing` if present, then re-trigger.
@@ -147,7 +159,8 @@ Cause:
 
 Fix:
 - set `WEBHOOK_HMAC_SECRET`, or
-- test-only fallback `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true`
+- test-only fallback `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` plus
+  `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET=true`
 
 ### `400 missing_delivery_id`
 
@@ -179,7 +192,8 @@ Check:
 Check:
 - `TSA_URL`
 - `TSA_CA_BUNDLE_PATH` (private CA)
-- `TSA_USER` and `TSA_PASS` when auth required
+- `signing.timestamp.rfc3161.user` / `signing.timestamp.rfc3161.password`, or
+  `TSA_USER` / `TSA_PASS`, when auth is required
 - outbound connectivity and TLS trust
 
 ### Rendering article limit exceeded
@@ -232,12 +246,18 @@ VERIFY_PDF_OTHER_CERTS="/path/extra.pem" scripts/ops/verify-pdf.sh /path/to/file
 
 For local development, to remove untracked and ignored files (e.g. `.mypy_cache`, `build/`): `git clean -fdx` (use with care).
 
-## 10. Residual risks and release checklist
+## 10. Residual risks and release readiness
 
 External risks operators should be aware of:
 
-- **CIFS/network storage:** Durability and consistency depend on the share and network; consider fsync and atomic write settings.
+- **CIFS/network storage:** Durability and consistency depend on the share and network; keep `storage.fsync=true` unless the storage platform provides equivalent guarantees.
 - **`/metrics` access:** When enabled, set `METRICS_BEARER_TOKEN` and still restrict access by network policy where possible.
 - **TSA certificate trust:** RFC3161 timestamp validation depends on TSA and CA trust configuration.
 
-Before deployment, run through [Release and deployment checklist](release-checklist.md) for safety checks.
+Before deployment:
+- run `make verify`
+- run `make test-e2e` when Docker/API behavior changed
+- confirm required secrets, storage mounts, webhook HMAC, admin/metrics tokens,
+  and signing/TSA material are configured outside source control
+- confirm no local archive, audit, plan, ledger, or status artifacts are staged
+  for commit

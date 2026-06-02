@@ -8,18 +8,25 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
+from pydantic import ValidationError
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
+from test.support.time_control import freeze_process_ticket_now
 from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
 
 
-def _settings(storage_root: str, *, fsync: bool = True, atomic_write: bool = True) -> Settings:
+def _settings(storage_root: str, *, fsync: bool = True) -> Settings:
     return Settings.from_mapping(
         {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": storage_root, "fsync": fsync, "atomic_write": atomic_write},
+            "zammad": {
+                "base_url": "https://zammad.example.local",
+                "api_token": fake_credential("test-token"),
+            },
+            "storage": {"root": storage_root, "fsync": fsync},
         }
     )
 
@@ -49,9 +56,9 @@ def _mock_happy_zammad(ticket_id: int = 123) -> None:
         params={"object": "Ticket", "o_id": str(ticket_id)},
     ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
 
-    respx.get(
-        f"https://zammad.example.local/api/v1/ticket_articles/by_ticket/{ticket_id}"
-    ).mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"https://zammad.example.local/api/v1/ticket_articles/by_ticket/{ticket_id}").mock(
+        return_value=httpx.Response(200, json=[])
+    )
 
     respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
         return_value=httpx.Response(200, json={"success": True})
@@ -82,7 +89,7 @@ def _expected_pdf_path(
 def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = _settings(str(tmp_path), fsync=False)
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
+    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
 
     def _fsync(_: int) -> None:
         raise AssertionError("os.fsync must not be called when storage.fsync=false")
@@ -97,29 +104,20 @@ def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.Monke
     expected_pdf = _expected_pdf_path(
         tmp_path, settings=settings, ticket_number="20240123", fixed_now=fixed_now
     )
-    assert expected_pdf.exists()
+    check(not not expected_pdf.exists(), "assertion failed")
 
 
-def test_storage_atomic_write_can_be_disabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    settings = _settings(str(tmp_path), atomic_write=False)
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
-
-    import tempfile
-
-    def _mkstemp(*args, **kwargs):  # noqa: ANN001 - test shim
-        raise AssertionError("tempfile.mkstemp must not be called when storage.atomic_write=false")
-
-    monkeypatch.setattr(tempfile, "mkstemp", _mkstemp)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-atomic-off-1"}
-    with respx.mock:
-        _mock_happy_zammad(ticket_id=123)
-        asyncio.run(process_ticket("delivery-atomic-off-1", payload, settings))
-
-    expected_pdf = _expected_pdf_path(
-        tmp_path, settings=settings, ticket_number="20240123", fixed_now=fixed_now
-    )
-    assert expected_pdf.exists()
+def test_storage_atomic_write_setting_is_not_supported(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="atomic_write"):
+        Settings.from_mapping(
+            {
+                "zammad": {
+                    "base_url": "https://zammad.example.local",
+                    "api_token": fake_credential("test-token"),
+                },
+                "storage": {
+                    "root": str(tmp_path),
+                    "atomic_write": False,
+                },
+            }
+        )

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import sys
 from typing import Any
 
@@ -33,20 +32,6 @@ def _scrub_event_dict(_: Any, __: str, event_dict: dict[str, Any]) -> dict[str, 
     return redact_settings_dict(event_dict)
 
 
-def _resolve_log_format(json_logs_default: bool) -> str:
-    raw = (os.environ.get("LOG_FORMAT") or "").strip().lower()
-    if raw in {"json", "human"}:
-        return raw
-    return "json" if json_logs_default else "human"
-
-
-def _resolve_log_level(log_level_default: str) -> str:
-    raw = (os.environ.get("LOG_LEVEL") or "").strip()
-    if raw:
-        return raw
-    return log_level_default
-
-
 def _coerce_log_format(value: str | None) -> str | None:
     if value is None:
         return None
@@ -63,17 +48,13 @@ def _redacted_exception_formatter(sio: Any, exc_info: Any) -> None:
 def configure_logging(
     *,
     log_level: str = "INFO",
-    json_logs: bool = False,
     log_format: str | None = None,
 ) -> None:
     """
     Minimal structlog + stdlib logging configuration.
-
-    LOG_FORMAT=human|json can override `json_logs`.
     """
-    resolved_level = _resolve_log_level(log_level).upper()
-    configured_format = _coerce_log_format(log_format)
-    resolved_format = configured_format or _resolve_log_format(json_logs)
+    resolved_level = log_level.upper()
+    resolved_format = _coerce_log_format(log_format) or "human"
 
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,

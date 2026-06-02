@@ -12,7 +12,6 @@ def main() -> int:  # pragma: no cover
     configure_logging(
         log_level=settings.observability.log_level,
         log_format=settings.observability.log_format,
-        json_logs=settings.observability.json_logs,
     )
 
     app = create_app(settings)

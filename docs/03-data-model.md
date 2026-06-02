@@ -44,6 +44,17 @@ Fields (current):
   - `enabled` (bool)
   - `tsa_used` (bool)
   - `cert_fingerprint` (string; optional SHA-256 hex of signer certificate)
+- `attachment_summary` (optional object):
+  - `total` (int)
+  - `written` (int)
+  - `skipped` (int)
+  - `reasons` (object keyed by omission reason)
+- `attachments` (optional array when binaries are written):
+  - `storage_path`
+  - `article_id`
+  - `attachment_id`
+  - `filename`
+  - `sha256`
 - `service`:
   - `name`
   - `version` (may be `"unknown"` in non-packaged deployments)

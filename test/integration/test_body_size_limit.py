@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
@@ -28,9 +29,12 @@ def test_body_size_limit_triggers_on_ingest(tmp_path) -> None:
         content=b'{"ticket":{"id":123}}',
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status_code == 413
-    assert resp.json() == {"detail": "request_too_large", "code": "request_too_large"}
-    assert resp.headers.get("X-Request-Id")
+    check(not not resp.status_code == 413, "assertion failed")
+    check(
+        not not resp.json() == {"detail": "request_too_large", "code": "request_too_large"},
+        "assertion failed",
+    )
+    check(not not resp.headers.get("X-Request-Id"), "assertion failed")
 
 
 def test_body_size_limit_triggers_on_ingest_batch(tmp_path) -> None:
@@ -42,6 +46,28 @@ def test_body_size_limit_triggers_on_ingest_batch(tmp_path) -> None:
         content=b'[{"ticket":{"id":123}}]',
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status_code == 413
-    assert resp.json() == {"detail": "request_too_large", "code": "request_too_large"}
-    assert resp.headers.get("X-Request-Id")
+    check(not not resp.status_code == 413, "assertion failed")
+    check(
+        not not resp.json() == {"detail": "request_too_large", "code": "request_too_large"},
+        "assertion failed",
+    )
+    check(not not resp.headers.get("X-Request-Id"), "assertion failed")
+
+
+def test_body_size_limit_triggers_on_ingest_path_variants(tmp_path) -> None:
+    app = create_app(_test_settings(str(tmp_path)))
+    client = TestClient(app)
+
+    for path in ("/ingest/", "/ingest%2F", "/ingest/batch/"):
+        resp = client.post(
+            path,
+            content=b'{"ticket":{"id":123}}',
+            headers={"Content-Type": "application/json"},
+            follow_redirects=False,
+        )
+        check(not not resp.status_code == 413, "assertion failed")
+        check(
+            not not resp.json() == {"detail": "request_too_large", "code": "request_too_large"},
+            "assertion failed",
+        )
+        check(not not resp.headers.get("X-Request-Id"), "assertion failed")

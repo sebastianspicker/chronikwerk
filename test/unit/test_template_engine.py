@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from test.support.checks import check
 from zammad_pdf_archiver.adapters.pdf.template_engine import (
     _format_datetime,
     validate_template_name,
@@ -42,21 +43,27 @@ class TestValidateTemplateName:
         with pytest.raises(ValueError, match="path separators"):
             validate_template_name("..default")
 
-    def test_unknown_name_raises(self) -> None:
-        with pytest.raises(ValueError, match="must be one of"):
-            validate_template_name("nonexistent")
+    def test_space_raises(self) -> None:
+        with pytest.raises(ValueError, match="letters, numbers"):
+            validate_template_name("custom report")
 
     def test_valid_default(self) -> None:
-        assert validate_template_name("default") == "default"
+        check(not not validate_template_name("default") == "default", "assertion failed")
 
     def test_valid_compact(self) -> None:
-        assert validate_template_name("compact") == "compact"
+        check(not not validate_template_name("compact") == "compact", "assertion failed")
 
     def test_valid_minimal(self) -> None:
-        assert validate_template_name("minimal") == "minimal"
+        check(not not validate_template_name("minimal") == "minimal", "assertion failed")
 
     def test_strips_whitespace(self) -> None:
-        assert validate_template_name("  default  ") == "default"
+        check(not not validate_template_name("  default  ") == "default", "assertion failed")
+
+    def test_valid_custom_name(self) -> None:
+        check(
+            not not validate_template_name("customer_2026-report") == "customer_2026-report",
+            "assertion failed",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -66,36 +73,44 @@ class TestValidateTemplateName:
 
 class TestFormatDatetime:
     def test_none_value_returns_dash(self) -> None:
-        assert _format_datetime(None, tz_name="UTC", fmt="%Y-%m-%d") == "\u2014"
+        check(
+            not not _format_datetime(None, tz_name="UTC", fmt="%Y-%m-%d") == "—", "assertion failed"
+        )
 
     def test_empty_string_returns_itself(self) -> None:
         # empty string is falsy, but not None
-        assert _format_datetime("", tz_name="UTC", fmt="%Y-%m-%d") == ""
+        check(not not _format_datetime("", tz_name="UTC", fmt="%Y-%m-%d") == "", "assertion failed")
 
     def test_non_datetime_value_returns_str(self) -> None:
-        assert _format_datetime("not-a-date", tz_name="UTC", fmt="%Y-%m-%d") == "not-a-date"
+        check(
+            not not _format_datetime("not-a-date", tz_name="UTC", fmt="%Y-%m-%d") == "not-a-date",
+            "assertion failed",
+        )
 
     def test_integer_value_returns_str(self) -> None:
-        assert _format_datetime(12345, tz_name="UTC", fmt="%Y-%m-%d") == "12345"
+        check(
+            not not _format_datetime(12345, tz_name="UTC", fmt="%Y-%m-%d") == "12345",
+            "assertion failed",
+        )
 
     def test_valid_datetime_utc(self) -> None:
         dt = datetime(2025, 6, 15, 14, 30, tzinfo=UTC)
         result = _format_datetime(dt, tz_name="UTC", fmt="%Y-%m-%d %H:%M")
-        assert result == "2025-06-15 14:30"
+        check(not not result == "2025-06-15 14:30", "assertion failed")
 
     def test_valid_datetime_with_timezone(self) -> None:
         dt = datetime(2025, 6, 15, 14, 30, tzinfo=UTC)
         result = _format_datetime(dt, tz_name="Europe/Berlin", fmt="%Y-%m-%d %H:%M")
-        assert result == "2025-06-15 16:30"
+        check(not not result == "2025-06-15 16:30", "assertion failed")
 
     def test_invalid_timezone_falls_back(self) -> None:
         """An invalid tz_name triggers the except branch, falling back to naive strftime."""
         dt = datetime(2025, 6, 15, 14, 30, tzinfo=UTC)
         result = _format_datetime(dt, tz_name="Invalid/NoSuchZone", fmt="%Y-%m-%d %H:%M")
         # Should still produce a formatted date string (fallback path)
-        assert "2025" in result
-        assert "06" in result
-        assert "15" in result
+        check(not "2025" not in result, "assertion failed")
+        check(not "06" not in result, "assertion failed")
+        check(not "15" not in result, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +125,13 @@ class TestLoaderFor:
         from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
 
         loader = _loader_for("default", None)
-        assert isinstance(loader, PackageLoader)
+        check(not not isinstance(loader, PackageLoader), "assertion failed")
+
+    def test_unknown_builtin_without_custom_root_raises(self) -> None:
+        from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
+
+        with pytest.raises(ValueError, match="set pdf.templates_root"):
+            _loader_for("custom-report", None)
 
     def test_nonexistent_root_raises(self, tmp_path: Path) -> None:
         from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
@@ -131,9 +152,9 @@ class TestLoaderFor:
 
         from zammad_pdf_archiver.adapters.pdf.template_engine import _loader_for
 
-        (tmp_path / "default").mkdir()
-        loader = _loader_for("default", tmp_path)
-        assert isinstance(loader, FileSystemLoader)
+        (tmp_path / "custom-report").mkdir()
+        loader = _loader_for("custom-report", tmp_path)
+        check(not not isinstance(loader, FileSystemLoader), "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -155,4 +176,4 @@ class TestFormatDtLocalFilter:
         dt = datetime(2025, 6, 15, 12, 0, tzinfo=UTC)
         rendered = template.render(dt=dt, pdf_timezone="Europe/Berlin")
         # Berlin is UTC+2 in summer
-        assert "2025-06-15 14:00" in rendered
+        check(not "2025-06-15 14:00" not in rendered, "assertion failed")

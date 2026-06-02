@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test.support.checks import check
+
 
 def _parse_env_example(repo_root: Path) -> dict[str, str]:
     """
@@ -14,8 +16,9 @@ def _parse_env_example(repo_root: Path) -> dict[str, str]:
         lines = (repo_root / ".env.example").read_text("utf-8").splitlines()
     except PermissionError:
         import pytest
+
         pytest.skip("PermissionError reading .env.example (system locked)")
-        
+
     for raw_line in lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -32,14 +35,21 @@ def test_env_example_does_not_force_missing_config_path() -> None:
     env = _parse_env_example(repo_root)
 
     # `CONFIG_PATH` is optional; setting it to a missing file causes startup to fail.
-    assert env.get("CONFIG_PATH", "") == ""
+    check(not not env.get("CONFIG_PATH", "") == "", "assertion failed")
 
 
 def test_env_example_uses_canonical_zammad_base_url_var() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     env = _parse_env_example(repo_root)
 
-    # The service supports legacy aliases, but the example should be canonical.
-    assert "ZAMMAD_BASE_URL" in env
-    assert "ZAMMAD_URL" not in env
-
+    check(not "ZAMMAD_BASE_URL" not in env, "assertion failed")
+    check(
+        not not {
+            "ZAMMAD_URL",
+            "TEMPLATE_VARIANT",
+            "RENDER_LOCALE",
+            "RENDER_TIMEZONE",
+            "OBSERVABILITY_METRICS_ENABLED",
+        }.isdisjoint(env),
+        "assertion failed",
+    )

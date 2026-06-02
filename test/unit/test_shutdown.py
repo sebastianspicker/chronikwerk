@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from test.support.checks import check
 from zammad_pdf_archiver.app.jobs import shutdown as shutdown_module
 
 
@@ -9,7 +10,7 @@ def test_initial_state() -> None:
     """GracefulShutdown starts with cancelled=False."""
     shutdown_module.clear_shutting_down()
     try:
-        assert shutdown_module.is_shutting_down() is False
+        check(not shutdown_module.is_shutting_down() is not False, "assertion failed")
     finally:
         shutdown_module.clear_shutting_down()
 
@@ -19,7 +20,7 @@ def test_cancel_sets_flag() -> None:
     shutdown_module.clear_shutting_down()
     try:
         shutdown_module.set_shutting_down()
-        assert shutdown_module.is_shutting_down() is True
+        check(not shutdown_module.is_shutting_down() is not True, "assertion failed")
     finally:
         shutdown_module.clear_shutting_down()
 
@@ -36,7 +37,7 @@ def test_register_and_unregister_task() -> None:
         task = asyncio.create_task(_wait_for_event())
 
         shutdown_module.track_task(task)
-        assert task in shutdown_module._TASKS  # noqa: SLF001
+        check(not task not in shutdown_module._TASKS, "assertion failed")  # noqa: SLF001
 
         # Complete the task and yield repeatedly so the done callback fires.
         event.set()
@@ -45,7 +46,7 @@ def test_register_and_unregister_task() -> None:
         # but we need to yield so the task actually completes first.
         await asyncio.sleep(0)
 
-        assert task not in shutdown_module._TASKS  # noqa: SLF001
+        check(not not task not in shutdown_module._TASKS, "assertion failed")  # noqa: SLF001
 
     shutdown_module._TASKS.clear()  # noqa: SLF001
     try:
@@ -71,11 +72,11 @@ def test_is_shutting_down() -> None:
     """is_shutting_down reflects the internal flag toggled by set/clear."""
     shutdown_module.clear_shutting_down()
     try:
-        assert shutdown_module.is_shutting_down() is False
+        check(not shutdown_module.is_shutting_down() is not False, "assertion failed")
         shutdown_module.set_shutting_down()
-        assert shutdown_module.is_shutting_down() is True
+        check(not shutdown_module.is_shutting_down() is not True, "assertion failed")
         shutdown_module.clear_shutting_down()
-        assert shutdown_module.is_shutting_down() is False
+        check(not shutdown_module.is_shutting_down() is not False, "assertion failed")
     finally:
         shutdown_module.clear_shutting_down()
 
@@ -91,11 +92,11 @@ def test_track_task_already_done_not_tracked() -> None:
         await task  # ensure task is done
         await asyncio.sleep(0)
 
-        assert task.done()
+        check(not not task.done(), "assertion failed")
 
         shutdown_module._TASKS.clear()  # noqa: SLF001
         shutdown_module.track_task(task)
-        assert task not in shutdown_module._TASKS  # noqa: SLF001
+        check(not not task not in shutdown_module._TASKS, "assertion failed")  # noqa: SLF001
 
     shutdown_module._TASKS.clear()  # noqa: SLF001
     try:
@@ -120,8 +121,8 @@ def test_wait_for_tasks_timeout() -> None:
         await shutdown_module.wait_for_tasks(timeout=0.01)
 
         # After timeout the task must be cancelled and removed from tracking.
-        assert task.cancelled()
-        assert task not in shutdown_module._TASKS  # noqa: SLF001
+        check(not not task.cancelled(), "assertion failed")
+        check(not not task not in shutdown_module._TASKS, "assertion failed")  # noqa: SLF001
 
     shutdown_module._TASKS.clear()  # noqa: SLF001
     try:

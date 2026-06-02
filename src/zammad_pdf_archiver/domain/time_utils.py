@@ -3,10 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 
-def now_utc() -> datetime:
-    return datetime.now(UTC)
-
-
 def format_timestamp_utc(dt: datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)

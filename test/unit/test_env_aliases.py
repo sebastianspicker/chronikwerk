@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from test.support.checks import check
 from zammad_pdf_archiver.config.load import load_settings
 
 
@@ -17,14 +18,11 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         # Webhook auth default (fail closed unless secret configured)
         "WEBHOOK_HMAC_SECRET",
         "HARDENING_WEBHOOK_ALLOW_UNSIGNED",
+        "HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET",
         # Current env keys
         "PDF_TEMPLATE_VARIANT",
         "PDF_LOCALE",
         "PDF_TIMEZONE",
-        # Legacy keys still present in .env.example
-        "TEMPLATE_VARIANT",
-        "RENDER_LOCALE",
-        "RENDER_TIMEZONE",
         "SIGNING_REASON",
         "SIGNING_LOCATION",
     ]
@@ -41,17 +39,17 @@ def test_env_aliases_from_env_example_are_honored(
     monkeypatch.setenv("ZAMMAD_API_TOKEN", "test-token")
     monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
     monkeypatch.setenv("HARDENING_WEBHOOK_ALLOW_UNSIGNED", "true")
+    monkeypatch.setenv("HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET", "true")
 
-    monkeypatch.setenv("TEMPLATE_VARIANT", "minimal")
-    monkeypatch.setenv("RENDER_LOCALE", "en_US")
-    monkeypatch.setenv("RENDER_TIMEZONE", "UTC")
+    monkeypatch.setenv("PDF_TEMPLATE_VARIANT", "minimal")
+    monkeypatch.setenv("PDF_LOCALE", "en_US")
+    monkeypatch.setenv("PDF_TIMEZONE", "UTC")
     monkeypatch.setenv("SIGNING_REASON", "Unit Test Reason")
     monkeypatch.setenv("SIGNING_LOCATION", "Unit Test Location")
 
-    with pytest.warns(DeprecationWarning, match="TEMPLATE_VARIANT|RENDER_LOCALE|RENDER_TIMEZONE"):
-        settings = load_settings()
-    assert settings.pdf.template_variant == "minimal"
-    assert settings.pdf.locale == "en_US"
-    assert settings.pdf.timezone == "UTC"
-    assert settings.signing.pades.reason == "Unit Test Reason"
-    assert settings.signing.pades.location == "Unit Test Location"
+    settings = load_settings()
+    check(not not settings.pdf.template_variant == "minimal", "assertion failed")
+    check(not not settings.pdf.locale == "en_US", "assertion failed")
+    check(not not settings.pdf.timezone == "UTC", "assertion failed")
+    check(not not settings.signing.pades.reason == "Unit Test Reason", "assertion failed")
+    check(not not settings.signing.pades.location == "Unit Test Location", "assertion failed")

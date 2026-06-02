@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
+import shutil
 import socket
-import subprocess
 import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -17,11 +19,17 @@ DEFAULT_COMPOSE_FILE = Path("docker-compose.demo.yml")
 DEFAULT_DATASET = Path("examples/demo/mock_university_dataset.json")
 DEFAULT_ARCHIVER_URL = "http://127.0.0.1:18080"
 DEFAULT_MOCK_URL = "http://127.0.0.1:18090"
-DEFAULT_ADMIN_TOKEN = "demo-admin-token"
+ADMIN_AUTH_ENV = "ZAMMAD_ARCHIVER_DEMO_ADMIN_TOKEN"
 DEFAULT_REDIS_PORT = 16379
 DEFAULT_TIMEOUT_SECONDS = 90.0
 RETRY_TICKET_ID = 1104
 PROCESSED_STATUS = "processed"
+
+
+class _CommandResult(NamedTuple):
+    returncode: int
+    stdout: str
+    stderr: str
 
 
 class E2EFailure(RuntimeError):
@@ -35,7 +43,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--archiver-url", default=DEFAULT_ARCHIVER_URL)
     parser.add_argument("--mock-url", default=DEFAULT_MOCK_URL)
-    parser.add_argument("--admin-token", default=DEFAULT_ADMIN_TOKEN)
+    parser.add_argument("--admin-token", default=os.environ.get(ADMIN_AUTH_ENV))
     parser.add_argument("--redis-port", type=int, default=DEFAULT_REDIS_PORT)
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--keep-stack", action="store_true")
@@ -107,9 +115,7 @@ def assert_expected_statuses(
     for ticket_id, expected_status in sorted(expected.items()):
         actual = latest.get(ticket_id)
         if actual != expected_status:
-            mismatches.append(
-                f"ticket {ticket_id}: expected {expected_status!r}, got {actual!r}"
-            )
+            mismatches.append(f"ticket {ticket_id}: expected {expected_status!r}, got {actual!r}")
     if mismatches:
         raise E2EFailure("history phase: terminal status mismatch: " + "; ".join(mismatches))
 
@@ -137,15 +143,53 @@ def assert_artifacts(
 
 
 def _compose_base(project: str, compose_file: Path) -> list[str]:
-    return ["docker", "compose", "-p", project, "-f", str(compose_file)]
+    docker = shutil.which("docker")
+    if docker is None:
+        raise E2EFailure("startup phase: docker executable not found on PATH")
+    compose_path = compose_file.expanduser()
+    if not compose_path.is_file():
+        raise E2EFailure(f"startup phase: compose file not found: {compose_file}")
+    return ["docker", "compose", "-p", project, "-f", str(compose_path.resolve())]
 
 
-def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        list(args),
-        capture_output=True,
-        text=True,
-        check=False,
+async def _run_compose_exec(
+    project: str,
+    compose_file: str,
+    args: Sequence[str],
+    *,
+    executable: str,
+) -> _CommandResult:
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "compose",
+        "-p",
+        project,
+        "-f",
+        compose_file,
+        *list(args),
+        executable=executable,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    return _CommandResult(
+        returncode=int(proc.returncode or 0),
+        stdout=stdout.decode(),
+        stderr=stderr.decode(),
+    )
+
+
+def _run_command(args: Sequence[str]) -> _CommandResult:
+    docker = shutil.which("docker")
+    if docker is None:
+        raise E2EFailure("startup phase: docker executable not found on PATH")
+    command = list(args)
+    if len(command) < 6 or command[:2] != ["docker", "compose"]:
+        raise E2EFailure("startup phase: expected docker compose command")
+    if command[2] != "-p" or command[4] != "-f":
+        raise E2EFailure("startup phase: expected docker compose project and file flags")
+    return asyncio.run(
+        _run_compose_exec(command[3], command[5], command[6:], executable=docker)
     )
 
 
@@ -289,9 +333,7 @@ def _retry_ticket(
 
 def expected_processed_ticket_ids(expected_statuses: dict[int, str]) -> set[int]:
     return {
-        ticket_id
-        for ticket_id, status in expected_statuses.items()
-        if status == PROCESSED_STATUS
+        ticket_id for ticket_id, status in expected_statuses.items() if status == PROCESSED_STATUS
     }
 
 
@@ -362,6 +404,78 @@ def _print_dry_run(args: argparse.Namespace, dataset: dict[str, Any]) -> int:
     return 0
 
 
+def _start_stack(args: argparse.Namespace, compose_file: Path) -> list[str]:
+    base = _compose_base(args.project, compose_file)
+    _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
+    _assert_ports_available(
+        [args.archiver_url, args.mock_url],
+        extra_ports=[args.redis_port],
+    )
+    print("E2E: starting Docker demo stack")
+    _run_checked([*base, "up", "-d", "--build"], phase="startup")
+    return base
+
+
+def _run_initial_ingest_phase(
+    client: httpx.Client,
+    *,
+    args: argparse.Namespace,
+    dataset: dict[str, Any],
+    expected: dict[int, str],
+) -> None:
+    _wait_http_ok(
+        client,
+        "mock-zammad",
+        f"{args.mock_url}/healthz",
+        timeout_s=args.timeout_seconds,
+    )
+    _wait_http_ok(
+        client,
+        "archiver",
+        f"{args.archiver_url}/healthz",
+        timeout_s=args.timeout_seconds,
+    )
+
+    print("E2E: seeding ingest requests")
+    _seed_dataset(
+        client,
+        archiver_url=args.archiver_url,
+        mock_url=args.mock_url,
+        dataset=dataset,
+    )
+
+    print("E2E: waiting for initial terminal statuses")
+    _wait_for_statuses(
+        client,
+        archiver_url=args.archiver_url,
+        admin_token=args.admin_token,
+        expected=expected,
+        timeout_s=args.timeout_seconds,
+    )
+
+
+def _run_retry_phase(
+    client: httpx.Client, *, args: argparse.Namespace, expected: dict[int, str]
+) -> dict[int, str]:
+    print(f"E2E: retrying skipped ticket {RETRY_TICKET_ID}")
+    _retry_ticket(
+        client,
+        archiver_url=args.archiver_url,
+        admin_token=args.admin_token,
+        ticket_id=RETRY_TICKET_ID,
+    )
+    expected_after_retry = dict(expected)
+    expected_after_retry[RETRY_TICKET_ID] = PROCESSED_STATUS
+    _wait_for_statuses(
+        client,
+        archiver_url=args.archiver_url,
+        admin_token=args.admin_token,
+        expected=expected_after_retry,
+        timeout_s=args.timeout_seconds,
+    )
+    return expected_after_retry
+
+
 def run(args: argparse.Namespace) -> int:
     compose_file = args.compose_file.expanduser().resolve()
     dataset = _load_dataset(args.dataset.expanduser().resolve())
@@ -369,65 +483,17 @@ def run(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         return _print_dry_run(args, dataset)
+    if not args.admin_token:
+        raise E2EFailure(f"startup phase: set --admin-token or {ADMIN_AUTH_ENV}")
 
-    base = _compose_base(args.project, compose_file)
-    _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
-    _assert_ports_available(
-        [args.archiver_url, args.mock_url],
-        extra_ports=[args.redis_port],
-    )
+    base = _start_stack(args, compose_file)
 
     try:
-        print("E2E: starting Docker demo stack")
-        _run_checked([*base, "up", "-d", "--build"], phase="startup")
-
         with httpx.Client(timeout=20.0) as client:
-            _wait_http_ok(
-                client,
-                "mock-zammad",
-                f"{args.mock_url}/healthz",
-                timeout_s=args.timeout_seconds,
+            _run_initial_ingest_phase(
+                client, args=args, dataset=dataset, expected=expected
             )
-            _wait_http_ok(
-                client,
-                "archiver",
-                f"{args.archiver_url}/healthz",
-                timeout_s=args.timeout_seconds,
-            )
-
-            print("E2E: seeding ingest requests")
-            _seed_dataset(
-                client,
-                archiver_url=args.archiver_url,
-                mock_url=args.mock_url,
-                dataset=dataset,
-            )
-
-            print("E2E: waiting for initial terminal statuses")
-            _wait_for_statuses(
-                client,
-                archiver_url=args.archiver_url,
-                admin_token=args.admin_token,
-                expected=expected,
-                timeout_s=args.timeout_seconds,
-            )
-
-            print(f"E2E: retrying skipped ticket {RETRY_TICKET_ID}")
-            _retry_ticket(
-                client,
-                archiver_url=args.archiver_url,
-                admin_token=args.admin_token,
-                ticket_id=RETRY_TICKET_ID,
-            )
-            expected_after_retry = dict(expected)
-            expected_after_retry[RETRY_TICKET_ID] = PROCESSED_STATUS
-            _wait_for_statuses(
-                client,
-                archiver_url=args.archiver_url,
-                admin_token=args.admin_token,
-                expected=expected_after_retry,
-                timeout_s=args.timeout_seconds,
-            )
+            expected_after_retry = _run_retry_phase(client, args=args, expected=expected)
 
         print("E2E: inspecting archived artifacts")
         artifacts = _inspect_artifacts(args.project, compose_file)

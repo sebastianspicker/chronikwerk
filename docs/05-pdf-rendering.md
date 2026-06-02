@@ -36,11 +36,17 @@ Runtime selection:
 - env: `PDF_TEMPLATE_VARIANT`
 
 Optional template root override:
+- YAML: `pdf.templates_root`
 - env: `TEMPLATES_ROOT`
 
-When `TEMPLATES_ROOT` is set, templates are loaded from:
+When `pdf.templates_root` / `TEMPLATES_ROOT` is unset, `pdf.template_variant`
+must be one of the built-in variants above. When a template root is set,
+custom variant names are allowed if they contain only letters, numbers, `_`, and
+`-`; path separators and `..` are rejected.
+
+When a template root is set, templates are loaded from:
 - `<TEMPLATES_ROOT>/<template_variant>/ticket.html`
-- CSS files in same variant directory
+- CSS files in the same variant directory
 
 ## 3. Template Context Contract (Sandbox)
 
@@ -113,12 +119,18 @@ Behavior:
 ## 8. Customization Workflow
 
 1. Copy a built-in variant (`default`, `minimal`, or `compact`) to a new variant folder.
-2. Keep `ticket.html` and at least one CSS file.
-3. Adjust HTML/CSS to your output requirements.
-4. Set `pdf.template_variant` to your variant name.
-5. Validate with realistic ticket samples before production.
+2. Name the variant with only letters, numbers, `_`, and `-`.
+3. Keep `ticket.html` and at least one CSS file.
+4. Set `pdf.templates_root` to the parent directory and `pdf.template_variant`
+   to your variant name.
+5. Adjust HTML/CSS to your output requirements.
+6. Validate with realistic ticket samples before production.
 
 ## 9. Current Limitations
 
-- Attachments are represented as metadata in the PDF. Optionally, when `pdf.include_attachment_binary=true`, attachment binaries are fetched, written to an `attachments/` directory next to the PDF, and listed in the audit sidecar (see [config-reference](config-reference.md)).
+- Attachments are represented as metadata in the PDF. Optionally, when `pdf.include_attachment_binary=true`, attachment binaries are fetched, written to an `attachments/` directory next to the PDF, and listed in the audit sidecar. The sidecar also records `attachment_summary` counts and omission reasons for tickets with attachments (see [config-reference](config-reference.md)).
+- When attachment binary inclusion is enabled, failure to fetch an in-budget
+  attachment fails the job instead of silently creating an incomplete archive.
+  Attachments skipped by disabled binary inclusion or configured size limits
+  remain policy skips and are counted in the audit sidecar.
 - Template datetime formatting is template-defined; `pdf.locale` and `pdf.timezone` are currently configuration fields without locale-aware template helpers.

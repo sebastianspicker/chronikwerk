@@ -10,18 +10,14 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 from starlette.responses import HTMLResponse
 
 from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
-from zammad_pdf_archiver.app.jobs.history import read_history
-from zammad_pdf_archiver.app.jobs.redis_queue import (
-    drain_dlq,
-    get_queue_stats,
-    replay_dlq,
-)
+from zammad_pdf_archiver.app.jobs.redis_queue import get_queue_stats, replay_dlq
 from zammad_pdf_archiver.app.responses import (
     constant_time_token_match,
     settings_or_503,
     verify_bearer_auth,
 )
-from zammad_pdf_archiver.app.routes.ingest import _dispatch_ticket
+from zammad_pdf_archiver.app.routes import ingest as ingest_routes
+from zammad_pdf_archiver.app.routes import operations
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import (
     ConfigValidationError,
@@ -70,22 +66,31 @@ def _verify_admin_dashboard_auth(request: Request, settings: Settings) -> None:
 
     expected = _admin_token_bytes(settings)
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer ") and len(auth) >= 8:
-        if constant_time_token_match(expected, auth[7:].strip().encode("utf-8")):
-            return
-        raise _dashboard_auth_error()
-
-    if auth.startswith("Basic ") and len(auth) >= 7:
-        try:
-            decoded = base64.b64decode(auth[6:].strip(), validate=True).decode("utf-8")
-        except (binascii.Error, UnicodeDecodeError):
-            raise _dashboard_auth_error() from None
-
-        _, separator, password = decoded.partition(":")
-        if separator and constant_time_token_match(expected, password.encode("utf-8")):
-            return
-
+    if _dashboard_bearer_auth_ok(auth, expected):
+        return
+    if _dashboard_basic_auth_ok(auth, expected):
+        return
     raise _dashboard_auth_error()
+
+
+def _dashboard_bearer_auth_ok(auth: str, expected: bytes) -> bool:
+    if not auth.startswith("Bearer ") or len(auth) < 8:
+        return False
+    if constant_time_token_match(expected, auth[7:].strip().encode("utf-8")):
+        return True
+    raise _dashboard_auth_error()
+
+
+def _dashboard_basic_auth_ok(auth: str, expected: bytes) -> bool:
+    if not auth.startswith("Basic ") or len(auth) < 7:
+        return False
+    try:
+        decoded = base64.b64decode(auth[6:].strip(), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        raise _dashboard_auth_error() from None
+
+    _, separator, password = decoded.partition(":")
+    return bool(separator and constant_time_token_match(expected, password.encode("utf-8")))
 
 
 @router.get("/admin", response_class=HTMLResponse)
@@ -100,11 +105,10 @@ async def admin_queue_stats(request: Request) -> dict[str, object]:
     settings = settings_or_503(request)
     _verify_admin_auth(request, settings)
     try:
-        stats = await get_queue_stats(settings)
+        return await get_queue_stats(settings)
     except Exception as exc:
         log.warning("admin.queue_stats_unavailable")
         raise HTTPException(status_code=503, detail="queue_unavailable") from exc
-    return {str(k): v for k, v in stats.items()}
 
 
 @router.get("/admin/api/history")
@@ -120,11 +124,14 @@ async def admin_history(
     resolved_limit = limit if limit is not None else settings.admin.history_limit
     bounded_limit = max(1, min(int(resolved_limit), 5000))
     try:
-        items = await read_history(settings, limit=bounded_limit, ticket_id=ticket_id)
+        return await operations.history_payload(
+            settings,
+            limit=bounded_limit,
+            ticket_id=ticket_id,
+        )
     except Exception as exc:
         log.warning("admin.history_unavailable")
         raise HTTPException(status_code=503, detail="history_unavailable") from exc
-    return {"status": "ok", "count": len(items), "items": items}
 
 
 @router.post("/admin/api/retry/{ticket_id}")
@@ -142,7 +149,7 @@ async def admin_retry_ticket(
         FORCE_REPROCESS_KEY: True,
     }
     try:
-        await _dispatch_ticket(
+        await ingest_routes.dispatch_ticket(
             delivery_id=None,
             payload_for_job=payload,
             settings=settings,
@@ -160,11 +167,10 @@ async def admin_drain_dlq(request: Request, limit: int = 100) -> dict[str, objec
 
     bounded_limit = max(1, min(int(limit), 1000))
     try:
-        drained = await drain_dlq(settings, limit=bounded_limit)
+        return await operations.drain_dlq_payload(settings, limit=bounded_limit)
     except Exception as exc:
         log.warning("admin.dlq_unavailable")
         raise HTTPException(status_code=503, detail="dlq_unavailable") from exc
-    return {"status": "ok", "drained": drained}
 
 
 @router.post("/admin/api/dlq/replay")
@@ -177,14 +183,22 @@ async def admin_replay_dlq(
 
     bounded_limit = max(1, min(int(limit), 1000))
     try:
-        replayed = await replay_dlq(settings, limit=bounded_limit)
+        replay_result = await replay_dlq(settings, limit=bounded_limit)
+        incomplete = (
+            replay_result["skipped"] or replay_result["errors"] or replay_result["not_deleted"]
+        )
+        return {
+            "status": "partial" if incomplete else "ok",
+            "idempotent": False,
+            "duplicate_risk": replay_result["not_deleted"],
+            **replay_result,
+        }
     except Exception as exc:
         log.warning("admin.dlq_replay_unavailable")
         raise HTTPException(
             status_code=503,
             detail="dlq_unavailable",
         ) from exc
-    return {"status": "ok", "replayed": replayed}
 
 
 @router.get("/admin/api/config/check")

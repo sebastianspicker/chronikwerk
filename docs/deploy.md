@@ -43,6 +43,8 @@ Minimum required values:
 
 - `ZAMMAD_BASE_URL`
 - `ZAMMAD_API_TOKEN`
+- `WEBHOOK_HMAC_SECRET` (recommended), or both unsigned-mode test flags for
+  internal test environments only
 - `STORAGE_ROOT`
 
 Config file (optional):

@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Path, Request
+from fastapi import APIRouter, Path, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import JSONResponse
 
@@ -19,6 +19,7 @@ from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down, track_task
 from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_auth
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.ticket_id import extract_ticket_id
+from zammad_pdf_archiver.observability.metrics import history_record_failed_total
 
 router = APIRouter()
 
@@ -75,6 +76,40 @@ def _normalized_delivery_id(value: str | None) -> str | None:
     return (value or "").strip() or None
 
 
+def _batch_item_delivery_id(batch_delivery_id: str | None, index: int) -> str | None:
+    if batch_delivery_id is None:
+        return None
+    # One delivery header represents the batch request; suffix with the item index so
+    # idempotency is still tracked per ticket payload.
+    return ":".join((batch_delivery_id, str(index)))
+
+
+def _batch_too_large_response() -> JSONResponse:
+    return api_error(
+        422,
+        f"batch too large (max {MAX_BATCH_SIZE} items)",
+        code="batch_too_large",
+    )
+
+
+def _batch_dispatch_failure_response(
+    *,
+    accepted: int,
+    failed_index: int,
+    ticket_id: int,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "partial_failure" if accepted else "failed",
+            "code": "batch_dispatch_failed",
+            "accepted": accepted,
+            "failed_index": failed_index,
+            "failed_ticket_id": ticket_id,
+        },
+    )
+
+
 async def _run_process_ticket_background(
     *,
     delivery_id: str | None,
@@ -92,7 +127,20 @@ async def _run_process_ticket_background(
 
     structlog.contextvars.bind_contextvars(**bound)
     try:
-        await process_ticket(delivery_id, payload, settings)
+        result = await process_ticket(delivery_id, payload, settings)
+        if result.history_recorded is False:
+            history_record_failed_total.inc()
+            log.warning(
+                "process_ticket.history_not_recorded",
+                ticket_id=result.ticket_id,
+                delivery_id=delivery_id,
+            )
+        if result.lock_release_failed:
+            log.warning(
+                "ingest.ticket_lock_release_failed",
+                ticket_id=result.ticket_id,
+                delivery_id=delivery_id,
+            )
     except Exception:
         log.exception(
             "ingest.process_ticket_unhandled_error",
@@ -116,7 +164,7 @@ def _execution_backend(settings: Settings) -> str:
     return (settings.workflow.execution_backend or "inprocess").strip().lower()
 
 
-async def _dispatch_ticket(
+async def dispatch_ticket(
     *,
     delivery_id: str | None,
     payload_for_job: dict[str, Any],
@@ -140,33 +188,64 @@ async def _dispatch_ticket(
     track_task(task)
 
 
+async def _dispatch_batch_payloads(
+    *,
+    request: Request,
+    payloads: list[IngestPayload],
+    settings: Settings,
+) -> tuple[int, JSONResponse | None]:
+    accepted = 0
+    batch_delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
+    request_id = getattr(request.state, "request_id", None)
+
+    for index, payload in enumerate(payloads):
+        ticket_id = payload.resolved_ticket_id()
+        if ticket_id is None:
+            continue
+
+        try:
+            await dispatch_ticket(
+                delivery_id=_batch_item_delivery_id(batch_delivery_id, index),
+                payload_for_job=_public_payload_for_job(payload, request_id),
+                settings=settings,
+            )
+        except Exception:
+            log.exception(
+                "ingest.batch_dispatch_failed",
+                accepted=accepted,
+                failed_index=index,
+                ticket_id=ticket_id,
+            )
+            return accepted, _batch_dispatch_failure_response(
+                accepted=accepted,
+                failed_index=index,
+                ticket_id=ticket_id,
+            )
+        accepted += 1
+
+    return accepted, None
+
+
 @router.post("/ingest", status_code=202, response_model=IngestAcceptedResponse)
 async def ingest_webhook(
     request: Request,
     payload: IngestPayload,
-    dry_run: bool = False,
 ) -> JSONResponse:
     """Accept a single Zammad webhook payload and dispatch it for ticket archival."""
     settings, error = _resolve_settings_or_error(request)
     if error is not None:
         return error
+    if settings is None:
+        return api_error(503, "settings not configured", code="settings_not_configured")
 
     ticket_id = payload.resolved_ticket_id()
-    if dry_run:
-        return JSONResponse(
-            status_code=202,
-            content={"status": "dry_run_accepted", "ticket_id": ticket_id},
-        )
-
     if ticket_id is not None:
-        if settings is None:
-            raise HTTPException(status_code=503, detail="settings_not_configured")
         delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
         payload_for_job = _public_payload_for_job(
             payload,
             getattr(request.state, "request_id", None),
         )
-        await _dispatch_ticket(
+        await dispatch_ticket(
             delivery_id=delivery_id,
             payload_for_job=payload_for_job,
             settings=settings,
@@ -179,47 +258,25 @@ async def ingest_webhook(
 async def batch_ingest(
     request: Request,
     payloads: list[IngestPayload],
-    dry_run: bool = False,
 ) -> JSONResponse:
     """Accept a batch of webhook payloads and dispatch each for ticket archival."""
     settings, error = _resolve_settings_or_error(request)
     if error is not None:
         return error
+    if settings is None:
+        return api_error(503, "settings not configured", code="settings_not_configured")
 
     # Security: reject oversized batches before processing any items.
     if len(payloads) > MAX_BATCH_SIZE:
-        return api_error(
-            422,
-            f"batch too large (max {MAX_BATCH_SIZE} items)",
-            code="batch_too_large",
-        )
+        return _batch_too_large_response()
 
-    if dry_run:
-        return JSONResponse(
-            status_code=202,
-            content={"status": "dry_run_accepted", "count": len(payloads)},
-        )
-
-    accepted = 0
-    batch_delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
-    for index, payload in enumerate(payloads):
-        ticket_id = payload.resolved_ticket_id()
-        if ticket_id is not None:
-            if settings is None:
-                raise HTTPException(status_code=503, detail="settings_not_configured")
-            payload_for_job = _public_payload_for_job(
-                payload,
-                getattr(request.state, "request_id", None),
-            )
-            # One delivery header represents the batch request; suffix with the item index so
-            # idempotency is still tracked per ticket payload.
-            delivery_id = f"{batch_delivery_id}:{index}" if batch_delivery_id is not None else None
-            await _dispatch_ticket(
-                delivery_id=delivery_id,
-                payload_for_job=payload_for_job,
-                settings=settings,
-            )
-            accepted += 1
+    accepted, error_response = await _dispatch_batch_payloads(
+        request=request,
+        payloads=payloads,
+        settings=settings,
+    )
+    if error_response is not None:
+        return error_response
 
     return JSONResponse(status_code=202, content={"status": "accepted", "count": accepted})
 
@@ -237,7 +294,7 @@ async def retry_ticket(
     payload_for_job: dict[str, Any] = {"ticket_id": ticket_id}
     payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
     payload_for_job[FORCE_REPROCESS_KEY] = True
-    await _dispatch_ticket(
+    await dispatch_ticket(
         delivery_id=None,  # Retry does not need deduplication
         payload_for_job=payload_for_job,
         settings=settings,

@@ -7,11 +7,12 @@ High-level layout:
 - `src/zammad_pdf_archiver/runtime.py` – CLI/runtime entry point (loads config, configures logging, runs Uvicorn)
 - `src/zammad_pdf_archiver/asgi.py` – ASGI app module for `uvicorn zammad_pdf_archiver.asgi:app`
 - `src/zammad_pdf_archiver/app/` – FastAPI app wiring, middleware, routes
-  - `routes/ingest.py` – `POST /ingest` webhook endpoint (always returns 202; runs best-effort processing)
+  - `routes/ingest.py` – `POST /ingest`, `POST /ingest/batch`, and `POST /retry/{ticket_id}` dispatch endpoints
   - `routes/jobs.py` – Bearer-authenticated job status, queue stats, history, and DLQ drain endpoints
   - `routes/admin.py` – optional admin dashboard and admin API
   - `routes/healthz.py` – `GET /healthz`
   - `routes/metrics.py` – `GET /metrics` (only mounted when enabled)
+  - `routes/operations.py` – shared payload builders for history and DLQ route responses
   - `middleware/` – request ID, HMAC verification, rate limit, body size limit
   - `jobs/process_ticket.py` – end-to-end ticket processing pipeline
   - `jobs/redis_queue.py` – optional Redis stream backend for durable retries and DLQ handling
@@ -19,7 +20,7 @@ High-level layout:
   - `zammad/` – Zammad REST API client
   - `pdf/` – HTML rendering + PDF generation (WeasyPrint)
   - `signing/` – PAdES signing + RFC3161 TSA client (pyHanko)
-  - `storage/` – path layout + atomic writes
+  - `storage/` – path layout and filesystem writes
   - `snapshot/` – snapshot builder
 - `src/zammad_pdf_archiver/domain/` – domain logic (path policy, audit sidecar schema, idempotency, state machine)
 - `src/zammad_pdf_archiver/config/` – settings model and config loading/validation

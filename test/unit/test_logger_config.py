@@ -7,33 +7,37 @@ import warnings
 
 import structlog
 
+from test.support.checks import check
 from zammad_pdf_archiver.observability.logger import configure_logging
 
 
 def test_configure_logging_reduces_fonttools_noise() -> None:
-    configure_logging(log_level="INFO", json_logs=False)
+    configure_logging(log_level="INFO")
     logger = logging.getLogger("fontTools")
-    assert logger.getEffectiveLevel() >= logging.WARNING
+    check(not not logger.getEffectiveLevel() >= logging.WARNING, "assertion failed")
 
 
 def test_human_logging_does_not_emit_format_exc_info_warning() -> None:
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        configure_logging(log_level="INFO", json_logs=False, log_format="human")
+        configure_logging(log_level="INFO", log_format="human")
         logger = structlog.get_logger("test.logger")
         try:
             raise RuntimeError("boom")
         except RuntimeError:
             logger.exception("expected_exception")
 
-    assert not any(
-        "Remove `format_exc_info` from your processor chain" in str(warning.message)
-        for warning in captured
+    check(
+        not not not any(
+            "Remove `format_exc_info` from your processor chain" in str(warning.message)
+            for warning in captured
+        ),
+        "assertion failed",
     )
 
 
 def test_human_logging_redacts_secrets_in_exception_traceback() -> None:
-    configure_logging(log_level="INFO", json_logs=False, log_format="human")
+    configure_logging(log_level="INFO", log_format="human")
 
     stream = io.StringIO()
     root = logging.getLogger()
@@ -48,12 +52,12 @@ def test_human_logging_redacts_secrets_in_exception_traceback() -> None:
         logger.exception("expected_exception")
 
     output = stream.getvalue()
-    assert "topsecret" not in output
-    assert "abc123" not in output
+    check(not not "topsecret" not in output, "assertion failed")
+    check(not not "abc123" not in output, "assertion failed")
 
 
 def test_json_logging_redacts_secrets_in_exception_traceback() -> None:
-    configure_logging(log_level="INFO", json_logs=True, log_format="json")
+    configure_logging(log_level="INFO", log_format="json")
 
     stream = io.StringIO()
     root = logging.getLogger()
@@ -69,5 +73,5 @@ def test_json_logging_redacts_secrets_in_exception_traceback() -> None:
 
     payload = json.loads(stream.getvalue())
     rendered = json.dumps(payload)
-    assert "topsecret" not in rendered
-    assert "abc123" not in rendered
+    check(not not "topsecret" not in rendered, "assertion failed")
+    check(not not "abc123" not in rendered, "assertion failed")

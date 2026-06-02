@@ -9,12 +9,16 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 
 def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _field_or_default(source: dict[str, Any], key: str, default: Any) -> Any:
+    return source.get(key) or default
 
 
 class TagMutation(BaseModel):
@@ -53,6 +57,40 @@ class DemoStore:
             raise ValueError("dataset.tickets must be a non-empty list")
         return payload
 
+    @staticmethod
+    def _ticket_from_seed(item: dict[str, Any], *, created: str, updated: str) -> dict[str, Any]:
+        ticket_id = int(item["id"])
+        return {
+            "id": ticket_id,
+            "number": str(item.get("number") or f"UNI-{ticket_id}"),
+            "title": item.get("title"),
+            "owner": {"login": item.get("owner_login")},
+            "updated_by": {"login": item.get("updated_by_login")},
+            "customer": item.get("customer") or {},
+            "preferences": {
+                "custom_fields": item.get("custom_fields") or {},
+            },
+            "created_at": created,
+            "updated_at": updated,
+        }
+
+    @staticmethod
+    def _article_from_seed(
+        article: dict[str, Any], *, fallback_article_id: int
+    ) -> dict[str, Any]:
+        article_id = int(article.get("id") or fallback_article_id)
+        return {
+            "id": article_id,
+            "created_at": article.get("created_at") or _iso_now(),
+            "internal": bool(article.get("internal", False)),
+            "subject": _field_or_default(article, "subject", ""),
+            "body": _field_or_default(article, "body", ""),
+            "content_type": _field_or_default(article, "content_type", "text/plain"),
+            "from": _field_or_default(article, "from", ""),
+            "to": _field_or_default(article, "to", ""),
+            "attachments": _field_or_default(article, "attachments", []),
+        }
+
     def reset(self) -> dict[str, Any]:
         with self._lock:
             template = copy.deepcopy(self._dataset_template)
@@ -68,38 +106,19 @@ class DemoStore:
                 ticket_id = int(item["id"])
                 created = item.get("created_at") or _iso_now()
                 updated = item.get("updated_at") or created
-                self._tickets[ticket_id] = {
-                    "id": ticket_id,
-                    "number": str(item.get("number") or f"UNI-{ticket_id}"),
-                    "title": item.get("title"),
-                    "owner": {"login": item.get("owner_login")},
-                    "updated_by": {"login": item.get("updated_by_login")},
-                    "customer": item.get("customer") or {},
-                    "preferences": {
-                        "custom_fields": item.get("custom_fields") or {},
-                    },
-                    "created_at": created,
-                    "updated_at": updated,
-                }
+                self._tickets[ticket_id] = self._ticket_from_seed(
+                    item, created=created, updated=updated
+                )
                 self._tags[ticket_id] = [str(t) for t in item.get("tags", [])]
 
                 articles: list[dict[str, Any]] = []
                 for article in item.get("articles", []):
-                    article_id = int(article.get("id") or max_article_id)
-                    max_article_id = max(max_article_id, article_id + 1)
-                    articles.append(
-                        {
-                            "id": article_id,
-                            "created_at": article.get("created_at") or _iso_now(),
-                            "internal": bool(article.get("internal", False)),
-                            "subject": article.get("subject") or "",
-                            "body": article.get("body") or "",
-                            "content_type": article.get("content_type") or "text/plain",
-                            "from": article.get("from") or "",
-                            "to": article.get("to") or "",
-                            "attachments": article.get("attachments") or [],
-                        }
+                    normalized = self._article_from_seed(
+                        article, fallback_article_id=max_article_id
                     )
+                    article_id = int(normalized["id"])
+                    max_article_id = max(max_article_id, article_id + 1)
+                    articles.append(normalized)
                 self._articles[ticket_id] = articles
 
             self._next_article_id = max_article_id
@@ -251,11 +270,11 @@ def create_app(*, dataset_path: Path, api_token: str) -> FastAPI:
 
     @app.get("/api/v1/tags")
     async def get_tags(
-        object: str | None = None,  # noqa: A002
+        object_type: str | None = Query(default=None, alias="object"),
         o_id: int | None = None,
         _: None = Depends(auth),
     ) -> dict[str, Any]:
-        if object != "Ticket" or o_id is None:
+        if object_type != "Ticket" or o_id is None:
             raise HTTPException(status_code=400, detail="invalid_tag_query")
         return {"tags": state.store.get_tags(o_id)}
 
@@ -296,7 +315,7 @@ def create_app(*, dataset_path: Path, api_token: str) -> FastAPI:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local mock Zammad API service")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8090)
     parser.add_argument(
         "--dataset",

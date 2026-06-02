@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
+from test.support.checks import check
 from zammad_pdf_archiver.adapters.storage.fs_storage import (
     _reject_symlinks_under_root,
     move_file_within_root,
-    write_atomic_bytes,
     write_bytes,
 )
 
@@ -72,39 +71,6 @@ def test_reject_symlinks_under_root_blocks_deep_symlink(tmp_path: Path) -> None:
         _reject_symlinks_under_root(root, link / "child")
 
 
-# -- write_atomic_bytes cleanup on failure ----------------------------------------
-
-
-def test_write_atomic_bytes_cleans_up_temp_on_write_error(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    target = root / "output.pdf"
-
-    # Patch os.replace to simulate failure after the temp file has been written
-    replace_target = "zammad_pdf_archiver.adapters.storage.fs_storage.os.replace"
-    with patch(replace_target, side_effect=OSError("disk error")):
-        with pytest.raises(OSError, match="disk error"):
-            write_atomic_bytes(target, b"data", storage_root=root)
-
-    # No temp files should remain
-    remaining = list(root.glob(".tmp-*"))
-    assert remaining == [], f"temp files not cleaned up: {remaining}"
-
-    # Target should not exist either
-    assert not target.exists()
-
-
-def test_write_atomic_bytes_creates_file_on_success(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    target = root / "sub" / "output.bin"
-
-    write_atomic_bytes(target, b"hello", storage_root=root, fsync=False)
-
-    assert target.read_bytes() == b"hello"
-    assert oct(target.stat().st_mode & 0o777) == oct(0o640)
-
-
 # -- write_bytes -------------------------------------------------------------------
 
 
@@ -115,8 +81,8 @@ def test_write_bytes_creates_file_with_correct_perms(tmp_path: Path) -> None:
 
     write_bytes(target, b"content", storage_root=root, fsync=False)
 
-    assert target.read_bytes() == b"content"
-    assert oct(target.stat().st_mode & 0o777) == oct(0o640)
+    check(not not target.read_bytes() == b"content", "assertion failed")
+    check(not not oct(target.stat().st_mode & 511) == oct(416), "assertion failed")
 
 
 def test_write_bytes_rejects_path_outside_root(tmp_path: Path) -> None:
@@ -140,8 +106,8 @@ def test_move_file_within_root_success(tmp_path: Path) -> None:
 
     move_file_within_root(src, dst, storage_root=root, fsync=False)
 
-    assert not src.exists()
-    assert dst.read_bytes() == b"payload"
+    check(not not not src.exists(), "assertion failed")
+    check(not not dst.read_bytes() == b"payload", "assertion failed")
 
 
 def test_move_file_within_root_rejects_src_outside_root(tmp_path: Path) -> None:

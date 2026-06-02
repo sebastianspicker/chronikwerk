@@ -7,7 +7,13 @@ This document describes how archive files are written and what storage assumptio
 Each successful ticket run writes:
 - one PDF file
 - one sidecar JSON file (`<pdf_filename>.json`)
-- optionally: attachment binaries in an `attachments/` subdir when `pdf.include_attachment_binary=true` (see [config-reference](config-reference.md)); the sidecar then includes an `attachments` array with `storage_path`, `article_id`, `attachment_id`, `filename`, and `sha256` per file.
+- optionally: attachment binaries in an `attachments/` subdir when `pdf.include_attachment_binary=true` (see [config-reference](config-reference.md)); the sidecar includes `attachment_summary` counts for tickets with attachments and, when binaries are written, an `attachments` array with `storage_path`, `article_id`, `attachment_id`, `filename`, and `sha256` per file.
+- if `pdf.include_attachment_binary=true`, an in-budget attachment fetch failure
+  fails the archive job before storage commit; the service must not write a
+  successful archive while silently omitting that binary.
+- attachments omitted because binary inclusion is disabled or configured size
+  budgets are exhausted remain successful policy omissions, but the sidecar must
+  report written and omitted counts plus omission reasons.
 
 Output root is configured by:
 - `storage.root` / `STORAGE_ROOT`
@@ -29,23 +35,23 @@ Default container user:
 Required permissions on target filesystem:
 - execute (`x`) on parent directories
 - write (`w`) in destination directory
-- create/remove temporary files (when atomic writes enabled)
+- create/remove temporary files and temporary work directories
 
 For CIFS/SMB mounts, share ACLs and UID/GID mapping must permit these operations.
 
-## 3. Atomic Write Behavior
+## 3. Commit Behavior
 
-With `storage.atomic_write=true`:
-1. create temp file in destination directory
-2. write bytes and flush
-3. optional file `fsync` (`storage.fsync=true`)
-4. `os.replace(temp, target)`
-5. best-effort directory `fsync`
+Archive commits always use the ticket-storage commit path:
+1. create a temporary work directory under the target archive directory
+2. write attachments, PDF, and sidecar into the temporary work directory
+3. move files into their final locations with `os.replace`
+4. publish the sidecar last so its presence is the completeness signal
+5. optionally fsync files/directories when `storage.fsync=true`
 
-With `storage.atomic_write=false`:
-- write directly to target with truncate/create semantics
+`storage.atomic_write` / `STORAGE_ATOMIC_WRITE` is not a supported setting.
 
 Implementation:
+- `src/zammad_pdf_archiver/app/jobs/ticket_storage.py`
 - `src/zammad_pdf_archiver/adapters/storage/fs_storage.py`
 
 ## 4. Path Safety and Symlink Defense
