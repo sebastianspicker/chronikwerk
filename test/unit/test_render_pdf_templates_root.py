@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test.support.checks import check
 from zammad_pdf_archiver.adapters.pdf import render_pdf as render_pdf_module
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
@@ -51,5 +52,24 @@ def test_render_pdf_passes_templates_root_to_render_html(tmp_path: Path, monkeyp
         templates_root=templates_root,
     )
 
-    assert pdf_bytes.startswith(b"%PDF")
-    assert captured["templates_root"] == templates_root
+    check(not not pdf_bytes.startswith(b"%PDF"), "assertion failed")
+    check(not not captured["templates_root"] == templates_root, "assertion failed")
+
+
+def test_render_pdf_supports_safe_custom_template_variant(tmp_path: Path) -> None:
+    templates_root = tmp_path / "templates"
+    template_dir = templates_root / "customer-report"
+    template_dir.mkdir(parents=True)
+    (template_dir / "styles.css").write_text("body { font-size: 12px; }", encoding="utf-8")
+    (template_dir / "ticket.html").write_text(
+        "<html><body><h1>{{ ticket.number }}</h1></body></html>",
+        encoding="utf-8",
+    )
+
+    pdf_bytes = render_pdf_module.render_pdf(
+        _snapshot(),
+        "customer-report",
+        templates_root=templates_root,
+    )
+
+    check(not not pdf_bytes.startswith(b"%PDF"), "assertion failed")

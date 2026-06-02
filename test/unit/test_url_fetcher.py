@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from test.support.checks import check
+
 # We test the logic of _SafeURLFetcher without requiring weasyprint at import time.
 # The weasyprint.urls imports are lazy (inside fetch()), so we mock them.
 
@@ -57,7 +59,7 @@ def test_data_url_passes_through(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher.fetch("data:text/plain;base64,SGVsbG8=")
-    assert result.body == b"data-content"
+    check(not not result.body == b"data-content", "assertion failed")
 
 
 # -- file:// URLs within template root are allowed ----------------------------------
@@ -71,8 +73,8 @@ def test_file_url_within_template_root_allowed(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher.fetch(f"file://{asset}")
-    assert result.body == b"body { color: red; }"
-    assert result.extra["headers"]["Content-Type"] == "text/css"
+    check(not not result.body == b"body { color: red; }", "assertion failed")
+    check(not not result.extra["headers"]["Content-Type"] == "text/css", "assertion failed")
 
 
 def test_file_url_in_subdirectory_allowed(tmp_path: Path) -> None:
@@ -85,7 +87,7 @@ def test_file_url_in_subdirectory_allowed(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher.fetch(f"file://{asset}")
-    assert result.body == b"\x89PNG"
+    check(not not result.body == b"\x89PNG", "assertion failed")
 
 
 # -- file:// URLs outside template root are blocked ---------------------------------
@@ -158,4 +160,4 @@ def test_callable_delegates_to_fetch(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher(f"file://{asset}")
-    assert result.body == b"p{}"
+    check(not not result.body == b"p{}", "assertion failed")

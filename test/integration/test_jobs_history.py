@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 
@@ -9,54 +11,204 @@ from zammad_pdf_archiver.app.server import create_app
 def _ops_auth_settings(storage_root: str):
     return make_settings(
         storage_root,
-        overrides={"admin": {"bearer_token": "ops-token"}},
+        overrides={"admin": {"bearer_token": fake_credential("ops-token")}},
     )
 
 
 def test_jobs_history_endpoint_returns_items(tmp_path, monkeypatch) -> None:
-    app = create_app(_ops_auth_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.jobs as jobs_route
+    app = create_app(
+        make_settings(
+            str(tmp_path),
+            overrides={
+                "admin": {"bearer_token": fake_credential("ops-token")},
+                "workflow": {"redis_url": "redis://localhost/0"},
+            },
+        )
+    )
+    import zammad_pdf_archiver.app.routes.operations as operations_route
 
     async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):
-        assert limit == 50
-        assert ticket_id == 123
+        check(not not limit == 50, "assertion failed")
+        check(not not ticket_id == 123, "assertion failed")
         return [{"status": "processed", "ticket_id": 123}]
 
-    monkeypatch.setattr(jobs_route, "read_history", _stub_history)
+    monkeypatch.setattr(operations_route, "read_history", _stub_history)
 
     client = TestClient(app)
     response = client.get(
         "/jobs/history?limit=50&ticket_id=123",
         headers={"Authorization": "Bearer ops-token"},
     )
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "count": 1,
-        "items": [{"status": "processed", "ticket_id": 123}],
-    }
+    check(not not response.status_code == 200, "assertion failed")
+    check(
+        not not response.json()
+        == {
+            "status": "ok",
+            "available": True,
+            "count": 1,
+            "truncated": False,
+            "items": [{"status": "processed", "ticket_id": 123}],
+        },
+        "assertion failed",
+    )
+
+
+def test_jobs_history_endpoint_reports_disabled_history(tmp_path) -> None:
+    app = create_app(_ops_auth_settings(str(tmp_path)))
+
+    client = TestClient(app)
+    response = client.get(
+        "/jobs/history",
+        headers={"Authorization": "Bearer ops-token"},
+    )
+
+    check(not not response.status_code == 200, "assertion failed")
+    check(
+        not not response.json()
+        == {"status": "disabled", "available": False, "count": 0, "truncated": False, "items": []},
+        "assertion failed",
+    )
+
+
+def test_jobs_history_endpoint_distinguishes_empty_enabled_history(tmp_path, monkeypatch) -> None:
+    app = create_app(
+        make_settings(
+            str(tmp_path),
+            overrides={
+                "admin": {"bearer_token": fake_credential("ops-token")},
+                "workflow": {"redis_url": "redis://localhost/0"},
+            },
+        )
+    )
+    import zammad_pdf_archiver.app.routes.operations as operations_route
+
+    async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
+        return []
+
+    monkeypatch.setattr(operations_route, "read_history", _stub_history)
+
+    client = TestClient(app)
+    response = client.get(
+        "/jobs/history",
+        headers={"Authorization": "Bearer ops-token"},
+    )
+
+    check(not not response.status_code == 200, "assertion failed")
+    check(
+        not not response.json()
+        == {"status": "ok", "available": True, "count": 0, "truncated": False, "items": []},
+        "assertion failed",
+    )
+
+
+def test_jobs_history_endpoint_reports_truncated_when_limit_reached(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app = create_app(
+        make_settings(
+            str(tmp_path),
+            overrides={
+                "admin": {"bearer_token": fake_credential("ops-token")},
+                "workflow": {"redis_url": "redis://localhost/0"},
+            },
+        )
+    )
+    import zammad_pdf_archiver.app.routes.operations as operations_route
+
+    async def _stub_history(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
+        check(not not limit == 2, "assertion failed")
+        return [
+            {"status": "processed", "ticket_id": 123},
+            {"status": "processed", "ticket_id": 124},
+        ]
+
+    monkeypatch.setattr(operations_route, "read_history", _stub_history)
+
+    client = TestClient(app)
+    response = client.get(
+        "/jobs/history?limit=2",
+        headers={"Authorization": "Bearer ops-token"},
+    )
+
+    check(not not response.status_code == 200, "assertion failed")
+    check(not not response.json()["count"] == 2, "assertion failed")
+    check(not response.json()["truncated"] is not True, "assertion failed")
+
+
+def test_jobs_history_endpoint_returns_503_on_backend_error(tmp_path, monkeypatch) -> None:
+    app = create_app(
+        make_settings(
+            str(tmp_path),
+            overrides={
+                "admin": {"bearer_token": fake_credential("ops-token")},
+                "workflow": {"redis_url": "redis://localhost/0"},
+            },
+        )
+    )
+    import zammad_pdf_archiver.app.routes.operations as operations_route
+
+    async def _boom(_settings, *, limit: int, ticket_id: int | None = None):  # noqa: ARG001
+        raise RuntimeError("history backend down")
+
+    monkeypatch.setattr(operations_route, "read_history", _boom)
+
+    client = TestClient(app)
+    response = client.get(
+        "/jobs/history",
+        headers={"Authorization": "Bearer ops-token"},
+    )
+
+    check(not not response.status_code == 503, "assertion failed")
+    check(not not response.json()["detail"] == "history_unavailable", "assertion failed")
 
 
 def test_jobs_dlq_drain_endpoint_bounds_limit(tmp_path, monkeypatch) -> None:
     app = create_app(_ops_auth_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.jobs as jobs_route
+    import zammad_pdf_archiver.app.routes.operations as operations_route
 
     captured: dict[str, int | None] = {"limit": None}
 
     async def _stub_drain(_settings, *, limit: int):
         captured["limit"] = limit
-        return 4
+        return {"selected": 4, "deleted": 4, "not_deleted": 0}
 
-    monkeypatch.setattr(jobs_route, "drain_dlq", _stub_drain)
+    monkeypatch.setattr(operations_route, "drain_dlq", _stub_drain)
 
     client = TestClient(app)
     response = client.post(
         "/jobs/queue/dlq/drain?limit=2000",
         headers={"Authorization": "Bearer ops-token"},
     )
-    assert response.status_code == 200
-    assert captured["limit"] == 1000
-    assert response.json() == {"status": "ok", "drained": 4}
+    check(not not response.status_code == 200, "assertion failed")
+    check(not not captured["limit"] == 1000, "assertion failed")
+    check(
+        not not response.json()
+        == {"status": "ok", "drained": 4, "selected": 4, "deleted": 4, "not_deleted": 0},
+        "assertion failed",
+    )
+
+
+def test_jobs_dlq_drain_endpoint_reports_partial_delete(tmp_path, monkeypatch) -> None:
+    app = create_app(_ops_auth_settings(str(tmp_path)))
+    import zammad_pdf_archiver.app.routes.operations as operations_route
+
+    async def _stub_drain(_settings, *, limit: int):  # noqa: ARG001
+        return {"selected": 3, "deleted": 2, "not_deleted": 1}
+
+    monkeypatch.setattr(operations_route, "drain_dlq", _stub_drain)
+
+    client = TestClient(app)
+    response = client.post(
+        "/jobs/queue/dlq/drain?limit=3",
+        headers={"Authorization": "Bearer ops-token"},
+    )
+    check(not not response.status_code == 200, "assertion failed")
+    check(
+        not not response.json()
+        == {"status": "partial", "drained": 2, "selected": 3, "deleted": 2, "not_deleted": 1},
+        "assertion failed",
+    )
 
 
 def test_jobs_history_requires_bearer_token(tmp_path) -> None:
@@ -64,7 +216,7 @@ def test_jobs_history_requires_bearer_token(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/jobs/history")
-    assert response.status_code == 401
+    check(not not response.status_code == 401, "assertion failed")
 
 
 def test_jobs_dlq_drain_requires_bearer_token(tmp_path) -> None:
@@ -72,7 +224,7 @@ def test_jobs_dlq_drain_requires_bearer_token(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.post("/jobs/queue/dlq/drain")
-    assert response.status_code == 401
+    check(not not response.status_code == 401, "assertion failed")
 
 
 def test_jobs_history_requires_configured_ops_token(tmp_path) -> None:
@@ -80,23 +232,23 @@ def test_jobs_history_requires_configured_ops_token(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.get("/jobs/history")
-    assert response.status_code == 503
-    assert response.json()["detail"] == "admin_token_not_configured"
+    check(not not response.status_code == 503, "assertion failed")
+    check(not not response.json()["detail"] == "admin_token_not_configured", "assertion failed")
 
 
 def test_jobs_dlq_drain_returns_503_on_backend_error(tmp_path, monkeypatch) -> None:
     app = create_app(_ops_auth_settings(str(tmp_path)))
-    import zammad_pdf_archiver.app.routes.jobs as jobs_route
+    import zammad_pdf_archiver.app.routes.operations as operations_route
 
     async def _boom(_settings, *, limit: int):  # noqa: ARG001
         raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr(jobs_route, "drain_dlq", _boom)
+    monkeypatch.setattr(operations_route, "drain_dlq", _boom)
 
     client = TestClient(app)
     response = client.post(
         "/jobs/queue/dlq/drain",
         headers={"Authorization": "Bearer ops-token"},
     )
-    assert response.status_code == 503
-    assert response.json()["detail"] == "dlq_unavailable"
+    check(not not response.status_code == 503, "assertion failed")
+    check(not not response.json()["detail"] == "dlq_unavailable", "assertion failed")

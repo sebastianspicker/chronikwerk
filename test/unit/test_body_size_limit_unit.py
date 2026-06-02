@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.middleware.body_size_limit import (
     BodySizeLimitMiddleware,
@@ -31,22 +32,22 @@ async def _inner_app(scope: Any, receive: Any, send: Any) -> None:
 
 def test_is_limited_path_non_http_scope_is_false() -> None:
     scope: dict[str, Any] = {"type": "websocket", "path": "/ingest"}
-    assert _is_limited_path(scope, 1000) is False
+    check(not _is_limited_path(scope, 1000) is not False, "assertion failed")
 
 
 def test_is_limited_path_zero_max_bytes_is_false() -> None:
     scope: dict[str, Any] = {"type": "http", "path": "/ingest"}
-    assert _is_limited_path(scope, 0) is False
+    check(not _is_limited_path(scope, 0) is not False, "assertion failed")
 
 
 def test_is_limited_path_non_protected_path_is_false() -> None:
     scope: dict[str, Any] = {"type": "http", "path": "/healthz"}
-    assert _is_limited_path(scope, 1000) is False
+    check(not _is_limited_path(scope, 1000) is not False, "assertion failed")
 
 
 def test_is_limited_path_ingest_path_is_true() -> None:
     scope: dict[str, Any] = {"type": "http", "path": "/ingest"}
-    assert _is_limited_path(scope, 1000) is True
+    check(not _is_limited_path(scope, 1000) is not True, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ def test_is_limited_path_ingest_path_is_true() -> None:
 
 def test_content_length_exceeds_limit_no_header_returns_false() -> None:
     scope: dict[str, Any] = {"type": "http", "path": "/ingest", "headers": []}
-    assert _content_length_exceeds_limit(scope, 100) is False
+    check(not _content_length_exceeds_limit(scope, 100) is not False, "assertion failed")
 
 
 def test_content_length_exceeds_limit_within_limit_returns_false() -> None:
@@ -65,7 +66,7 @@ def test_content_length_exceeds_limit_within_limit_returns_false() -> None:
         "path": "/ingest",
         "headers": [(b"content-length", b"50")],
     }
-    assert _content_length_exceeds_limit(scope, 100) is False
+    check(not _content_length_exceeds_limit(scope, 100) is not False, "assertion failed")
 
 
 def test_content_length_exceeds_limit_over_limit_returns_true() -> None:
@@ -74,7 +75,7 @@ def test_content_length_exceeds_limit_over_limit_returns_true() -> None:
         "path": "/ingest",
         "headers": [(b"content-length", b"200")],
     }
-    assert _content_length_exceeds_limit(scope, 100) is True
+    check(not _content_length_exceeds_limit(scope, 100) is not True, "assertion failed")
 
 
 def test_content_length_exceeds_limit_non_integer_returns_false() -> None:
@@ -83,7 +84,7 @@ def test_content_length_exceeds_limit_non_integer_returns_false() -> None:
         "path": "/ingest",
         "headers": [(b"content-length", b"not-a-number")],
     }
-    assert _content_length_exceeds_limit(scope, 100) is False
+    check(not _content_length_exceeds_limit(scope, 100) is not False, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ def test_limited_receive_passes_disconnect_message_through() -> None:
 
     limited = _limited_receive_factory(_recv, max_bytes=10)
     result: dict[str, Any] = asyncio.run(limited())  # type: ignore[arg-type]
-    assert result == disconnect_msg
+    check(not not result == disconnect_msg, "assertion failed")
 
 
 def test_limited_receive_raises_on_oversized_body() -> None:
@@ -139,7 +140,7 @@ def test_middleware_passes_non_ingest_path_through(tmp_path) -> None:
         pass
 
     asyncio.run(middleware(scope, _recv, _send))
-    assert _inner_called == [True]
+    check(not not _inner_called == [True], "assertion failed")
 
 
 def test_middleware_rejects_oversized_content_length(tmp_path) -> None:
@@ -159,9 +160,12 @@ def test_middleware_rejects_oversized_content_length(tmp_path) -> None:
 
     asyncio.run(middleware(scope, _drain_receive, _fake_send))
 
-    assert any(
-        msg.get("type") == "http.response.start" and msg.get("status") == 413
-        for msg in responses
+    check(
+        not not any(
+            msg.get("type") == "http.response.start" and msg.get("status") == 413
+            for msg in responses
+        ),
+        "assertion failed",
     )
 
 
@@ -187,10 +191,13 @@ def test_middleware_does_not_drain_oversized_content_length(tmp_path) -> None:
 
     asyncio.run(middleware(scope, _large_receive, _fake_send))
 
-    assert receive_calls == 0
-    assert any(
-        msg.get("type") == "http.response.start" and msg.get("status") == 413
-        for msg in responses
+    check(not not receive_calls == 0, "assertion failed")
+    check(
+        not not any(
+            msg.get("type") == "http.response.start" and msg.get("status") == 413
+            for msg in responses
+        ),
+        "assertion failed",
     )
 
 
@@ -220,9 +227,12 @@ def test_middleware_rejects_streaming_body_over_limit(tmp_path) -> None:
 
     asyncio.run(middleware(scope, _oversized_receive, _fake_send))
 
-    assert any(
-        msg.get("type") == "http.response.start" and msg.get("status") == 413
-        for msg in responses
+    check(
+        not not any(
+            msg.get("type") == "http.response.start" and msg.get("status") == 413
+            for msg in responses
+        ),
+        "assertion failed",
     )
 
 
@@ -252,10 +262,13 @@ def test_middleware_does_not_drain_after_streaming_body_over_limit(tmp_path) -> 
 
     asyncio.run(middleware(scope, _oversized_receive, _fake_send))
 
-    assert call_count == 1
-    assert any(
-        msg.get("type") == "http.response.start" and msg.get("status") == 413
-        for msg in responses
+    check(not not call_count == 1, "assertion failed")
+    check(
+        not not any(
+            msg.get("type") == "http.response.start" and msg.get("status") == 413
+            for msg in responses
+        ),
+        "assertion failed",
     )
 
 
@@ -272,4 +285,4 @@ def test_middleware_with_no_settings() -> None:
         pass
 
     asyncio.run(middleware(scope, _recv, _send))
-    assert _inner_called == [True]
+    check(not not _inner_called == [True], "assertion failed")

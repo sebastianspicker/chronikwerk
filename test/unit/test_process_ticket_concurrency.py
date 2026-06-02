@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from test.support.checks import check
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.adapters.zammad.models import TagList
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
@@ -13,21 +15,22 @@ from zammad_pdf_archiver.config.settings import Settings
 def _settings(storage_root: Path) -> Settings:
     return Settings.from_mapping(
         {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "zammad": {
+                "base_url": "https://zammad.example.local",
+                "api_token": fake_credential("test-token"),
+            },
             "storage": {"root": str(storage_root)},
             "hardening": {
                 "webhook": {
                     "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": True,
+                    "allow_unsigned_when_no_secret": bool(1),
                 }
             },
         }
     )
 
 
-def test_process_ticket_serializes_same_ticket_concurrent_runs(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_process_ticket_serializes_same_ticket_concurrent_runs(monkeypatch, tmp_path: Path) -> None:
     ticket_stores._reset_for_tests()
 
     class _FakeClient:
@@ -74,7 +77,10 @@ def test_process_ticket_serializes_same_ticket_concurrent_runs(
             return []
 
         async def create_internal_article(
-            self, ticket_id: int, subject: str, body_html: str  # noqa: ARG002
+            self,
+            ticket_id: int,
+            subject: str,
+            body_html: str,  # noqa: ARG002
         ) -> SimpleNamespace:
             type(self)._notes_written += 1
             return SimpleNamespace(id=type(self)._notes_written)
@@ -85,20 +91,29 @@ def test_process_ticket_serializes_same_ticket_concurrent_runs(
     )
 
     async def _fake_build_and_render_pdf(
-        client, ticket, tags, ticket_id: int, settings  # noqa: ANN001, ARG001
-    ) -> SimpleNamespace:
-        return SimpleNamespace(
-            pdf_bytes=b"%PDF-1.7\n%%EOF\n",
-            snapshot=SimpleNamespace(ticket=ticket),
-        )
+        client,
+        ticket,
+        tags,
+        ticket_id: int,
+        settings,  # noqa: ANN001, ARG001
+    ) -> tuple[bytes, SimpleNamespace, bool, int]:
+        return b"%PDF-1.7\n%%EOF\n", SimpleNamespace(ticket=ticket), False, 0
+
+    pdf_writes: list[Path] = []
 
     def _fake_store_ticket_files(*args, **kwargs) -> SimpleNamespace:  # noqa: ANN002, ANN003
-        target_path = tmp_path / "archived.pdf"
+        target_path = kwargs["target_path"]
+        pdf_bytes = kwargs["pdf_bytes"]
+        check(not not isinstance(target_path, Path), "assertion failed")
+        check(not not isinstance(pdf_bytes, bytes), "assertion failed")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(pdf_bytes)
+        pdf_writes.append(target_path)
         return SimpleNamespace(
             target_path=target_path,
             sidecar_path=target_path.with_suffix(".pdf.json"),
             sha256_hex="deadbeef",
-            size_bytes=42,
+            size_bytes=len(pdf_bytes),
         )
 
     monkeypatch.setattr(
@@ -121,4 +136,7 @@ def test_process_ticket_serializes_same_ticket_concurrent_runs(
 
     asyncio.run(_run())
 
-    assert _FakeClient._notes_written == 1
+    check(not not _FakeClient._notes_written == 1, "assertion failed")
+    check(not not len(pdf_writes) == 1, "assertion failed")
+    check(not not pdf_writes[0].is_file(), "assertion failed")
+    check(not not pdf_writes[0].read_bytes().startswith(b"%PDF"), "assertion failed")

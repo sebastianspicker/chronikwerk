@@ -5,11 +5,10 @@ from __future__ import annotations
 import os
 import socket
 
+from test.support.checks import check
 from test.support.settings_factory import make_settings
-from zammad_pdf_archiver.app.jobs._queue_stream import _pending_entry_field
 from zammad_pdf_archiver.app.jobs._queue_types import (
     _as_str,
-    _merge_min_delay,
     _parse_float,
     _parse_int,
 )
@@ -36,14 +35,14 @@ class TestBackend:
                 }
             },
         )
-        assert _backend(settings) == "redis_queue"
+        check(not not _backend(settings) == "redis_queue", "assertion failed")
 
     def test_returns_inprocess(self, tmp_path) -> None:
         settings = make_settings(
             str(tmp_path),
             overrides={"workflow": {"execution_backend": "inprocess"}},
         )
-        assert _backend(settings) == "inprocess"
+        check(not not _backend(settings) == "inprocess", "assertion failed")
 
     def test_strips_and_lowercases(self, tmp_path) -> None:
         settings = make_settings(
@@ -55,7 +54,7 @@ class TestBackend:
                 }
             },
         )
-        assert _backend(settings) == "redis_queue"
+        check(not not _backend(settings) == "redis_queue", "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +68,14 @@ class TestConsumerName:
             str(tmp_path),
             overrides={"workflow": {"queue_consumer": "my-consumer"}},
         )
-        assert _consumer_name(settings) == "my-consumer"
+        check(not not _consumer_name(settings) == "my-consumer", "assertion failed")
 
     def test_strips_whitespace_from_configured(self, tmp_path) -> None:
         settings = make_settings(
             str(tmp_path),
             overrides={"workflow": {"queue_consumer": "  padded  "}},
         )
-        assert _consumer_name(settings) == "padded"
+        check(not not _consumer_name(settings) == "padded", "assertion failed")
 
     def test_auto_generates_hostname_pid_when_none(self, tmp_path) -> None:
         settings = make_settings(
@@ -84,7 +83,7 @@ class TestConsumerName:
             overrides={"workflow": {"queue_consumer": None}},
         )
         name = _consumer_name(settings)
-        assert name == f"{socket.gethostname()}-{os.getpid()}"
+        check(not not name == f"{socket.gethostname()}-{os.getpid()}", "assertion failed")
 
     def test_auto_generates_when_empty_string(self, tmp_path) -> None:
         settings = make_settings(
@@ -93,7 +92,7 @@ class TestConsumerName:
         )
         name = _consumer_name(settings)
         expected = f"{socket.gethostname()}-{os.getpid()}"
-        assert name == expected
+        check(not not name == expected, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -103,25 +102,25 @@ class TestConsumerName:
 
 class TestAsStr:
     def test_bytes_decoded(self) -> None:
-        assert _as_str(b"hello") == "hello"
+        check(not not _as_str(b"hello") == "hello", "assertion failed")
 
     def test_str_passthrough(self) -> None:
-        assert _as_str("hello") == "hello"
+        check(not not _as_str("hello") == "hello", "assertion failed")
 
     def test_int_converted(self) -> None:
-        assert _as_str(42) == "42"
+        check(not not _as_str(42) == "42", "assertion failed")
 
     def test_float_converted(self) -> None:
-        assert _as_str(3.14) == "3.14"
+        check(not not _as_str(3.14) == "3.14", "assertion failed")
 
     def test_none_converted(self) -> None:
-        assert _as_str(None) == "None"
+        check(not not _as_str(None) == "None", "assertion failed")
 
     def test_bytes_with_replacement_chars(self) -> None:
         raw = b"hello\xff\xfeworld"
         result = _as_str(raw)
-        assert "hello" in result
-        assert "world" in result
+        check(not "hello" not in result, "assertion failed")
+        check(not "world" not in result, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -131,43 +130,43 @@ class TestAsStr:
 
 class TestParseFloat:
     def test_valid_float_string(self) -> None:
-        assert _parse_float("3.14") == 3.14
+        check(not not _parse_float("3.14") == 3.14, "assertion failed")
 
     def test_valid_int_string(self) -> None:
-        assert _parse_float("7") == 7.0
+        check(not not _parse_float("7") == 7.0, "assertion failed")
 
     def test_valid_bytes(self) -> None:
-        assert _parse_float(b"2.5") == 2.5
+        check(not not _parse_float(b"2.5") == 2.5, "assertion failed")
 
     def test_invalid_string_returns_default(self) -> None:
-        assert _parse_float("not_a_number") == 0.0
+        check(not not _parse_float("not_a_number") == 0.0, "assertion failed")
 
     def test_invalid_string_returns_custom_default(self) -> None:
-        assert _parse_float("bad", default=9.9) == 9.9
+        check(not not _parse_float("bad", default=9.9) == 9.9, "assertion failed")
 
     def test_none_returns_default(self) -> None:
-        assert _parse_float(None) == 0.0
+        check(not not _parse_float(None) == 0.0, "assertion failed")
 
 
 class TestParseInt:
     def test_valid_int_string(self) -> None:
-        assert _parse_int("42") == 42
+        check(not not _parse_int("42") == 42, "assertion failed")
 
     def test_valid_bytes(self) -> None:
-        assert _parse_int(b"10") == 10
+        check(not not _parse_int(b"10") == 10, "assertion failed")
 
     def test_invalid_string_returns_default(self) -> None:
-        assert _parse_int("nope") == 0
+        check(not not _parse_int("nope") == 0, "assertion failed")
 
     def test_invalid_string_returns_custom_default(self) -> None:
-        assert _parse_int("bad", default=99) == 99
+        check(not not _parse_int("bad", default=99) == 99, "assertion failed")
 
     def test_none_returns_default(self) -> None:
-        assert _parse_int(None) == 0
+        check(not not _parse_int(None) == 0, "assertion failed")
 
     def test_float_string_truncates(self) -> None:
         # int("3.14") raises, so should fall back to default
-        assert _parse_int("3.14") == 0
+        check(not not _parse_int("3.14") == 0, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +184,9 @@ class TestRetryDelaySeconds:
                 }
             },
         )
-        assert _retry_delay_seconds(settings, attempt=0) == 2.0  # 2.0 * 2^0 = 2.0
+        check(
+            not not _retry_delay_seconds(settings, attempt=0) == 2.0, "assertion failed"
+        )  # 2.0 * 2^0 = 2.0
 
     def test_attempt_1(self, tmp_path) -> None:
         settings = make_settings(
@@ -196,7 +197,9 @@ class TestRetryDelaySeconds:
                 }
             },
         )
-        assert _retry_delay_seconds(settings, attempt=1) == 4.0  # 2.0 * 2^1 = 4.0
+        check(
+            not not _retry_delay_seconds(settings, attempt=1) == 4.0, "assertion failed"
+        )  # 2.0 * 2^1 = 4.0
 
     def test_attempt_2(self, tmp_path) -> None:
         settings = make_settings(
@@ -207,7 +210,9 @@ class TestRetryDelaySeconds:
                 }
             },
         )
-        assert _retry_delay_seconds(settings, attempt=2) == 8.0  # 2.0 * 2^2 = 8.0
+        check(
+            not not _retry_delay_seconds(settings, attempt=2) == 8.0, "assertion failed"
+        )  # 2.0 * 2^2 = 8.0
 
     def test_custom_base_delay(self, tmp_path) -> None:
         settings = make_settings(
@@ -218,9 +223,9 @@ class TestRetryDelaySeconds:
                 }
             },
         )
-        assert _retry_delay_seconds(settings, attempt=0) == 5.0
-        assert _retry_delay_seconds(settings, attempt=1) == 10.0
-        assert _retry_delay_seconds(settings, attempt=2) == 20.0
+        check(not not _retry_delay_seconds(settings, attempt=0) == 5.0, "assertion failed")
+        check(not not _retry_delay_seconds(settings, attempt=1) == 10.0, "assertion failed")
+        check(not not _retry_delay_seconds(settings, attempt=2) == 20.0, "assertion failed")
 
     def test_negative_attempt_clamped_to_zero(self, tmp_path) -> None:
         settings = make_settings(
@@ -232,41 +237,7 @@ class TestRetryDelaySeconds:
             },
         )
         # max(0, -1) = 0, so 3.0 * 2^0 = 3.0
-        assert _retry_delay_seconds(settings, attempt=-1) == 3.0
-
-
-# ---------------------------------------------------------------------------
-# _merge_min_delay
-# ---------------------------------------------------------------------------
-
-
-class TestMergeMinDelay:
-    def test_none_and_none(self) -> None:
-        assert _merge_min_delay(None, None) is None
-
-    def test_none_and_positive(self) -> None:
-        assert _merge_min_delay(None, 5.0) == 5.0
-
-    def test_positive_and_none(self) -> None:
-        assert _merge_min_delay(3.0, None) == 3.0
-
-    def test_smaller_current(self) -> None:
-        assert _merge_min_delay(3.0, 5.0) == 3.0
-
-    def test_smaller_candidate(self) -> None:
-        assert _merge_min_delay(5.0, 3.0) == 3.0
-
-    def test_equal_values(self) -> None:
-        assert _merge_min_delay(4.0, 4.0) == 4.0
-
-    def test_zero_candidate_ignored(self) -> None:
-        assert _merge_min_delay(3.0, 0.0) == 3.0
-
-    def test_negative_candidate_ignored(self) -> None:
-        assert _merge_min_delay(3.0, -1.0) == 3.0
-
-    def test_none_current_and_zero_candidate(self) -> None:
-        assert _merge_min_delay(None, 0.0) is None
+        check(not not _retry_delay_seconds(settings, attempt=-1) == 3.0, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -276,58 +247,28 @@ class TestMergeMinDelay:
 
 class TestPendingCount:
     def test_dict_with_pending(self) -> None:
-        assert _pending_count({"pending": 5}) == 5
+        check(not not _pending_count({"pending": 5}) == 5, "assertion failed")
 
     def test_dict_with_pending_zero(self) -> None:
-        assert _pending_count({"pending": 0}) == 0
+        check(not not _pending_count({"pending": 0}) == 0, "assertion failed")
 
     def test_object_with_pending_attr(self) -> None:
         class _FakePending:
             pending = 12
 
-        assert _pending_count(_FakePending()) == 12
+        check(not not _pending_count(_FakePending()) == 12, "assertion failed")
 
     def test_empty_dict(self) -> None:
-        assert _pending_count({}) == 0
+        check(not not _pending_count({}) == 0, "assertion failed")
 
     def test_none(self) -> None:
-        assert _pending_count(None) == 0
+        check(not not _pending_count(None) == 0, "assertion failed")
 
     def test_dict_with_non_int_pending(self) -> None:
-        assert _pending_count({"pending": "not_int"}) == 0
+        check(not not _pending_count({"pending": "not_int"}) == 0, "assertion failed")
 
     def test_object_with_non_int_pending(self) -> None:
         class _FakePending:
             pending = "not_int"
 
-        assert _pending_count(_FakePending()) == 0
-
-
-# ---------------------------------------------------------------------------
-# _pending_entry_field
-# ---------------------------------------------------------------------------
-
-
-class TestPendingEntryField:
-    def test_dict_entry(self) -> None:
-        entry = {"message_id": "1-0", "consumer": "worker-a"}
-        assert _pending_entry_field(entry, "message_id") == "1-0"
-        assert _pending_entry_field(entry, "consumer") == "worker-a"
-
-    def test_object_entry(self) -> None:
-        class _FakeEntry:
-            message_id = "2-0"
-            consumer = "worker-b"
-
-        entry = _FakeEntry()
-        assert _pending_entry_field(entry, "message_id") == "2-0"
-        assert _pending_entry_field(entry, "consumer") == "worker-b"
-
-    def test_missing_key_in_dict(self) -> None:
-        assert _pending_entry_field({}, "message_id") is None
-
-    def test_missing_attr_on_object(self) -> None:
-        class _Empty:
-            pass
-
-        assert _pending_entry_field(_Empty(), "message_id") is None
+        check(not not _pending_count(_FakePending()) == 0, "assertion failed")

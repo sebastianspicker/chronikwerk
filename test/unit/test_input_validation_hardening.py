@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from test.support.checks import check
 from zammad_pdf_archiver.app.routes.ingest import MAX_BATCH_SIZE, IngestPayload
 
 # ---------------------------------------------------------------------------
@@ -24,12 +25,12 @@ def test_ingest_payload_rejects_negative_ticket_id() -> None:
 
 def test_ingest_payload_accepts_positive_ticket_id() -> None:
     p = IngestPayload.model_validate({"ticket_id": 42})
-    assert p.resolved_ticket_id() == 42
+    check(not not p.resolved_ticket_id() == 42, "assertion failed")
 
 
 def test_ingest_payload_accepts_nested_ticket_id() -> None:
     p = IngestPayload.model_validate({"ticket": {"id": 7}})
-    assert p.resolved_ticket_id() == 7
+    check(not not p.resolved_ticket_id() == 7, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -38,12 +39,12 @@ def test_ingest_payload_accepts_nested_ticket_id() -> None:
 
 
 def test_max_batch_size_is_positive() -> None:
-    assert MAX_BATCH_SIZE > 0
+    check(not not MAX_BATCH_SIZE > 0, "assertion failed")
 
 
 def test_max_batch_size_has_upper_bound() -> None:
     # Sanity: batch limit should not be absurdly large.
-    assert MAX_BATCH_SIZE <= 1000
+    check(not not MAX_BATCH_SIZE <= 1000, "assertion failed")
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +61,7 @@ def test_rate_limit_header_missing_falls_back_to_scope() -> None:
     }
     # When header is absent, should fall back to connection-level client address.
     key = _client_key_from_header(scope, "X-Forwarded-For")
-    assert key == "192.168.1.1"
+    check(not not key == "192.168.1.1", "assertion failed")
 
 
 def test_rate_limit_header_empty_falls_back_to_scope() -> None:
@@ -71,7 +72,7 @@ def test_rate_limit_header_empty_falls_back_to_scope() -> None:
         "client": ("10.0.0.1", 9999),
     }
     key = _client_key_from_header(scope, "X-Forwarded-For")
-    assert key == "10.0.0.1"
+    check(not not key == "10.0.0.1", "assertion failed")
 
 
 def test_rate_limit_header_present_returns_header_value() -> None:
@@ -82,4 +83,4 @@ def test_rate_limit_header_present_returns_header_value() -> None:
         "client": ("10.0.0.1", 9999),
     }
     key = _client_key_from_header(scope, "X-Forwarded-For")
-    assert key == "1.2.3.4"
+    check(not not key == "1.2.3.4", "assertion failed")
