@@ -13,6 +13,7 @@ from test.support.process_ticket_cleanup_helpers import (
     _patch_process_ticket_client,
     _patch_process_ticket_render_pdf,
     _pdf_render_result,
+    _recording_history,
     _settings,
     _SimpleProcessTicketClient,
     asyncio,
@@ -26,43 +27,52 @@ from test.support.process_ticket_cleanup_helpers import (
 )
 
 
-def test_process_ticket_reports_partial_when_done_tag_update_fails(
-    monkeypatch, tmp_path: Path
-) -> None:
+def _setup_partial_ticket_run(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    client_cls: type[_SimpleProcessTicketClient],
+    render_pdf,
+    record_history=None,
+) -> None:  # noqa: ANN001
     ticket_stores._reset_for_tests()
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
+    _patch_process_ticket_client(monkeypatch, client_cls)
+    _patch_process_ticket_render_pdf(monkeypatch, render_pdf)
+    if record_history is not None:
+        monkeypatch.setattr(
+            "zammad_pdf_archiver.app.jobs.process_ticket._record_history",
+            record_history,
+        )
 
+
+def _render_pdf_with_title(title: str):
+    async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
+        return _pdf_render_result(title=title)
+
+    return _render_pdf
+
+
+def test_process_ticket_reports_partial_when_done_tag_update_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
     class _FakeClient(_SimpleProcessTicketClient):
         ticket_title = "done update failure"
-
-    async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
-        return _pdf_render_result(title="done update failure")
 
     async def _raise_done_failure(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
         raise ClientError("Zammad tag add did not confirm success")
 
-    history: list[tuple[str, str | None, str]] = []
+    history, _record_history = _recording_history(False)
 
-    async def _record_history(
-        ctx,
-        *,
-        status: str,
-        classification: str | None = None,
-        message: str = "",
-    ) -> bool:  # noqa: ANN001
-        history.append((status, classification, message))
-        return False
-
-    _patch_process_ticket_client(monkeypatch, _FakeClient)
-    _patch_process_ticket_render_pdf(monkeypatch, _render_pdf)
+    _setup_partial_ticket_run(
+        monkeypatch,
+        client_cls=_FakeClient,
+        render_pdf=_render_pdf_with_title("done update failure"),
+        record_history=_record_history,
+    )
     monkeypatch.setattr(
         "zammad_pdf_archiver.app.jobs.process_ticket._apply_done_with_backoff",
         _raise_done_failure,
-    )
-    monkeypatch.setattr(
-        "zammad_pdf_archiver.app.jobs.process_ticket._record_history",
-        _record_history,
     )
 
     result = asyncio.run(
@@ -80,10 +90,6 @@ def test_process_ticket_reports_partial_when_done_tag_update_fails(
 def test_process_ticket_reports_partial_when_success_acknowledgement_fails(
     monkeypatch, tmp_path: Path
 ) -> None:
-    ticket_stores._reset_for_tests()
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
     class _FakeClient(_SimpleProcessTicketClient):
         ticket_title = "acknowledgement failure"
 
@@ -95,26 +101,13 @@ def test_process_ticket_reports_partial_when_success_acknowledgement_fails(
         ) -> SimpleNamespace:
             raise RuntimeError("note failed")
 
-    async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
-        return _pdf_render_result(title="acknowledgement failure")
+    history, _record_history = _recording_history(True)
 
-    history: list[tuple[str, str | None, str]] = []
-
-    async def _record_history(
-        ctx,
-        *,
-        status: str,
-        classification: str | None = None,
-        message: str = "",
-    ) -> bool:  # noqa: ANN001
-        history.append((status, classification, message))
-        return True
-
-    _patch_process_ticket_client(monkeypatch, _FakeClient)
-    _patch_process_ticket_render_pdf(monkeypatch, _render_pdf)
-    monkeypatch.setattr(
-        "zammad_pdf_archiver.app.jobs.process_ticket._record_history",
-        _record_history,
+    _setup_partial_ticket_run(
+        monkeypatch,
+        client_cls=_FakeClient,
+        render_pdf=_render_pdf_with_title("acknowledgement failure"),
+        record_history=_record_history,
     )
 
     result = asyncio.run(
@@ -133,10 +126,6 @@ def test_process_ticket_exposes_partial_archive_result_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    ticket_stores._reset_for_tests()
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
     class _FakeClient(_SimpleProcessTicketClient):
         ticket_title = "partial archive"
 
@@ -155,8 +144,11 @@ def test_process_ticket_exposes_partial_archive_result_fields(
 
     partial_counter = _Counter()
 
-    _patch_process_ticket_client(monkeypatch, _FakeClient)
-    _patch_process_ticket_render_pdf(monkeypatch, _render_partial_archive)
+    _setup_partial_ticket_run(
+        monkeypatch,
+        client_cls=_FakeClient,
+        render_pdf=_render_partial_archive,
+    )
     monkeypatch.setattr(process_ticket_module, "processed_partial_total", partial_counter)
 
     result = asyncio.run(

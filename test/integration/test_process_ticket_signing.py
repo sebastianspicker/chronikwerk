@@ -9,11 +9,11 @@ import httpx
 import pytest
 import respx
 
+import test.support.integration_helpers as integration_helpers
 from test.support.checks import check
 from test.support.credentials import fake_credential
 from test.support.signing_helpers import write_test_pfx
 from test.support.time_control import freeze_process_ticket_now
-from zammad_pdf_archiver._version import VERSION
 from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
@@ -22,20 +22,31 @@ from zammad_pdf_archiver.config.settings import Settings
 pytest.importorskip("pyhanko", reason="Signing integration requires pyHanko")
 
 
+def _signing_settings_mapping(
+    storage_root: str,
+    *,
+    pfx_path: Path,
+    password: str,
+    timestamp: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "zammad": {
+            "base_url": "https://zammad.example.local",
+            "api_token": fake_credential("test-token"),
+        },
+        "storage": {"root": storage_root},
+        "signing": {
+            "enabled": True,
+            "pfx_path": str(pfx_path),
+            "pfx_password": password,
+            **({} if timestamp is None else {"timestamp": timestamp}),
+        },
+    }
+
+
 def _test_settings(storage_root: str, *, pfx_path: Path, password: str) -> Settings:
     return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": storage_root},
-            "signing": {
-                "enabled": True,
-                "pfx_path": str(pfx_path),
-                "pfx_password": password,
-            },
-        }
+        _signing_settings_mapping(storage_root, pfx_path=pfx_path, password=password)
     )
 
 
@@ -43,80 +54,64 @@ def _test_settings_with_unreachable_tsa(
     storage_root: str, *, pfx_path: Path, password: str, tsa_url: str
 ) -> Settings:
     return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": storage_root},
-            "signing": {
+        _signing_settings_mapping(
+            storage_root,
+            pfx_path=pfx_path,
+            password=password,
+            timestamp={
                 "enabled": True,
-                "pfx_path": str(pfx_path),
-                "pfx_password": password,
-                "timestamp": {
-                    "enabled": True,
-                    "rfc3161": {"tsa_url": tsa_url, "timeout_seconds": 0.1},
-                },
+                "rfc3161": {"tsa_url": tsa_url, "timeout_seconds": 0.1},
             },
-        }
-    )
-
-
-def _signing_ticket_payload() -> dict[str, object]:
-    return {
-        "id": 123,
-        "number": "20240123",
-        "title": "Example Ticket",
-        "owner": {"login": "agent"},
-        "updated_by": {"login": "fallback-agent"},
-        "preferences": {
-            "custom_fields": {
-                "archive_user_mode": "owner",
-                "archive_path": "A > B > C",
-            }
-        },
-    }
-
-
-def _signing_article_payloads() -> list[dict[str, object]]:
-    return [
-        {
-            "id": 1,
-            "created_at": "2026-02-07T11:59:00Z",
-            "internal": False,
-            "subject": "Hello",
-            "body": "<p>Hello World</p>",
-            "content_type": "text/html",
-            "from": "customer@example.invalid",
-            "attachments": [],
-        }
-    ]
-
-
-def _mock_signing_reads(*, articles: list[dict[str, object]] | None = None) -> None:
-    respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
-        return_value=httpx.Response(200, json=_signing_ticket_payload())
-    )
-    respx.get(
-        "https://zammad.example.local/api/v1/tags",
-        params={"object": "Ticket", "o_id": "123"},
-    ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
-    respx.get("https://zammad.example.local/api/v1/ticket_articles/by_ticket/123").mock(
-        return_value=httpx.Response(
-            200,
-            json=_signing_article_payloads() if articles is None else articles,
         )
     )
 
 
+def _write_signing_pfx(
+    tmp_path: Path,
+    *,
+    password: str = fake_credential("secret"),
+    common_name: str | None = None,
+) -> tuple[Path, str]:
+    pfx_path = tmp_path / "test.pfx"
+    fingerprint = write_test_pfx(
+        pfx_path,
+        password=password,
+        common_name="Test Signer" if common_name is None else common_name,
+    )
+    return pfx_path, fingerprint
+
+
+def _test_tsa_settings(tmp_path: Path, *, tsa_url: str) -> Settings:
+    pfx_path, _ = _write_signing_pfx(tmp_path)
+    return _test_settings_with_unreachable_tsa(
+        str(tmp_path),
+        pfx_path=pfx_path,
+        password=fake_credential("secret"),
+        tsa_url=tsa_url,
+    )
+
+
+def _signing_ticket_payload() -> dict[str, object]:
+    return integration_helpers.zammad_ticket_payload(
+        title="Example Ticket",
+        archive_path="A > B > C",
+    )
+
+
+def _signing_article_payloads() -> list[dict[str, object]]:
+    return [integration_helpers.zammad_article_payload()]
+
+
+def _mock_signing_reads(*, articles: list[dict[str, object]] | None = None) -> None:
+    integration_helpers.mock_standard_zammad_reads(
+        ticket_payload=_signing_ticket_payload(),
+        tags=["pdf:sign"],
+        articles=_signing_article_payloads() if articles is None else articles,
+    )
+
+
 def _mock_tag_writes() -> tuple[respx.Route, respx.Route]:
-    remove_tag_route = respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    add_tag_route = respx.post("https://zammad.example.local/api/v1/tags/add").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    return remove_tag_route, add_tag_route
+    return integration_helpers.mock_success_tag_write_routes()
 
 
 def _mock_article_note(response_json: dict[str, object] | None = None) -> respx.Route:
@@ -127,6 +122,15 @@ def _mock_article_note(response_json: dict[str, object] | None = None) -> respx.
             or {"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
         )
     )
+
+
+def _mock_signing_failure_routes(
+    *, articles: list[dict[str, object]] | None = None
+) -> tuple[respx.Route, respx.Route, respx.Route]:
+    _mock_signing_reads(articles=articles)
+    remove_tag_route, add_tag_route = _mock_tag_writes()
+    article_route = _mock_article_note({"id": 999})
+    return remove_tag_route, add_tag_route, article_route
 
 
 def _route_items(route: respx.Route) -> set[str]:
@@ -150,6 +154,20 @@ def _expected_signed_paths(
     return expected_pdf_path, expected_sidecar_path
 
 
+def _signing_payload(request_id: str) -> dict[str, object]:
+    return {
+        "ticket": {"id": 123},
+        "_request_id": request_id,
+        "user": {"login": "agent-from-webhook"},
+    }
+
+
+def _freeze_signing_now(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
+    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
+    return fixed_now
+
+
 def _assert_permanent_signing_error(
     *,
     tmp_path: Path,
@@ -170,11 +188,11 @@ def _assert_permanent_signing_error(
     check(not "pdf:processing" not in removed, "assertion failed")
     check(not "pdf:sign" not in removed, "assertion failed")
 
-    check(not not article_route.called, "assertion failed")
-    req = json.loads(article_route.calls[0].request.content.decode("utf-8"))
-    check(not f"PDF archiver error ({VERSION})" not in req["subject"], "assertion failed")
-    check(not "Permanent" not in req["body"], "assertion failed")
-    check(not "PKCS#12" not in req["body"], "assertion failed")
+    integration_helpers.assert_error_article_note(
+        article_route,
+        classification="Permanent",
+        body_texts=("PKCS#12",),
+    )
 
 
 def _assert_transient_signing_error(
@@ -191,33 +209,24 @@ def _assert_transient_signing_error(
     check(not "pdf:sign" not in added, "assertion failed")
     check(not "pdf:error" not in added, "assertion failed")
 
-    check(not not article_route.called, "assertion failed")
-    req = json.loads(article_route.calls[0].request.content.decode("utf-8"))
-    check(not f"PDF archiver error ({VERSION})" not in req["subject"], "assertion failed")
-    check(not "Transient" not in req["body"], "assertion failed")
-    if expected_body_text is not None:
-        check(not expected_body_text not in req["body"], "assertion failed")
+    integration_helpers.assert_error_article_note(
+        article_route,
+        classification="Transient",
+        body_texts=() if expected_body_text is None else (expected_body_text,),
+    )
 
 
 def test_process_ticket_signing_writes_signed_pdf_and_audit_fingerprint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pfx_path = tmp_path / "test.pfx"
-    expected_fingerprint = write_test_pfx(
-        pfx_path,
-        password=fake_credential("secret"),
+    pfx_path, expected_fingerprint = _write_signing_pfx(
+        tmp_path,
         common_name="Integration Test Signer",
     )
     settings = _test_settings(str(tmp_path), pfx_path=pfx_path, password=fake_credential("secret"))
 
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-sign-1",
-        "user": {"login": "agent-from-webhook"},
-    }
+    fixed_now = _freeze_signing_now(monkeypatch)
+    payload = _signing_payload("req-sign-1")
 
     with respx.mock:
         _mock_signing_reads()
@@ -250,30 +259,15 @@ def test_process_ticket_signing_writes_signed_pdf_and_audit_fingerprint(
 def test_process_ticket_signing_with_unreachable_tsa_is_transient_and_keeps_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pfx_path = tmp_path / "test.pfx"
-    write_test_pfx(pfx_path, password=fake_credential("secret"))
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _test_settings_with_unreachable_tsa(
-        str(tmp_path),
-        pfx_path=pfx_path,
-        password=fake_credential("secret"),
-        tsa_url=tsa_url,
-    )
+    settings = _test_tsa_settings(tmp_path, tsa_url=tsa_url)
 
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-sign-tsa-err-1",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_signing_now(monkeypatch)
+    payload = _signing_payload("req-sign-tsa-err-1")
 
     with respx.mock:
         respx.post(tsa_url).mock(side_effect=httpx.ConnectError("boom"))
-        _mock_signing_reads()
-        remove_tag_route, add_tag_route = _mock_tag_writes()
-        article_route = _mock_article_note()
+        remove_tag_route, add_tag_route, article_route = _mock_signing_failure_routes()
 
         asyncio.run(process_ticket("delivery-sign-tsa-err-1", payload, settings))
 
@@ -287,25 +281,18 @@ def test_process_ticket_signing_with_unreachable_tsa_is_transient_and_keeps_trig
 def test_process_ticket_signing_with_invalid_pfx_password_is_permanent_and_drops_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pfx_path = tmp_path / "test.pfx"
-    write_test_pfx(pfx_path, password=fake_credential("secret"))
+    pfx_path, _ = _write_signing_pfx(tmp_path)
     settings = _test_settings(
         str(tmp_path), pfx_path=pfx_path, password=fake_credential("wrong-password")
     )
 
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-sign-bad-pass-1",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_signing_now(monkeypatch)
+    payload = _signing_payload("req-sign-bad-pass-1")
 
     with respx.mock:
-        _mock_signing_reads(articles=[])
-        remove_tag_route, add_tag_route = _mock_tag_writes()
-        article_route = _mock_article_note({"id": 999})
+        remove_tag_route, add_tag_route, article_route = _mock_signing_failure_routes(
+            articles=[]
+        )
 
         asyncio.run(process_ticket("delivery-sign-bad-pass-1", payload, settings))
 
@@ -320,30 +307,17 @@ def test_process_ticket_signing_with_invalid_pfx_password_is_permanent_and_drops
 def test_process_ticket_signing_with_tsa_http_503_is_transient_and_keeps_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pfx_path = tmp_path / "test.pfx"
-    write_test_pfx(pfx_path, password=fake_credential("secret"))
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _test_settings_with_unreachable_tsa(
-        str(tmp_path),
-        pfx_path=pfx_path,
-        password=fake_credential("secret"),
-        tsa_url=tsa_url,
-    )
+    settings = _test_tsa_settings(tmp_path, tsa_url=tsa_url)
 
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-sign-tsa-503-1",
-        "user": {"login": "agent-from-webhook"},
-    }
+    _freeze_signing_now(monkeypatch)
+    payload = _signing_payload("req-sign-tsa-503-1")
 
     with respx.mock:
         respx.post(tsa_url).mock(return_value=httpx.Response(503))
-        _mock_signing_reads(articles=[])
-        remove_tag_route, add_tag_route = _mock_tag_writes()
-        article_route = _mock_article_note({"id": 999})
+        remove_tag_route, add_tag_route, article_route = _mock_signing_failure_routes(
+            articles=[]
+        )
 
         asyncio.run(process_ticket("delivery-sign-tsa-503-1", payload, settings))
 

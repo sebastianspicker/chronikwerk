@@ -11,6 +11,7 @@ import pytest
 import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.logging_helpers import CapturingWarningLog as _CapturingLog
 from test.support.time_control import freeze_process_ticket_now
 from zammad_pdf_archiver.adapters.zammad.errors import ClientError
 from zammad_pdf_archiver.adapters.zammad.models import TagList
@@ -46,6 +47,7 @@ __all__ = [
     "_Counter",
     "_Observer",
     "_SimpleProcessTicketClient",
+    "_TagSetProcessTicketClient",
     "_VisibilityFailureClient",
     "_assert_done_tag_update_partial_failure",
     "_assert_error_transition_cleanup",
@@ -59,6 +61,7 @@ __all__ = [
     "_patch_process_ticket_render_pdf",
     "_patch_process_ticket_sleep",
     "_pdf_render_result",
+    "_recording_history",
     "asyncio",
     "cast",
     "check",
@@ -89,16 +92,22 @@ def _settings(storage_root: Path) -> Settings:
     )
 
 
-class _CapturingLog:
-    def __init__(self) -> None:
-        self.exception_events: list[tuple[str, dict[str, object]]] = []
-        self.warning_events: list[tuple[str, dict[str, object]]] = []
+def _recording_history(
+    success: bool = True,
+) -> tuple[list[tuple[str, str | None, str]], Any]:
+    history: list[tuple[str, str | None, str]] = []
 
-    def exception(self, event: str, **kwargs: object) -> None:
-        self.exception_events.append((event, kwargs))
+    async def _record_history(
+        ctx,
+        *,
+        status: str,
+        classification: str | None = None,
+        message: str = "",
+    ) -> bool:  # noqa: ANN001
+        history.append((status, classification, message))
+        return success
 
-    def warning(self, event: str, **kwargs: object) -> None:
-        self.warning_events.append((event, kwargs))
+    return history, _record_history
 
 
 class _Counter:
@@ -117,50 +126,65 @@ class _Observer:
         self.observations.append(value)
 
 
-class _SimpleProcessTicketClient:
-    added_tags: list[str] = []
-    articles: list[tuple[str, str]] = []
-    ticket_title = "process ticket"
+def _process_ticket_fixture_ticket(ticket_id: int, *, title: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=ticket_id,
+        number="12345",
+        title=title,
+        owner=SimpleNamespace(login="owner.user"),
+        updated_by=SimpleNamespace(login="agent.user"),
+        preferences=SimpleNamespace(
+            custom_fields={
+                "archive_path": "Support > Team",
+                "archive_user_mode": "owner",
+            }
+        ),
+    )
 
-    def __init_subclass__(cls) -> None:
-        cls.added_tags = []
-        cls.articles = []
+
+def _signed_tag_list() -> TagList:
+    return TagList([TRIGGER_TAG])
+
+
+def _empty_articles() -> list[SimpleNamespace]:
+    return []
+
+
+class _ProcessTicketClientBase:
+    ticket_title = "process ticket"
 
     def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
         pass
 
-    async def __aenter__(self) -> _SimpleProcessTicketClient:
+    async def __aenter__(self) -> _ProcessTicketClientBase:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
         return None
 
     async def get_ticket(self, ticket_id: int) -> SimpleNamespace:
-        return SimpleNamespace(
-            id=ticket_id,
-            number="12345",
-            title=type(self).ticket_title,
-            owner=SimpleNamespace(login="owner.user"),
-            updated_by=SimpleNamespace(login="agent.user"),
-            preferences=SimpleNamespace(
-                custom_fields={
-                    "archive_path": "Support > Team",
-                    "archive_user_mode": "owner",
-                }
-            ),
-        )
+        return _process_ticket_fixture_ticket(ticket_id, title=type(self).ticket_title)
 
     async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
-        return TagList(["pdf:sign"])
+        return _signed_tag_list()
 
     async def remove_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
         return None
 
+    async def list_articles(self, ticket_id: int) -> list[SimpleNamespace]:  # noqa: ARG002
+        return _empty_articles()
+
+
+class _SimpleProcessTicketClient(_ProcessTicketClientBase):
+    added_tags: list[str] = []
+    articles: list[tuple[str, str]] = []
+
+    def __init_subclass__(cls) -> None:
+        cls.added_tags = []
+        cls.articles = []
+
     async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
         type(self).added_tags.append(tag)
-
-    async def list_articles(self, ticket_id: int) -> list[SimpleNamespace]:  # noqa: ARG002
-        return []
 
     async def create_internal_article(
         self,
@@ -172,45 +196,27 @@ class _SimpleProcessTicketClient:
         return SimpleNamespace(id=1)
 
 
-class _VisibilityFailureClient:
-    articles: list[tuple[str, str]] = []
-    error_note_fails = False
+class _TagSetProcessTicketClient(_SimpleProcessTicketClient):
+    _tags: set[str] = {TRIGGER_TAG}
 
-    def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
-        pass
-
-    async def __aenter__(self) -> _VisibilityFailureClient:
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
-        return None
-
-    async def get_ticket(self, ticket_id: int) -> SimpleNamespace:
-        return SimpleNamespace(
-            id=ticket_id,
-            number="12345",
-            title="visibility failure",
-            owner=SimpleNamespace(login="owner.user"),
-            updated_by=SimpleNamespace(login="agent.user"),
-            preferences=SimpleNamespace(
-                custom_fields={
-                    "archive_path": "Support > Team",
-                    "archive_user_mode": "owner",
-                }
-            ),
-        )
-
-    async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
-        return TagList(["pdf:sign"])
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        cls._tags = {TRIGGER_TAG}
 
     async def remove_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
-        return None
+        type(self)._tags.discard(tag)
+
+    async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
+        type(self)._tags.add(tag)
+
+
+class _VisibilityFailureClient(_ProcessTicketClientBase):
+    articles: list[tuple[str, str]] = []
+    error_note_fails = False
+    ticket_title = "visibility failure"
 
     async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
         return None
-
-    async def list_articles(self, ticket_id: int) -> list[SimpleNamespace]:  # noqa: ARG002
-        return []
 
     async def create_internal_article(
         self,

@@ -35,12 +35,14 @@ Thumbs.db
 
 # Local runtime artifacts
 *.log
+*.tmp
 coverage.json
 reports/
 scratch/
 tmp/
 playwright-report/
 test-results/
+.playwright/
 
 # IDEs
 .idea/
@@ -93,3 +95,7 @@ status.md
 *-ledger.md
 *-status.md
 scripts/topology_inventory.sh
+
+# Local package/publish staging
+wheelhouse/
+*.tar.gz

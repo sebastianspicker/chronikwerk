@@ -12,14 +12,15 @@ import respx
 
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.integration_helpers import (
+    assert_success_tag_transitions,
+    called_tag_items,
+)
 from test.support.time_control import freeze_process_ticket_now
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.domain.state_machine import (
-    DONE_TAG,
-    ERROR_TAG,
-    PROCESSING_TAG,
     TRIGGER_TAG,
 )
 
@@ -30,11 +31,7 @@ def _sign(body: bytes, secret: str) -> str:
 
 
 def _called_tag_items(route: respx.Route) -> list[str]:
-    items: list[str] = []
-    for call in route.calls:
-        body = json.loads(call.request.content.decode("utf-8"))
-        items.append(body.get("item"))
-    return items
+    return called_tag_items(route)
 
 
 def _create_smoke_app(tmp_path, monkeypatch) -> tuple[str, Any]:
@@ -48,6 +45,21 @@ def _create_smoke_app(tmp_path, monkeypatch) -> tuple[str, Any]:
 
 def _json_body(payload: object) -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _prepare_single_ticket_smoke(tmp_path, monkeypatch) -> tuple[str, Any, bytes]:
+    secret, app = _create_smoke_app(tmp_path, monkeypatch)
+
+    import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
+
+    ticket_stores._reset_for_tests()
+    freeze_process_ticket_now(
+        monkeypatch,
+        process_ticket_module,
+        datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC),
+    )
+    body = _json_body({"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}})
+    return secret, app, body
 
 
 async def _post_signed(
@@ -71,6 +83,18 @@ async def _post_signed(
         )
 
 
+def _post_ingest(app: Any, *, body: bytes, secret: str, delivery_id: str) -> httpx.Response:
+    return asyncio.run(
+        _post_signed(
+            app=app,
+            path="/ingest",
+            body=body,
+            secret=secret,
+            delivery_id=delivery_id,
+        )
+    )
+
+
 def _ticket_response(
     *,
     ticket_id: int,
@@ -90,6 +114,20 @@ def _ticket_response(
             }
         },
     }
+
+
+def _mock_single_ticket_reads(zammad, *, articles: list[dict[str, object]] | None = None):
+    return _mock_ticket_reads(
+        zammad,
+        ticket_id=123,
+        ticket_json=_ticket_response(
+            ticket_id=123,
+            number="20240123",
+            owner="agent",
+            archive_path=["A", "B", "C"],
+        ),
+        articles=articles,
+    )
 
 
 def _article_payload() -> dict[str, object]:
@@ -189,44 +227,24 @@ def _assert_batch_routes_called_once(
 
 
 def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, monkeypatch) -> None:
-    secret, app = _create_smoke_app(tmp_path, monkeypatch)
-
-    import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
-
-    ticket_stores._reset_for_tests()
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
-    body = _json_body(payload)
+    secret, app, body = _prepare_single_ticket_smoke(tmp_path, monkeypatch)
 
     with respx.mock(assert_all_called=True) as zammad:
-        ticket_route, tags_route, _ = _mock_ticket_reads(
+        ticket_route, tags_route, _ = _mock_single_ticket_reads(
             zammad,
-            ticket_id=123,
-            ticket_json=_ticket_response(
-                ticket_id=123,
-                number="20240123",
-                owner="agent",
-                archive_path=["A", "B", "C"],
-            ),
             articles=[_article_payload()],
         )
         remove_tag_route, add_tag_route, article_route = _mock_zammad_writes(zammad)
 
-        response = asyncio.run(
-            _post_signed(
-                app=app,
-                path="/ingest",
-                body=body,
-                secret=secret,
-                delivery_id="delivery-smoke-e2e-20260207-0001",
-            )
+        response = _post_ingest(
+            app,
+            body=body,
+            secret=secret,
+            delivery_id="delivery-smoke-e2e-20260207-0001",
         )
         _assert_accepted(response, {"status": "accepted", "ticket_id": 123})
 
-        date_iso = fixed_now.date().isoformat()
-        expected_path = tmp_path / "agent" / "A" / "B" / "C" / f"Ticket-20240123_{date_iso}.pdf"
+        expected_path = tmp_path / "agent" / "A" / "B" / "C" / "Ticket-20240123_2026-02-07.pdf"
         check(not not expected_path.exists(), "assertion failed")
         check(not not expected_path.read_bytes().startswith(b"%PDF"), "assertion failed")
 
@@ -234,60 +252,30 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
         check(not not tags_route.called, "assertion failed")
         check(not not article_route.called, "assertion failed")
 
-        added = _called_tag_items(add_tag_route)
-        removed = _called_tag_items(remove_tag_route)
-
-        check(not PROCESSING_TAG not in added, "assertion failed")
-        check(not DONE_TAG not in added, "assertion failed")
-        check(not not ERROR_TAG not in added, "assertion failed")
-
-        check(not TRIGGER_TAG not in removed, "assertion failed")
-        check(not ERROR_TAG not in removed, "assertion failed")
-        check(not PROCESSING_TAG not in removed, "assertion failed")
+        assert_success_tag_transitions(
+            add_tag_route=add_tag_route,
+            remove_tag_route=remove_tag_route,
+        )
 
 
 def test_e2e_smoke_ingest_duplicate_delivery_id_is_idempotent(tmp_path, monkeypatch) -> None:
-    secret, app = _create_smoke_app(tmp_path, monkeypatch)
-
-    import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
-
-    ticket_stores._reset_for_tests()
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
-    body = _json_body(payload)
+    secret, app, body = _prepare_single_ticket_smoke(tmp_path, monkeypatch)
 
     with respx.mock(assert_all_called=True) as zammad:
-        ticket_route, tags_route, _ = _mock_ticket_reads(
-            zammad,
-            ticket_id=123,
-            ticket_json=_ticket_response(
-                ticket_id=123,
-                number="20240123",
-                owner="agent",
-                archive_path=["A", "B", "C"],
-            ),
-        )
+        ticket_route, tags_route, _ = _mock_single_ticket_reads(zammad)
         _, _, article_route = _mock_zammad_writes(zammad)
 
-        first = asyncio.run(
-            _post_signed(
-                app=app,
-                path="/ingest",
-                body=body,
-                secret=secret,
-                delivery_id="delivery-smoke-dedupe-1",
-            )
+        first = _post_ingest(
+            app,
+            body=body,
+            secret=secret,
+            delivery_id="delivery-smoke-dedupe-1",
         )
-        second = asyncio.run(
-            _post_signed(
-                app=app,
-                path="/ingest",
-                body=body,
-                secret=secret,
-                delivery_id="delivery-smoke-dedupe-1",
-            )
+        second = _post_ingest(
+            app,
+            body=body,
+            secret=secret,
+            delivery_id="delivery-smoke-dedupe-1",
         )
 
         _assert_accepted(first, {"status": "accepted", "ticket_id": 123})

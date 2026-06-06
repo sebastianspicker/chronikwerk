@@ -5,6 +5,7 @@ import asyncio
 from starlette.requests import Request
 
 from test.support.checks import check
+from test.support.logging_helpers import CapturingWarningLog as _CapturingLog
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs.process_ticket import ProcessTicketResult
 from zammad_pdf_archiver.app.routes.ingest import IngestPayload
@@ -58,16 +59,6 @@ def test_ingest_does_not_block_on_processing(tmp_path, monkeypatch) -> None:
 def test_ingest_background_logs_lock_release_failure(tmp_path, monkeypatch) -> None:
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
 
-    class _CapturingLog:
-        def __init__(self) -> None:
-            self.warning_events: list[tuple[str, dict[str, object]]] = []
-
-        def warning(self, event: str, **kwargs: object) -> None:
-            self.warning_events.append((event, kwargs))
-
-        def exception(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
-            return None
-
     capturing_log = _CapturingLog()
 
     async def _stub_process_ticket(*args, **kwargs) -> ProcessTicketResult:  # noqa: ANN002, ANN003
@@ -112,16 +103,6 @@ def test_ingest_background_counts_and_logs_history_record_failure(
 
         def inc(self) -> None:
             self.count += 1
-
-    class _CapturingLog:
-        def __init__(self) -> None:
-            self.warning_events: list[tuple[str, dict[str, object]]] = []
-
-        def warning(self, event: str, **kwargs: object) -> None:
-            self.warning_events.append((event, kwargs))
-
-        def exception(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
-            return None
 
     failed_counter = _Counter()
     capturing_log = _CapturingLog()

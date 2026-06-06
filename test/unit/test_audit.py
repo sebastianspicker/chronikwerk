@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.signing_helpers import write_test_cert, write_test_pfx
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record, compute_sha256
 
@@ -52,38 +53,6 @@ def test_build_audit_record_normalizes_timestamp_and_title() -> None:
     check(not not audit["signing"] == {"enabled": False, "tsa_used": False}, "assertion failed")
 
 
-def _write_test_pfx(path: Path, password: str) -> None:
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    from cryptography.x509.oid import NameOID
-
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test Signer")])
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(days=1))
-        .not_valid_after(now + timedelta(days=30))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(private_key=key, algorithm=hashes.SHA256())
-    )
-
-    pfx = pkcs12.serialize_key_and_certificates(
-        name=b"test-signer",
-        key=key,
-        cert=cert,
-        cas=None,
-        encryption_algorithm=serialization.BestAvailableEncryption(password.encode("utf-8")),
-    )
-    path.write_bytes(pfx)
-
-
 def _cert_fingerprint_from_pfx(path: Path, password: str) -> str:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.serialization import pkcs12
@@ -97,7 +66,7 @@ def _cert_fingerprint_from_pfx(path: Path, password: str) -> str:
 
 def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password=fake_credential("secret"))
+    write_test_pfx(pfx_path, password=fake_credential("secret"))
 
     signing = SigningSettings(enabled=True, pfx_path=pfx_path, pfx_password=SecretStr("secret"))
     audit = build_audit_record(
@@ -119,32 +88,16 @@ def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -
 
 def test_build_audit_record_cert_fingerprint_from_pem_cert_path(tmp_path: Path) -> None:
     """_extract_cert_fingerprint reads a PEM cert from pades.cert_path."""
-    from datetime import timedelta
-
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import serialization
 
     from zammad_pdf_archiver.config.settings import SigningPadesSettings
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PEM Signer")])
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(days=1))
-        .not_valid_after(now + timedelta(days=30))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(private_key=key, algorithm=hashes.SHA256())
-    )
-    pem_bytes = cert.public_bytes(serialization.Encoding.PEM)
     cert_path = tmp_path / "signer.pem"
-    cert_path.write_bytes(pem_bytes)
+    expected_fp = write_test_cert(
+        cert_path,
+        common_name="PEM Signer",
+        encoding=serialization.Encoding.PEM,
+    )
 
     signing = SigningSettings.model_construct(
         enabled=True,
@@ -163,38 +116,21 @@ def test_build_audit_record_cert_fingerprint_from_pem_cert_path(tmp_path: Path) 
         )
     )
 
-    expected_fp = cert.fingerprint(hashes.SHA256()).hex()
     check(not not audit["signing"]["cert_fingerprint"] == expected_fp, "assertion failed")
 
 
 def test_build_audit_record_cert_fingerprint_from_der_cert_path(tmp_path: Path) -> None:
     """_extract_cert_fingerprint reads a DER cert from pades.cert_path."""
-    from datetime import timedelta
-
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import serialization
 
     from zammad_pdf_archiver.config.settings import SigningPadesSettings
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "DER Signer")])
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(days=1))
-        .not_valid_after(now + timedelta(days=30))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(private_key=key, algorithm=hashes.SHA256())
-    )
-    der_bytes = cert.public_bytes(serialization.Encoding.DER)
     cert_path = tmp_path / "signer.der"
-    cert_path.write_bytes(der_bytes)
+    expected_fp = write_test_cert(
+        cert_path,
+        common_name="DER Signer",
+        encoding=serialization.Encoding.DER,
+    )
 
     signing = SigningSettings.model_construct(
         enabled=True,
@@ -213,7 +149,6 @@ def test_build_audit_record_cert_fingerprint_from_der_cert_path(tmp_path: Path) 
         )
     )
 
-    expected_fp = cert.fingerprint(hashes.SHA256()).hex()
     check(not not audit["signing"]["cert_fingerprint"] == expected_fp, "assertion failed")
 
 

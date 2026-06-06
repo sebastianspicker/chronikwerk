@@ -5,8 +5,8 @@ import pytest
 from test.unit.test_redis_queue import check, make_settings, redis_queue
 
 
-def test_worker_loop_one_iteration(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
+def _worker_settings(tmp_path):
+    return make_settings(
         str(tmp_path),
         overrides={
             "workflow": {
@@ -17,82 +17,77 @@ def test_worker_loop_one_iteration(monkeypatch, tmp_path) -> None:
         },
     )
 
-    class _FullFakeRedis:
-        async def ping(self) -> None:
-            pass
 
-    fake_redis = _FullFakeRedis()
+class _FullFakeRedis:
+    def __init__(self) -> None:
+        self.ping_calls = 0
 
+    async def ping(self) -> None:
+        self.ping_calls += 1
+
+
+class _CapturingLog:
+    def __init__(self) -> None:
+        self.exception_events: list[str] = []
+
+    def exception(self, event: str, **kwargs) -> None:  # noqa: ANN003
+        self.exception_events.append(event)
+
+    def error(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        return None
+
+
+async def _noop_ensure_group(redis, *, stream, group) -> None:  # noqa: ANN001, ARG001
+    return None
+
+
+async def _empty_messages(*args, **kwargs):  # noqa: ANN002, ANN003
+    return []
+
+
+async def _noop_process(redis, *, settings, messages):  # noqa: ANN001, ARG001
+    return None
+
+
+def _patch_worker_basics(monkeypatch: pytest.MonkeyPatch, fake_redis: _FullFakeRedis) -> None:
     async def fake_get_redis(_settings):  # noqa: ANN001
         return fake_redis
 
-    async def fake_ensure_group(redis, *, stream, group) -> None:  # noqa: ANN001, ARG001
-        pass
+    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
+    monkeypatch.setattr(redis_queue, "_ensure_group", _noop_ensure_group)
 
-    async def fake_claim(*args, **kwargs):  # noqa: ANN002, ANN003
-        return []
 
-    async def fake_read_own(*args, **kwargs):  # noqa: ANN002, ANN003
-        return []
+def _patch_successful_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(redis_queue, "_read_own_pending", _empty_messages)
+    monkeypatch.setattr(redis_queue, "_read_new_messages", _empty_messages)
+    monkeypatch.setattr(redis_queue, "_process_messages", _noop_process)
 
-    async def fake_process(redis, *, settings, messages):  # noqa: ANN001, ARG001
-        return None
 
+def test_worker_loop_one_iteration(monkeypatch, tmp_path) -> None:
+    settings = _worker_settings(tmp_path)
+
+    fake_redis = _FullFakeRedis()
     stop_event = redis_queue.asyncio.Event()
 
     async def fake_read_new(*args, **kwargs):  # noqa: ANN002, ANN003
         stop_event.set()
         return []
 
-    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
-    monkeypatch.setattr(redis_queue, "_ensure_group", fake_ensure_group)
-    monkeypatch.setattr(redis_queue, "_claim_stale_pending", fake_claim)
-    monkeypatch.setattr(redis_queue, "_read_own_pending", fake_read_own)
+    _patch_worker_basics(monkeypatch, fake_redis)
+    monkeypatch.setattr(redis_queue, "_claim_stale_pending", _empty_messages)
+    monkeypatch.setattr(redis_queue, "_read_own_pending", _empty_messages)
     monkeypatch.setattr(redis_queue, "_read_new_messages", fake_read_new)
-    monkeypatch.setattr(redis_queue, "_process_messages", fake_process)
+    monkeypatch.setattr(redis_queue, "_process_messages", _noop_process)
 
     redis_queue.asyncio.run(redis_queue._worker_loop(settings, stop_event))  # noqa: SLF001
 
 
 def test_worker_loop_surfaces_stale_pending_claim_failure(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {
-                "execution_backend": "redis_queue",
-                "redis_url": "redis://localhost:6379",
-                "queue_read_block_ms": 100,
-            }
-        },
-    )
-
-    class _FullFakeRedis:
-        def __init__(self) -> None:
-            self.ping_calls = 0
-
-        async def ping(self) -> None:
-            self.ping_calls += 1
-
-    class _CapturingLog:
-        def __init__(self) -> None:
-            self.exception_events: list[str] = []
-
-        def exception(self, event: str, **kwargs) -> None:  # noqa: ANN003
-            self.exception_events.append(event)
-
-        def error(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
-            return None
-
+    settings = _worker_settings(tmp_path)
     fake_redis = _FullFakeRedis()
     stop_event = redis_queue.asyncio.Event()
     delays: list[float] = []
     capturing_log = _CapturingLog()
-
-    async def fake_get_redis(_settings):  # noqa: ANN001
-        return fake_redis
-
-    async def fake_ensure_group(redis, *, stream, group) -> None:  # noqa: ANN001, ARG001
-        return None
 
     async def fake_claim(*args, **kwargs):  # noqa: ANN002, ANN003
         raise RuntimeError("pending scan failed")
@@ -101,8 +96,7 @@ def test_worker_loop_surfaces_stale_pending_claim_failure(monkeypatch, tmp_path)
         delays.append(delay)
         stop_event.set()
 
-    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
-    monkeypatch.setattr(redis_queue, "_ensure_group", fake_ensure_group)
+    _patch_worker_basics(monkeypatch, fake_redis)
     monkeypatch.setattr(redis_queue, "_claim_stale_pending", fake_claim)
     monkeypatch.setattr(redis_queue, "log", capturing_log)
     monkeypatch.setattr(redis_queue.asyncio, "sleep", fake_sleep)
@@ -118,34 +112,11 @@ def test_worker_loop_backoff_counter_resets_after_success(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {
-                "execution_backend": "redis_queue",
-                "redis_url": "redis://localhost:6379",
-                "queue_read_block_ms": 100,
-            }
-        },
-    )
-
-    class _FullFakeRedis:
-        def __init__(self) -> None:
-            self.ping_calls = 0
-
-        async def ping(self) -> None:
-            self.ping_calls += 1
-
+    settings = _worker_settings(tmp_path)
     fake_redis = _FullFakeRedis()
     stop_event = redis_queue.asyncio.Event()
     delays: list[float] = []
     claim_outcomes = ["fail", "fail", "success", "fail"]
-
-    async def fake_get_redis(_settings):  # noqa: ANN001
-        return fake_redis
-
-    async def fake_ensure_group(redis, *, stream, group) -> None:  # noqa: ANN001, ARG001
-        return None
 
     async def fake_claim(*args, **kwargs):  # noqa: ANN002, ANN003
         outcome = claim_outcomes.pop(0)
@@ -153,26 +124,14 @@ def test_worker_loop_backoff_counter_resets_after_success(
             raise RuntimeError("pending scan failed")
         return []
 
-    async def fake_read_own(*args, **kwargs):  # noqa: ANN002, ANN003
-        return []
-
-    async def fake_read_new(*args, **kwargs):  # noqa: ANN002, ANN003
-        return []
-
-    async def fake_process(redis, *, settings, messages):  # noqa: ANN001, ARG001
-        return None
-
     async def fake_sleep(delay: float) -> None:
         delays.append(delay)
         if len(delays) == 3:
             stop_event.set()
 
-    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
-    monkeypatch.setattr(redis_queue, "_ensure_group", fake_ensure_group)
+    _patch_worker_basics(monkeypatch, fake_redis)
     monkeypatch.setattr(redis_queue, "_claim_stale_pending", fake_claim)
-    monkeypatch.setattr(redis_queue, "_read_own_pending", fake_read_own)
-    monkeypatch.setattr(redis_queue, "_read_new_messages", fake_read_new)
-    monkeypatch.setattr(redis_queue, "_process_messages", fake_process)
+    _patch_successful_reads(monkeypatch)
     monkeypatch.setattr(redis_queue.asyncio, "sleep", fake_sleep)
 
     redis_queue.asyncio.run(redis_queue._worker_loop(settings, stop_event))  # noqa: SLF001
@@ -187,30 +146,10 @@ def test_worker_loop_backoff_delay_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={
-            "workflow": {
-                "execution_backend": "redis_queue",
-                "redis_url": "redis://localhost:6379",
-                "queue_read_block_ms": 100,
-            }
-        },
-    )
-
-    class _FullFakeRedis:
-        async def ping(self) -> None:
-            return None
-
+    settings = _worker_settings(tmp_path)
     fake_redis = _FullFakeRedis()
     stop_event = redis_queue.asyncio.Event()
     delays: list[float] = []
-
-    async def fake_get_redis(_settings):  # noqa: ANN001
-        return fake_redis
-
-    async def fake_ensure_group(redis, *, stream, group) -> None:  # noqa: ANN001, ARG001
-        return None
 
     async def fake_claim(*args, **kwargs):  # noqa: ANN002, ANN003
         raise RuntimeError("pending scan failed")
@@ -220,8 +159,7 @@ def test_worker_loop_backoff_delay_is_bounded(
         if len(delays) == 20:
             stop_event.set()
 
-    monkeypatch.setattr(redis_queue, "_get_redis", fake_get_redis)
-    monkeypatch.setattr(redis_queue, "_ensure_group", fake_ensure_group)
+    _patch_worker_basics(monkeypatch, fake_redis)
     monkeypatch.setattr(redis_queue, "_claim_stale_pending", fake_claim)
     monkeypatch.setattr(redis_queue.asyncio, "sleep", fake_sleep)
 

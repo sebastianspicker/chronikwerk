@@ -79,6 +79,11 @@ zammad_pdf_archiver = ["py.typed", "templates/**/*.css", "templates/**/*.html"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+force-exclude = true
+extend-exclude = [
+  "deprecated",
+  "docs/archive",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -90,7 +95,9 @@ warn_redundant_casts = true
 no_implicit_optional = true
 exclude = [
   "^build/",
+  "^deprecated/",
   "^dist/",
+  "^docs/archive/",
   "^scripts/",
 ]
 

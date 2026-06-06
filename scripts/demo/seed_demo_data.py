@@ -5,12 +5,26 @@ import asyncio
 import json
 import os
 import shutil
-import time
-from collections import Counter
+import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import httpx
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.demo import seed_demo_http as _seed_demo_http
+from scripts.demo.seed_demo_http import fetch_queue_and_mock_state as _fetch_queue_and_mock_state
+from scripts.demo.seed_demo_http import poll_history as _poll_history
+from scripts.demo.seed_demo_http import request_json as _request_json
+from scripts.demo.seed_demo_http import reset_mock_zammad as _reset_mock_zammad
+from scripts.demo.seed_demo_http import submit_seed_ingests as _submit_seed_ingests
+from scripts.demo.seed_demo_http import wait_for_ready as _wait_for_ready
+from scripts.demo.seed_demo_report import build_seed_report as _build_seed_report
+from scripts.demo.seed_demo_report import write_seed_report as _write_seed_report
+
+time = _seed_demo_http.time
 
 DEFAULT_DATASET = Path("examples/demo/mock_university_dataset.json")
 DEFAULT_REPORT = Path("docs/assets/demo/demo-seed-report.json")
@@ -66,38 +80,6 @@ def _load_dataset(path: Path) -> dict[str, Any]:
     if not isinstance(seed_plan, list) or not seed_plan:
         raise ValueError("dataset.seed_plan must be a non-empty list")
     return payload
-
-
-def _wait_for_ready(client: httpx.Client, label: str, url: str, *, timeout_s: float = 60.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    last_error = ""
-    while time.monotonic() < deadline:
-        try:
-            response = client.get(url)
-            if response.status_code == 200:
-                return
-            last_error = f"HTTP {response.status_code}"
-        except Exception as exc:  # pragma: no cover - defensive
-            last_error = str(exc)
-        time.sleep(1.0)
-    raise RuntimeError(f"{label} not ready at {url}: {last_error}")
-
-
-def _request_json(
-    client: httpx.Client,
-    method: str,
-    url: str,
-    *,
-    headers: dict[str, str] | None = None,
-    json_body: Any | None = None,
-) -> tuple[int, Any]:
-    response = client.request(method, url, headers=headers, json=json_body)
-    text = response.text
-    try:
-        parsed: Any = response.json()
-    except Exception:
-        parsed = {"raw": text}
-    return response.status_code, parsed
 
 
 async def _run_compose_exec(
@@ -185,164 +167,6 @@ def _simulate_backend_unavailable(
     }
 
 
-def _history_count(history_payload: dict[str, Any]) -> int:
-    try:
-        return int(history_payload.get("count", 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _auth_header(admin_token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {admin_token}"}
-
-
-def _submit_seed_ingests(
-    client: httpx.Client,
-    *,
-    archiver_url: str,
-    seed_plan: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    ingests: list[dict[str, Any]] = []
-    for item in seed_plan:
-        ticket_id = int(item["ticket_id"])
-        delivery_id = str(item.get("delivery_id") or f"demo-delivery-{ticket_id}")
-        user_login = str(item.get("user_login") or "demo.agent")
-        expected_status = str(item.get("expected_status") or "unknown")
-
-        status_code, payload = _request_json(
-            client,
-            "POST",
-            f"{archiver_url}/ingest",
-            headers={"X-Zammad-Delivery": delivery_id},
-            json_body={"ticket": {"id": ticket_id}, "user": {"login": user_login}},
-        )
-        ingests.append(
-            {
-                "ticket_id": ticket_id,
-                "delivery_id": delivery_id,
-                "expected_status": expected_status,
-                "http_status": status_code,
-                "response": payload,
-            }
-        )
-    return ingests
-
-
-def _poll_history(
-    client: httpx.Client,
-    *,
-    archiver_url: str,
-    admin_token: str,
-    target_count: int,
-) -> dict[str, Any]:
-    history_payload: dict[str, Any] = {}
-    for _ in range(30):
-        history_code, data = _request_json(
-            client,
-            "GET",
-            f"{archiver_url}/admin/api/history?limit=200",
-            headers=_auth_header(admin_token),
-        )
-        if history_code == 200 and isinstance(data, dict):
-            history_payload = data
-            if int(data.get("count", 0)) >= target_count:
-                break
-        time.sleep(1.0)
-    return history_payload
-
-
-def _history_status_counts(history_payload: dict[str, Any]) -> dict[str, int]:
-    raw_items = history_payload.get("items") if isinstance(history_payload, dict) else []
-    items = raw_items if isinstance(raw_items, list) else []
-    return dict(
-        Counter(str(item.get("status", "unknown")) for item in items if isinstance(item, dict))
-    )
-
-
-def _write_seed_report(
-    *,
-    report_path: Path,
-    report: dict[str, Any],
-    failures: list[str],
-    status_counts: dict[str, int],
-) -> int:
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-
-    if failures:
-        print(f"Seed incomplete. Report written to {report_path}")
-        print("Failures:")
-        for failure in failures:
-            print(f"- {failure}")
-    else:
-        print(f"Seed complete. Report written to {report_path}")
-    print("History status counts:")
-    print(json.dumps(status_counts, indent=2, sort_keys=True))
-    return 1 if failures else 0
-
-
-def _seed_failures(
-    *,
-    ingests: list[dict[str, Any]],
-    history_payload: dict[str, Any],
-    target_count: int,
-    backend_unavailable: dict[str, Any] | None,
-) -> list[str]:
-    failures: list[str] = []
-
-    for ingest in ingests:
-        if ingest["http_status"] != 202:
-            failures.append(
-                "ingest "
-                f"ticket_id={ingest['ticket_id']} delivery_id={ingest['delivery_id']} "
-                f"returned HTTP {ingest['http_status']}"
-            )
-
-    count = _history_count(history_payload)
-    if count < target_count:
-        failures.append(f"history count {count} is below expected seed count {target_count}")
-
-    if backend_unavailable is not None and not backend_unavailable.get("ok", False):
-        failures.append(
-            "backend-unavailable check expected HTTP "
-            f"{backend_unavailable.get('expected_status_code')}, got "
-            f"{backend_unavailable.get('status_code')}"
-        )
-
-    return failures
-
-
-def _reset_mock_zammad(client: httpx.Client, mock_url: str) -> tuple[int, Any]:
-    reset_code, reset_payload = _request_json(
-        client,
-        "POST",
-        f"{mock_url}/__demo/reset",
-    )
-    if reset_code != 200:
-        raise RuntimeError(f"mock reset failed ({reset_code}): {reset_payload}")
-    return reset_code, reset_payload
-
-
-def _fetch_queue_and_mock_state(
-    client: httpx.Client,
-    *,
-    archiver_url: str,
-    mock_url: str,
-    admin_token: str,
-) -> tuple[int, Any, int, Any]:
-    queue_code, queue_payload = _request_json(
-        client,
-        "GET",
-        f"{archiver_url}/admin/api/queue/stats",
-        headers=_auth_header(admin_token),
-    )
-    mock_state_code, mock_state_payload = _request_json(
-        client,
-        "GET",
-        f"{mock_url}/__demo/state",
-    )
-    return queue_code, queue_payload, mock_state_code, mock_state_payload
-
-
 def _maybe_simulate_backend_unavailable(
     client: httpx.Client,
     *,
@@ -405,45 +229,6 @@ def _collect_seed_evidence(
         backend_unavailable=backend_unavailable,
         target_count=target_count,
     )
-
-
-def _build_seed_report(
-    *,
-    dataset_path: Path,
-    evidence: _SeedRunEvidence,
-) -> tuple[dict[str, Any], list[str], dict[str, int]]:
-    status_counts = _history_status_counts(evidence.history_payload)
-    report = {
-        "dataset": str(dataset_path),
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "ingest_requests": evidence.ingests,
-        "history_status_counts": status_counts,
-        "history": evidence.history_payload,
-        "queue_stats": {
-            "status_code": evidence.queue_code,
-            "payload": evidence.queue_payload,
-        },
-        "mock_state": {
-            "status_code": evidence.mock_state_code,
-            "payload": evidence.mock_state_payload,
-        },
-        "mock_reset": {
-            "status_code": evidence.reset_code,
-            "payload": evidence.reset_payload,
-        },
-    }
-    if evidence.backend_unavailable is not None:
-        report["backend_unavailable_test"] = evidence.backend_unavailable
-
-    failures = _seed_failures(
-        ingests=evidence.ingests,
-        history_payload=evidence.history_payload,
-        target_count=evidence.target_count,
-        backend_unavailable=evidence.backend_unavailable,
-    )
-    report["status"] = "partial" if failures else "ok"
-    report["failures"] = failures
-    return report, failures, status_counts
 
 
 def main() -> int:

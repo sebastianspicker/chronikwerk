@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from test.support.checks import check
+from test.support.config_assertions import check_zammad_credentials
 from test.support.credentials import fake_credential
 from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.config.settings import PdfSettings, Settings
@@ -89,11 +90,11 @@ def test_yaml_loading_works(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     )
 
     settings = load_settings(config_path=config_path)
-    check(
-        not not str(settings.zammad.base_url).rstrip("/") == "https://zammad.example.local",
-        "assertion failed",
+    check_zammad_credentials(
+        settings,
+        base_url="https://zammad.example.local",
+        api_token="test-token",
     )
-    check(not not settings.zammad.api_token.get_secret_value() == "test-token", "assertion failed")
     check(not not settings.storage.root.as_posix() == "/mnt/archive", "assertion failed")
 
 

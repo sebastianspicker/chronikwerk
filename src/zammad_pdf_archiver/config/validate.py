@@ -1,77 +1,46 @@
 from __future__ import annotations
 
-import ipaddress
-from collections.abc import Iterable
-from dataclasses import dataclass
-from urllib.parse import urlsplit
+from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.config.validate_auth import (
+    validate_admin_settings as _validate_admin_settings,
+)
+from zammad_pdf_archiver.config.validate_auth import (
+    validate_metrics_settings as _validate_metrics_settings,
+)
+from zammad_pdf_archiver.config.validate_auth import (
+    validate_webhook_auth as _validate_webhook_auth,
+)
+from zammad_pdf_archiver.config.validate_transport import (
+    is_local_upstream_host as _is_local_upstream_host,
+)
+from zammad_pdf_archiver.config.validate_transport import (
+    validate_primary_transport as _validate_primary_transport,
+)
+from zammad_pdf_archiver.config.validate_transport import (
+    validate_tsa_transport as _validate_tsa_transport,
+)
+from zammad_pdf_archiver.config.validate_workflow import (
+    validate_delivery_id_requirement as _validate_delivery_id_requirement,
+)
+from zammad_pdf_archiver.config.validate_workflow import (
+    validate_multi_worker_without_redis as _validate_multi_worker_without_redis,
+)
+from zammad_pdf_archiver.config.validate_workflow import (
+    validate_redis_url as _validate_redis_url,
+)
+from zammad_pdf_archiver.config.validation_issues import (
+    ConfigValidationError,
+    ConfigValidationIssue,
+    issues_from_pydantic_error,
+)
 
-from pydantic import ValidationError
-
-from zammad_pdf_archiver.config.settings import Settings, TransportHardeningSettings
-
-
-@dataclass(frozen=True)
-class ConfigValidationIssue:
-    path: str
-    message: str
-
-
-class ConfigValidationError(ValueError):
-    def __init__(self, issues: Iterable[ConfigValidationIssue]):
-        self.issues = list(issues)
-        super().__init__(self._format_message())
-
-    def _format_message(self) -> str:
-        lines = ["Configuration is invalid:"]
-        for issue in self.issues:
-            lines.append(f"- {issue.path}: {issue.message}")
-        return "\n".join(lines)
-
-
-def issues_from_pydantic_error(error: ValidationError) -> list[ConfigValidationIssue]:
-    """Convert a Pydantic ValidationError into a list of ConfigValidationIssue instances."""
-    issues: list[ConfigValidationIssue] = []
-    for item in error.errors(include_url=False):
-        loc = ".".join(str(part) for part in item.get("loc", ())) or "<root>"
-        msg = item.get("msg", "Invalid value")
-        issues.append(ConfigValidationIssue(path=loc, message=msg))
-    return issues
-
-
-def _is_local_upstream_host(host: str) -> bool:
-    normalized = host.strip().lower().rstrip(".")
-    if normalized in {"localhost", "localhost.localdomain"}:
-        return True
-
-    try:
-        ip = ipaddress.ip_address(normalized)
-    except ValueError:
-        return False
-
-    return ip.is_loopback or ip.is_link_local or ip.is_unspecified
-
-
-def _validate_upstream_host(
-    *,
-    url: str,
-    path: str,
-    allow_local_upstreams: bool,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if allow_local_upstreams:
-        return
-
-    host = urlsplit(url).hostname
-    if host and _is_local_upstream_host(host):
-        issues.append(
-            ConfigValidationIssue(
-                path=path,
-                message=(
-                    "Loopback/link-local upstream hosts are blocked by default. "
-                    "Set hardening.transport.allow_local_upstreams=true to override."
-                ),
-            )
-        )
+__all__ = [
+    "ConfigValidationError",
+    "ConfigValidationIssue",
+    "_is_local_upstream_host",
+    "issues_from_pydantic_error",
+    "validate_settings",
+]
 
 
 def validate_settings(settings: Settings) -> None:
@@ -90,214 +59,3 @@ def validate_settings(settings: Settings) -> None:
 
     if issues:
         raise ConfigValidationError(issues)
-
-
-def _validate_primary_transport(
-    settings: Settings,
-    *,
-    transport: TransportHardeningSettings,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    _validate_url_security(
-        url=str(settings.zammad.base_url),
-        path="zammad.base_url",
-        transport=transport,
-        issues=issues,
-        insecure_message=(
-            "Plain HTTP upstream is not allowed by default. "
-            "Use https:// or set hardening.transport.allow_insecure_http=true."
-        ),
-    )
-
-    if not settings.zammad.verify_tls and not transport.allow_insecure_tls:
-        issues.append(
-            ConfigValidationIssue(
-                path="zammad.verify_tls",
-                message=(
-                    "Disabling TLS verification is not allowed by default. "
-                    "Set hardening.transport.allow_insecure_tls=true to override (not recommended)."
-                ),
-            )
-        )
-
-
-def _validate_url_security(
-    *,
-    url: str,
-    path: str,
-    transport: TransportHardeningSettings,
-    issues: list[ConfigValidationIssue],
-    insecure_message: str,
-) -> None:
-    if url.lower().startswith("http://") and not transport.allow_insecure_http:
-        issues.append(
-            ConfigValidationIssue(
-                path=path,
-                message=insecure_message,
-            )
-        )
-
-    _validate_upstream_host(
-        url=url,
-        path=path,
-        allow_local_upstreams=transport.allow_local_upstreams,
-        issues=issues,
-    )
-
-
-def _validate_webhook_auth(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
-    # Webhook auth safety: by default, /ingest must be authenticated with a configured secret.
-    secret = settings.zammad.webhook_hmac_secret
-    legacy = settings.server.webhook_shared_secret
-    secret_value = secret.get_secret_value().strip() if secret is not None else ""
-    legacy_value = legacy.get_secret_value().strip() if legacy is not None else ""
-    if secret_value or legacy_value:
-        return
-
-    webhook = settings.hardening.webhook
-    if webhook.allow_unsigned and webhook.allow_unsigned_when_no_secret:
-        return
-
-    if webhook.allow_unsigned:
-        issues.append(
-            ConfigValidationIssue(
-                path="hardening.webhook.allow_unsigned_when_no_secret",
-                message=(
-                    "Running without a webhook HMAC secret requires "
-                    "hardening.webhook.allow_unsigned_when_no_secret=true."
-                ),
-            )
-        )
-        return
-
-    issues.append(
-        ConfigValidationIssue(
-            path="zammad.webhook_hmac_secret",
-            message=(
-                "Missing webhook HMAC secret. Set WEBHOOK_HMAC_SECRET "
-                "(or set both hardening.webhook.allow_unsigned=true and "
-                "hardening.webhook.allow_unsigned_when_no_secret=true for internal/test use)."
-            ),
-        )
-    )
-
-
-def _validate_delivery_id_requirement(
-    settings: Settings, issues: list[ConfigValidationIssue]
-) -> None:
-    if settings.hardening.webhook.require_delivery_id:
-        if settings.workflow.delivery_id_ttl_seconds <= 0:
-            issues.append(
-                ConfigValidationIssue(
-                    path="workflow.delivery_id_ttl_seconds",
-                    message=(
-                        "hardening.webhook.require_delivery_id requires "
-                        "workflow.delivery_id_ttl_seconds to be > 0."
-                    ),
-                )
-            )
-
-
-def _validate_tsa_transport(
-    settings: Settings,
-    *,
-    transport: TransportHardeningSettings,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    # If timestamping is enabled, enforce secure transport for the TSA as well.
-    if settings.signing.timestamp.enabled:
-        tsa_url = settings.signing.timestamp.rfc3161.tsa_url
-        if tsa_url is None:
-            issues.append(
-                ConfigValidationIssue(
-                    path="signing.timestamp.rfc3161.tsa_url",
-                    message="signing.timestamp.enabled=true requires rfc3161.tsa_url to be set.",
-                )
-            )
-        if tsa_url is not None:
-            _validate_url_security(
-                url=str(tsa_url),
-                path="signing.timestamp.rfc3161.tsa_url",
-                transport=transport,
-                issues=issues,
-                insecure_message=(
-                    "Plain HTTP TSA URL is not allowed by default. "
-                    "Use https:// or set hardening.transport.allow_insecure_http=true."
-                ),
-            )
-        ca_bundle_path = settings.signing.timestamp.rfc3161.ca_bundle_path
-        if ca_bundle_path is not None and not ca_bundle_path.is_file():
-            issues.append(
-                ConfigValidationIssue(
-                    path="signing.timestamp.rfc3161.ca_bundle_path",
-                    message="TSA CA bundle path must point to a readable file.",
-                )
-            )
-
-
-def _validate_redis_url(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
-    redis_url = settings.workflow.redis_url
-    if not redis_url or not redis_url.strip():
-        return
-
-    parsed = urlsplit(redis_url.strip())
-    if parsed.scheme not in {"redis", "rediss", "unix"}:
-        issues.append(
-            ConfigValidationIssue(
-                path="workflow.redis_url",
-                message=(
-                    f"Invalid Redis URL scheme {parsed.scheme!r}. "
-                    "Expected redis://, rediss://, or unix://."
-                ),
-            )
-        )
-
-
-def _validate_admin_settings(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
-    if settings.admin.enabled:
-        token = settings.admin.bearer_token
-        token_value = token.get_secret_value().strip() if token is not None else ""
-        if not token_value:
-            issues.append(
-                ConfigValidationIssue(
-                    path="admin.bearer_token",
-                    message=(
-                        "admin.enabled=true requires admin.bearer_token "
-                        "(set ADMIN_BEARER_TOKEN)."
-                    ),
-                )
-            )
-
-
-def _validate_metrics_settings(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
-    if settings.observability.metrics_enabled:
-        token = settings.observability.metrics_bearer_token
-        token_value = token.get_secret_value().strip() if token is not None else ""
-        if not token_value:
-            issues.append(
-                ConfigValidationIssue(
-                    path="observability.metrics_bearer_token",
-                    message=(
-                        "observability.metrics_enabled=true requires "
-                        "observability.metrics_bearer_token (set METRICS_BEARER_TOKEN)."
-                    ),
-                )
-            )
-
-
-def _validate_multi_worker_without_redis(
-    settings: Settings, issues: list[ConfigValidationIssue]
-) -> None:
-    """Reject Redis queue execution without Redis-backed idempotency coordination."""
-    execution = (settings.workflow.execution_backend or "").strip().lower()
-    idempotency = (settings.workflow.idempotency_backend or "").strip().lower()
-    if execution == "redis_queue" and idempotency != "redis":
-        issues.append(
-            ConfigValidationIssue(
-                path="workflow.idempotency_backend",
-                message=(
-                    "execution_backend='redis_queue' requires idempotency_backend='redis' "
-                    "to avoid duplicate ticket processing across workers."
-                ),
-            )
-        )

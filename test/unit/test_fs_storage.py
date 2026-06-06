@@ -11,6 +11,18 @@ from zammad_pdf_archiver.adapters.storage.fs_storage import (
     write_bytes,
 )
 
+
+def _symlink_to_outside(tmp_path: Path, root: Path, *, name: str = "sym") -> Path:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = root / name
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported in this environment")
+    return link
+
+
 # -- _reject_symlinks_under_root ------------------------------------------------
 
 
@@ -25,14 +37,7 @@ def test_reject_symlinks_under_root_allows_normal_dirs(tmp_path: Path) -> None:
 def test_reject_symlinks_under_root_blocks_symlink_component(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-
-    link = root / "link"
-    try:
-        link.symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks not supported in this environment")
+    link = _symlink_to_outside(tmp_path, root, name="link")
 
     with pytest.raises(ValueError, match="escapes root"):
         _reject_symlinks_under_root(root, link / "child")
@@ -41,14 +46,7 @@ def test_reject_symlinks_under_root_blocks_symlink_component(tmp_path: Path) -> 
 def test_reject_symlinks_under_root_blocks_symlink_leaf(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-
-    link = root / "sym"
-    try:
-        link.symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks not supported in this environment")
+    link = _symlink_to_outside(tmp_path, root)
 
     with pytest.raises(ValueError, match="escapes root"):
         _reject_symlinks_under_root(root, link)
@@ -135,14 +133,7 @@ def test_move_file_within_root_rejects_dst_outside_root(tmp_path: Path) -> None:
 def test_move_file_within_root_rejects_dst_through_symlink(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-
-    link = root / "sym"
-    try:
-        link.symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks not supported in this environment")
+    link = _symlink_to_outside(tmp_path, root)
 
     src = root / "src.bin"
     src.write_bytes(b"data")

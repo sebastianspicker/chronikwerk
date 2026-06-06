@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 
 import httpx
 import respx
 
 from test.support.checks import check
-from test.support.credentials import fake_credential
+from test.support.integration_helpers import (
+    called_tag_items,
+    expected_agent_archive_pdf_path,
+    mock_success_tag_write_routes,
+    zammad_storage_settings,
+)
 from test.support.time_control import freeze_process_ticket_now
-from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
@@ -18,24 +21,11 @@ from zammad_pdf_archiver.domain.state_machine import DONE_TAG, ERROR_TAG, PROCES
 
 
 def _settings(storage_root: str, *, workflow: dict | None = None) -> Settings:
-    return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": storage_root},
-            "workflow": workflow or {},
-        }
-    )
+    return zammad_storage_settings(storage_root, workflow=workflow or {})
 
 
 def _called_tag_items(route: respx.Route) -> list[str]:
-    items: list[str] = []
-    for call in route.calls:
-        body = json.loads(call.request.content.decode("utf-8"))
-        items.append(body.get("item"))
-    return items
+    return called_tag_items(route)
 
 
 def _mock_ticket(*, ticket_id: int = 123) -> None:
@@ -79,39 +69,51 @@ def _mock_articles(*, ticket_id: int = 123) -> None:
 
 
 def _mock_tag_routes() -> tuple[respx.Route, respx.Route]:
-    remove_tag_route = respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
-        return_value=httpx.Response(200, json={"success": True})
+    return mock_success_tag_write_routes()
+
+
+def _mock_workflow_reads(*, tags: list[str]) -> None:
+    _mock_ticket(ticket_id=123)
+    _mock_articles(ticket_id=123)
+    respx.get(
+        "https://zammad.example.local/api/v1/tags",
+        params={"object": "Ticket", "o_id": "123"},
+    ).mock(return_value=httpx.Response(200, json=tags))
+
+
+def _mock_success_article_route() -> respx.Route:
+    return respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
+        return_value=httpx.Response(
+            200,
+            json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
+        )
     )
-    add_tag_route = respx.post("https://zammad.example.local/api/v1/tags/add").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    return remove_tag_route, add_tag_route
+
+
+def _expected_pdf_path(tmp_path, settings: Settings, fixed_now: datetime):
+    return expected_agent_archive_pdf_path(tmp_path, settings=settings, fixed_now=fixed_now)
+
+
+def _freeze_workflow_now(monkeypatch) -> datetime:
+    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
+    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
+    return fixed_now
+
+
+def _workflow_payload(request_id: str) -> dict[str, object]:
+    return {"ticket": {"id": 123}, "_request_id": request_id}
 
 
 def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"trigger_tag": "pdf:archive"})
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-1"}
+    fixed_now = _freeze_workflow_now(monkeypatch)
+    payload = _workflow_payload("req-workflow-1")
 
     with respx.mock:
-        _mock_ticket(ticket_id=123)
-        _mock_articles(ticket_id=123)
-
-        respx.get(
-            "https://zammad.example.local/api/v1/tags",
-            params={"object": "Ticket", "o_id": "123"},
-        ).mock(return_value=httpx.Response(200, json=["pdf:archive"]))
-
+        _mock_workflow_reads(tags=["pdf:archive"])
         remove_tag_route, add_tag_route = _mock_tag_routes()
 
-        respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-            return_value=httpx.Response(
-                200,
-                json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
-            )
-        )
+        _mock_success_article_route()
 
         asyncio.run(process_ticket("delivery-workflow-1", payload, settings))
 
@@ -123,77 +125,41 @@ def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
         check(not DONE_TAG not in added, "assertion failed")
         check(not not ERROR_TAG not in added, "assertion failed")
 
-        date_iso = fixed_now.date().isoformat()
-        expected_filename = build_filename_from_pattern(
-            settings.storage.path_policy.filename_pattern,
-            ticket_number="20240123",
-            timestamp_utc=date_iso,
+        check(
+            not not _expected_pdf_path(tmp_path, settings, fixed_now).exists(),
+            "assertion failed",
         )
-        expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
-        check(not not expected_pdf_path.exists(), "assertion failed")
 
 
 def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"require_tag": False})
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-2"}
+    fixed_now = _freeze_workflow_now(monkeypatch)
+    payload = _workflow_payload("req-workflow-2")
 
     with respx.mock:
-        _mock_ticket(ticket_id=123)
-        _mock_articles(ticket_id=123)
-
-        respx.get(
-            "https://zammad.example.local/api/v1/tags",
-            params={"object": "Ticket", "o_id": "123"},
-        ).mock(return_value=httpx.Response(200, json=[]))
-
+        _mock_workflow_reads(tags=[])
         _mock_tag_routes()
 
-        respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-            return_value=httpx.Response(
-                200,
-                json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
-            )
-        )
+        _mock_success_article_route()
 
         asyncio.run(process_ticket("delivery-workflow-2", payload, settings))
 
-        date_iso = fixed_now.date().isoformat()
-        expected_filename = build_filename_from_pattern(
-            settings.storage.path_policy.filename_pattern,
-            ticket_number="20240123",
-            timestamp_utc=date_iso,
+        check(
+            not not _expected_pdf_path(tmp_path, settings, fixed_now).exists(),
+            "assertion failed",
         )
-        expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
-        check(not not expected_pdf_path.exists(), "assertion failed")
 
 
 def test_workflow_acknowledge_on_success_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"acknowledge_on_success": False})
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-3"}
+    _freeze_workflow_now(monkeypatch)
+    payload = _workflow_payload("req-workflow-3")
 
     with respx.mock:
-        _mock_ticket(ticket_id=123)
-        _mock_articles(ticket_id=123)
-
-        respx.get(
-            "https://zammad.example.local/api/v1/tags",
-            params={"object": "Ticket", "o_id": "123"},
-        ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
-
+        _mock_workflow_reads(tags=["pdf:sign"])
         _mock_tag_routes()
 
-        article_route = respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-            return_value=httpx.Response(
-                200,
-                json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
-            )
-        )
+        article_route = _mock_success_article_route()
 
         asyncio.run(process_ticket("delivery-workflow-3", payload, settings))
 

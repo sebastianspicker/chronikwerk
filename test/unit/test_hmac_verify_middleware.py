@@ -67,6 +67,14 @@ def _json_body(messages: list[Message]) -> dict[str, Any]:
     return json.loads(body)
 
 
+def _assert_forbidden_rejection(sent: list[Message], downstream_chunks: list[bytes]) -> None:
+    check(not not _status(sent) == 403, "assertion failed")
+    check(
+        not not _json_body(sent) == {"detail": "forbidden", "code": "forbidden"}, "assertion failed"
+    )
+    check(not not downstream_chunks == [], "assertion failed")
+
+
 async def _invoke_middleware(
     tmp_path: Path,
     *,
@@ -142,11 +150,7 @@ def test_wrong_hmac_rejects_without_calling_downstream(tmp_path) -> None:
         )
     )
 
-    check(not not _status(sent) == 403, "assertion failed")
-    check(
-        not not _json_body(sent) == {"detail": "forbidden", "code": "forbidden"}, "assertion failed"
-    )
-    check(not not downstream_chunks == [], "assertion failed")
+    _assert_forbidden_rejection(sent, downstream_chunks)
 
 
 def test_wrong_hmac_uses_compare_digest_for_same_length_digest(tmp_path, monkeypatch) -> None:
@@ -180,11 +184,7 @@ def test_wrong_hmac_uses_compare_digest_for_same_length_digest(tmp_path, monkeyp
 def test_missing_hmac_rejects_with_forbidden_body(tmp_path) -> None:
     sent, downstream_chunks = asyncio.run(_invoke_middleware(tmp_path, chunks=[b"{}"], headers=[]))
 
-    check(not not _status(sent) == 403, "assertion failed")
-    check(
-        not not _json_body(sent) == {"detail": "forbidden", "code": "forbidden"}, "assertion failed"
-    )
-    check(not not downstream_chunks == [], "assertion failed")
+    _assert_forbidden_rejection(sent, downstream_chunks)
 
 
 @pytest.mark.parametrize(
@@ -205,8 +205,4 @@ def test_malformed_hmac_header_rejects_with_forbidden_body(tmp_path, signature: 
         )
     )
 
-    check(not not _status(sent) == 403, "assertion failed")
-    check(
-        not not _json_body(sent) == {"detail": "forbidden", "code": "forbidden"}, "assertion failed"
-    )
-    check(not not downstream_chunks == [], "assertion failed")
+    _assert_forbidden_rejection(sent, downstream_chunks)

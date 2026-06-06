@@ -11,7 +11,6 @@ import os
 import shutil
 import tempfile
 import time as _time
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -24,12 +23,17 @@ from zammad_pdf_archiver.adapters.storage.fs_storage import (
     move_file_within_root,
     write_bytes,
 )
+from zammad_pdf_archiver.app.jobs.ticket_storage_attachments import (
+    attachment_audit_entry,
+    attachment_safe_name,
+    iter_binary_attachments,
+)
+from zammad_pdf_archiver.app.jobs.ticket_storage_summary import attachment_summary
 from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record, compute_sha256
-from zammad_pdf_archiver.domain.path_policy import sanitize_segment
 
 if TYPE_CHECKING:
     from zammad_pdf_archiver.config.settings import Settings
-    from zammad_pdf_archiver.domain.snapshot_models import Article, AttachmentMeta, Snapshot
+    from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
 log = structlog.get_logger(__name__)
 
@@ -68,7 +72,7 @@ def _write_attachments(
     Only articles whose attachments carry binary content are written.
     Returns an empty list when there are no attachments to write.
     """
-    binary_attachments = list(_iter_binary_attachments(snapshot))
+    binary_attachments = list(iter_binary_attachments(snapshot))
     if not binary_attachments:
         return []
 
@@ -77,80 +81,20 @@ def _write_attachments(
     entries: list[dict[str, Any]] = []
 
     for article, att, content in binary_attachments:
-        safe_name = _attachment_safe_name(article, att)
+        safe_name = attachment_safe_name(article, att)
         write_bytes(
             temp_attachments_dir / safe_name,
             content,
             fsync=fsync,
             storage_root=storage_root,
         )
-        entries.append(_attachment_audit_entry(article, att, content, attachments_dir / safe_name))
+        entries.append(attachment_audit_entry(article, att, content, attachments_dir / safe_name))
     return entries
-
-
-def _iter_binary_attachments(snapshot: Snapshot) -> Iterator[tuple[Article, AttachmentMeta, bytes]]:
-    for article in snapshot.articles:
-        for att in article.attachments:
-            if att.content is not None:
-                yield article, att, att.content
-
-
-def _attachment_safe_name(article: Article, att: AttachmentMeta) -> str:
-    fallback_name = f"article_{article.id}_{att.attachment_id or 0}"
-    raw_name = f"{article.id}_{att.attachment_id or 0}_{att.filename or 'bin'}"
-    return sanitize_segment(raw_name) or fallback_name
-
-
-def _attachment_audit_entry(
-    article: Article,
-    att: AttachmentMeta,
-    content: bytes,
-    storage_path: Path,
-) -> dict[str, Any]:
-    return {
-        "storage_path": str(storage_path),
-        "article_id": article.id,
-        "attachment_id": att.attachment_id,
-        "filename": att.filename,
-        "sha256": compute_sha256(content),
-    }
-
-
-def _attachment_summary(
-    snapshot: Snapshot,
-    attachment_entries: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    total = 0
-    metadata_only = 0
-    skipped = 0
-    skipped_reasons: dict[str, int] = {}
-
-    for article in snapshot.articles:
-        for att in article.attachments:
-            total += 1
-            if att.content is None:
-                metadata_only += 1
-            if att.content_omission_reason:
-                skipped += 1
-                skipped_reasons[att.content_omission_reason] = (
-                    skipped_reasons.get(att.content_omission_reason, 0) + 1
-                )
-
-    if total == 0:
-        return None
-
-    return {
-        "total": total,
-        "written": len(attachment_entries),
-        "metadata_only": metadata_only,
-        "skipped": skipped,
-        "skipped_reasons": skipped_reasons,
-    }
 
 
 def _build_and_write_audit(request: _AuditSidecarRequest) -> None:
     """Build the audit record and write the sidecar JSON into *tmp_dir*."""
-    attachment_summary = _attachment_summary(request.snapshot, request.attachment_entries)
+    summary = attachment_summary(request.snapshot, request.attachment_entries)
     audit_record = build_audit_record(
         AuditRecordInput(
             ticket_id=request.ticket_id,
@@ -161,7 +105,7 @@ def _build_and_write_audit(request: _AuditSidecarRequest) -> None:
             sha256=request.sha256_hex,
             signing_settings=request.settings.signing,
             attachments=request.attachment_entries if request.attachment_entries else None,
-            attachment_summary=attachment_summary,
+            attachment_summary=summary,
         )
     )
     audit_bytes = (

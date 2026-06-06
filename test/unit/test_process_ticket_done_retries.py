@@ -28,12 +28,56 @@ from test.support.process_ticket_cleanup_helpers import (
 )
 
 
-def test_process_ticket_retries_done_tag_before_success_note(monkeypatch, tmp_path: Path) -> None:
+class _DoneRetryClient(_SimpleProcessTicketClient):
+    done_attempts: int
+
+
+def _render_pdf_with_title(title: str):
+    async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
+        return _pdf_render_result(title=title)
+
+    return _render_pdf
+
+
+def _run_done_retry_case(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    client_cls: type[_DoneRetryClient],
+    delivery_id: str,
+    title: str,
+):
     ticket_stores._reset_for_tests()
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
+    sleep_delays = _patch_process_ticket_sleep(monkeypatch)
+    _patch_process_ticket_client(monkeypatch, client_cls)
+    _patch_process_ticket_render_pdf(monkeypatch, _render_pdf_with_title(title))
 
-    class _FakeClient(_SimpleProcessTicketClient):
+    result = asyncio.run(
+        process_ticket(delivery_id, {"ticket": {"id": 321}}, _settings(tmp_path))
+    )
+    return result, sleep_delays
+
+
+def _check_done_update_partial_result(
+    *,
+    result,
+    client_cls: type[_DoneRetryClient],
+    attempts: int,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    check(not not result.status == "processed_done_update_failed", "assertion failed")
+    check(not not result.classification == "Partial", "assertion failed")
+    check(not result.error_note_posted is not True, "assertion failed")
+    check(not not client_cls.done_attempts == attempts, "assertion failed")
+    check(not not len(client_cls.articles) == 1, "assertion failed")
+    check(not "done_tag_update_failed" not in client_cls.articles[0][1], "assertion failed")
+    check(not not list(tmp_path.rglob("*.pdf")), "assertion failed")
+
+
+def test_process_ticket_retries_done_tag_before_success_note(monkeypatch, tmp_path: Path) -> None:
+    class _FakeClient(_DoneRetryClient):
         done_attempts = 0
         ticket_title = "done retry success"
 
@@ -44,15 +88,12 @@ def test_process_ticket_retries_done_tag_before_success_note(monkeypatch, tmp_pa
                     raise ClientError("temporary done tag failure")
             type(self).added_tags.append(tag)
 
-    async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
-        return _pdf_render_result(title="done retry success")
-
-    sleep_delays = _patch_process_ticket_sleep(monkeypatch)
-    _patch_process_ticket_client(monkeypatch, _FakeClient)
-    _patch_process_ticket_render_pdf(monkeypatch, _render_pdf)
-
-    result = asyncio.run(
-        process_ticket("d-done-retry-success-1", {"ticket": {"id": 321}}, _settings(tmp_path))
+    result, sleep_delays = _run_done_retry_case(
+        monkeypatch,
+        tmp_path,
+        client_cls=_FakeClient,
+        delivery_id="d-done-retry-success-1",
+        title="done retry success",
     )
 
     check(not not result.status == "processed", "assertion failed")
@@ -69,11 +110,7 @@ def test_apply_done_backoff_exhaustion_returns_partial_result(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    ticket_stores._reset_for_tests()
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    class _FakeClient(_SimpleProcessTicketClient):
+    class _FakeClient(_DoneRetryClient):
         done_attempts = 0
         ticket_title = "done retry exhausted"
 
@@ -82,36 +119,28 @@ def test_apply_done_backoff_exhaustion_returns_partial_result(
                 type(self).done_attempts += 1
                 raise TransientError("temporary done tag failure")
 
-    async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
-        return _pdf_render_result(title="done retry exhausted")
-
-    sleep_delays = _patch_process_ticket_sleep(monkeypatch)
-    _patch_process_ticket_client(monkeypatch, _FakeClient)
-    _patch_process_ticket_render_pdf(monkeypatch, _render_pdf)
-
-    result = asyncio.run(
-        process_ticket("d-done-retry-exhausted-1", {"ticket": {"id": 321}}, _settings(tmp_path))
+    result, sleep_delays = _run_done_retry_case(
+        monkeypatch,
+        tmp_path,
+        client_cls=_FakeClient,
+        delivery_id="d-done-retry-exhausted-1",
+        title="done retry exhausted",
     )
 
-    check(not not result.status == "processed_done_update_failed", "assertion failed")
-    check(not not result.classification == "Partial", "assertion failed")
-    check(not result.error_note_posted is not True, "assertion failed")
-    check(not not _FakeClient.done_attempts == 4, "assertion failed")
+    _check_done_update_partial_result(
+        result=result,
+        client_cls=_FakeClient,
+        attempts=4,
+        tmp_path=tmp_path,
+    )
     _assert_increasing_delays(sleep_delays, count=3)
-    check(not not len(_FakeClient.articles) == 1, "assertion failed")
-    check(not "done_tag_update_failed" not in _FakeClient.articles[0][1], "assertion failed")
-    check(not not list(tmp_path.rglob("*.pdf")), "assertion failed")
 
 
 def test_apply_done_backoff_stops_on_permanent_after_transient(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    ticket_stores._reset_for_tests()
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-
-    class _FakeClient(_SimpleProcessTicketClient):
+    class _FakeClient(_DoneRetryClient):
         done_attempts = 0
         ticket_title = "done retry permanent"
 
@@ -123,25 +152,21 @@ def test_apply_done_backoff_stops_on_permanent_after_transient(
                 raise TransientError("temporary done tag failure")
             raise PermanentError("permanent done tag failure")
 
-    async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
-        return _pdf_render_result(title="done retry permanent")
-
-    sleep_delays = _patch_process_ticket_sleep(monkeypatch)
-    _patch_process_ticket_client(monkeypatch, _FakeClient)
-    _patch_process_ticket_render_pdf(monkeypatch, _render_pdf)
-
-    result = asyncio.run(
-        process_ticket("d-done-retry-permanent-1", {"ticket": {"id": 321}}, _settings(tmp_path))
+    result, sleep_delays = _run_done_retry_case(
+        monkeypatch,
+        tmp_path,
+        client_cls=_FakeClient,
+        delivery_id="d-done-retry-permanent-1",
+        title="done retry permanent",
     )
 
-    check(not not result.status == "processed_done_update_failed", "assertion failed")
-    check(not not result.classification == "Partial", "assertion failed")
-    check(not result.error_note_posted is not True, "assertion failed")
-    check(not not _FakeClient.done_attempts == 2, "assertion failed")
+    _check_done_update_partial_result(
+        result=result,
+        client_cls=_FakeClient,
+        attempts=2,
+        tmp_path=tmp_path,
+    )
     _assert_nonnegative_delays(sleep_delays, count=1)
-    check(not not len(_FakeClient.articles) == 1, "assertion failed")
-    check(not "done_tag_update_failed" not in _FakeClient.articles[0][1], "assertion failed")
-    check(not not list(tmp_path.rglob("*.pdf")), "assertion failed")
 
 
 def test_process_ticket_exposes_exhausted_error_tag_retry(monkeypatch, tmp_path: Path) -> None:

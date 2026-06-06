@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 import zammad_pdf_archiver.app.routes.operations as operations_route
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.integration_helpers import assert_disabled_history_response
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 
@@ -68,12 +69,7 @@ def test_jobs_history_endpoint_reports_disabled_history(tmp_path) -> None:
         headers=OPS_HEADERS,
     )
 
-    check(not not response.status_code == 200, "assertion failed")
-    check(
-        not not response.json()
-        == {"status": "disabled", "available": False, "count": 0, "truncated": False, "items": []},
-        "assertion failed",
-    )
+    assert_disabled_history_response(response)
 
 
 def test_jobs_history_endpoint_distinguishes_empty_enabled_history(tmp_path, monkeypatch) -> None:
