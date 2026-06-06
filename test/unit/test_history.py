@@ -44,6 +44,20 @@ class _FailingRedis(_FakeRedis):
         raise ConnectionError("redis unavailable")
 
 
+def _redis_history_settings(tmp_path):
+    return make_settings(
+        str(tmp_path),
+        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
+    )
+
+
+def _patch_redis_client(monkeypatch, redis) -> None:
+    async def _stub_client(_settings):
+        return redis
+
+    monkeypatch.setattr(history, "_redis_client", _stub_client)
+
+
 # ---------------------------------------------------------------------------
 # _history_enabled
 # ---------------------------------------------------------------------------
@@ -68,10 +82,7 @@ def test_history_disabled_zero_maxlen(tmp_path) -> None:
 
 def test_history_enabled_with_redis(tmp_path) -> None:
     """redis_url set and maxlen>0 -> history is enabled."""
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
-    )
+    settings = _redis_history_settings(tmp_path)
     check(not _history_enabled(settings) is not True, "assertion failed")
 
 
@@ -112,16 +123,10 @@ def test_record_history_event_no_redis_url(tmp_path) -> None:
 
 
 def test_record_history_event_writes_stream(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
-    )
+    settings = _redis_history_settings(tmp_path)
     fake = _FakeRedis()
 
-    async def _stub_client(_settings):
-        return fake
-
-    monkeypatch.setattr(history, "_redis_client", _stub_client)
+    _patch_redis_client(monkeypatch, fake)
 
     ok = asyncio.run(
         history.record_history_event(
@@ -143,16 +148,10 @@ def test_record_history_event_writes_stream(monkeypatch, tmp_path) -> None:
 
 def test_record_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
     """When Redis raises, record_history_event logs a warning and returns False."""
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
-    )
+    settings = _redis_history_settings(tmp_path)
     failing = _FailingRedis()
 
-    async def _stub_client(_settings):
-        return failing
-
-    monkeypatch.setattr(history, "_redis_client", _stub_client)
+    _patch_redis_client(monkeypatch, failing)
 
     ok = asyncio.run(history.record_history_event(settings, status="error", ticket_id=99))
 
@@ -167,20 +166,14 @@ def test_record_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
 
 
 def test_read_history_filters_ticket(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
-    )
+    settings = _redis_history_settings(tmp_path)
     fake = _FakeRedis()
     fake.entries = [
         ("2-0", {"status": "processed", "ticket_id": "5", "created_at": "1"}),
         ("1-0", {"status": "failed_permanent", "ticket_id": "7", "created_at": "2"}),
     ]
 
-    async def _stub_client(_settings):
-        return fake
-
-    monkeypatch.setattr(history, "_redis_client", _stub_client)
+    _patch_redis_client(monkeypatch, fake)
 
     items = asyncio.run(history.read_history(settings, limit=10, ticket_id=7))
     check(not not len(items) == 1, "assertion failed")
@@ -191,20 +184,14 @@ def test_read_history_filters_ticket(monkeypatch, tmp_path) -> None:
 def test_read_history_normalizes_missing_and_malformed_numeric_fields(
     monkeypatch, tmp_path
 ) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
-    )
+    settings = _redis_history_settings(tmp_path)
     fake = _FakeRedis()
     fake.entries = [
         ("2-0", {"status": "processed", "ticket_id": "abc", "created_at": "bad-ts"}),
         ("1-0", {"status": "processed"}),
     ]
 
-    async def _stub_client(_settings):
-        return fake
-
-    monkeypatch.setattr(history, "_redis_client", _stub_client)
+    _patch_redis_client(monkeypatch, fake)
 
     items = asyncio.run(history.read_history(settings, limit=10))
 
@@ -224,16 +211,10 @@ def test_read_history_disabled(tmp_path) -> None:
 
 def test_read_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
     """When Redis raises during read, read_history fails instead of returning empty."""
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
-    )
+    settings = _redis_history_settings(tmp_path)
     failing = _FailingRedis()
 
-    async def _stub_client(_settings):
-        return failing
-
-    monkeypatch.setattr(history, "_redis_client", _stub_client)
+    _patch_redis_client(monkeypatch, failing)
 
     with pytest.raises(RuntimeError, match="history_unavailable"):
         asyncio.run(history.read_history(settings, limit=10))
@@ -248,16 +229,10 @@ def test_read_history_redis_error(monkeypatch, tmp_path, capsys) -> None:
 
 
 def test_record_history_event_redacts_sensitive_message(monkeypatch, tmp_path) -> None:
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"workflow": {"redis_url": "redis://localhost/0"}},
-    )
+    settings = _redis_history_settings(tmp_path)
     fake = _FakeRedis()
 
-    async def _stub_client(_settings):
-        return fake
-
-    monkeypatch.setattr(history, "_redis_client", _stub_client)
+    _patch_redis_client(monkeypatch, fake)
 
     asyncio.run(
         history.record_history_event(

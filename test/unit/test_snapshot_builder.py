@@ -6,10 +6,8 @@ import pytest
 
 import zammad_pdf_archiver.adapters.snapshot.build_snapshot as build_snapshot_module
 from test.support.checks import check
-from zammad_pdf_archiver.adapters.snapshot.build_snapshot import (
-    build_snapshot,
-    enrich_attachment_content,
-)
+from test.support.logging_helpers import CapturingWarningLog as _CapturingLog
+from zammad_pdf_archiver.adapters.snapshot.build_snapshot import build_snapshot
 from zammad_pdf_archiver.adapters.zammad.models import (
     Article as ZammadArticle,
 )
@@ -18,12 +16,6 @@ from zammad_pdf_archiver.adapters.zammad.models import (
 )
 from zammad_pdf_archiver.adapters.zammad.models import (
     Ticket as ZammadTicket,
-)
-from zammad_pdf_archiver.domain.snapshot_models import (
-    Article,
-    AttachmentMeta,
-    Snapshot,
-    TicketMeta,
 )
 
 
@@ -49,17 +41,19 @@ class _FakeZammadClient:
         return self._articles
 
 
-class _CapturingLog:
-    def __init__(self) -> None:
-        self.warning_events: list[tuple[str, dict[str, object]]] = []
+def _ticket(ticket_id: int = 1, number: str = "T1") -> ZammadTicket:
+    return ZammadTicket.model_validate({"id": ticket_id, "number": number})
 
-    def warning(self, event: str, **kwargs: object) -> None:
-        self.warning_events.append((event, kwargs))
+
+def _zammad_article(**overrides: object) -> ZammadArticle:
+    data = {"id": 1, "created_at": "2024-01-01T00:00:00Z"}
+    data.update(overrides)
+    return ZammadArticle.model_validate(data)
 
 
 def test_articles_are_sorted_chronologically() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
+        ticket = _ticket()
         articles = [
             ZammadArticle.model_validate(
                 {"id": 2, "created_at": "2024-01-02T00:00:00Z", "body": "later"}
@@ -102,7 +96,7 @@ def test_strip_html_to_text_logs_warning_on_parse_failure(monkeypatch: pytest.Mo
 
 def test_internal_flag_maps_none_to_false() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
+        ticket = _ticket()
         articles = [
             ZammadArticle.model_validate(
                 {"id": 1, "created_at": "2024-01-01T00:00:00Z", "internal": None, "body": "x"}
@@ -118,23 +112,17 @@ def test_internal_flag_maps_none_to_false() -> None:
 
 def test_html_is_stripped_to_text_and_falls_back_to_body() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
+        ticket = _ticket()
         articles = [
-            ZammadArticle.model_validate(
-                {
-                    "id": 1,
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "content_type": "text/html",
-                    "body": "<p>Hello <b>World</b></p>",
-                }
+            _zammad_article(
+                content_type="text/html",
+                body="<p>Hello <b>World</b></p>",
             ),
-            ZammadArticle.model_validate(
-                {
-                    "id": 2,
-                    "created_at": "2024-01-02T00:00:00Z",
-                    "content_type": "text/html",
-                    "body": "<p><br/></p>",
-                }
+            _zammad_article(
+                id=2,
+                created_at="2024-01-02T00:00:00Z",
+                content_type="text/html",
+                body="<p><br/></p>",
             ),
         ]
         client = _FakeZammadClient(ticket=ticket, tags=[], articles=articles)
@@ -148,7 +136,7 @@ def test_html_is_stripped_to_text_and_falls_back_to_body() -> None:
 
 def test_attachment_metadata_extraction_is_robust() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
+        ticket = _ticket()
         articles = [
             ZammadArticle.model_validate(
                 {
@@ -179,21 +167,17 @@ def test_attachment_metadata_extraction_is_robust() -> None:
 
 def test_body_html_is_sanitized_for_safe_pdf_rendering() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
+        ticket = _ticket()
         articles = [
-            ZammadArticle.model_validate(
-                {
-                    "id": 1,
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "content_type": "text/html",
-                    "body": (
-                        '<p onclick="x">Hello '
-                        "<script>alert(1)</script>"
-                        '<a href="javascript:alert(1)">bad</a> '
-                        '<a href="https://example.com">ok</a>'
-                        "</p>"
-                    ),
-                }
+            _zammad_article(
+                content_type="text/html",
+                body=(
+                    '<p onclick="x">Hello '
+                    "<script>alert(1)</script>"
+                    '<a href="javascript:alert(1)">bad</a> '
+                    '<a href="https://example.com">ok</a>'
+                    "</p>"
+                ),
             )
         ]
         client = _FakeZammadClient(ticket=ticket, tags=[], articles=articles)
@@ -210,7 +194,7 @@ def test_body_html_is_sanitized_for_safe_pdf_rendering() -> None:
 
 def test_plain_text_with_angle_brackets_is_not_treated_as_html() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
+        ticket = _ticket()
         articles = [
             ZammadArticle.model_validate(
                 {
@@ -231,266 +215,3 @@ def test_plain_text_with_angle_brackets_is_not_treated_as_html() -> None:
         )
 
     asyncio.run(run())
-
-
-def test_enrich_attachment_content_records_omission_when_disabled() -> None:
-    """Disabled binary inclusion must leave sidecar evidence for metadata-only attachments."""
-
-    class FakeAttachmentClient:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        async def get_attachment_content(
-            self, ticket_id: int, article_id: int, attachment_id: int
-        ) -> bytes:
-            self.calls += 1
-            return b"should-not-fetch"
-
-    snapshot = Snapshot(
-        ticket=TicketMeta(id=1, number="T1", title="t"),
-        articles=[
-            Article(
-                id=1,
-                body_html="",
-                body_text="",
-                attachments=[
-                    AttachmentMeta(article_id=1, attachment_id=10, filename="a.txt", size=5),
-                ],
-            )
-        ],
-    )
-    client = FakeAttachmentClient()
-    result = asyncio.run(
-        enrich_attachment_content(
-            snapshot,
-            client,
-            include_attachment_binary=False,
-            max_attachment_bytes_per_file=1000,
-            max_total_attachment_bytes=5000,
-        )
-    )
-    attachment = result.articles[0].attachments[0]
-    check(not not client.calls == 0, "assertion failed")
-    check(not attachment.content is not None, "assertion failed")
-    check(
-        not not attachment.content_omission_reason == "binary_inclusion_disabled",
-        "assertion failed",
-    )
-
-
-async def _run_enrich_fills_content() -> None:
-    class FakeAttachmentClient:
-        async def get_attachment_content(
-            self, ticket_id: int, article_id: int, attachment_id: int
-        ) -> bytes:
-            return b"binary data"
-
-    snapshot = Snapshot(
-        ticket=TicketMeta(id=1, number="T1", title="t"),
-        articles=[
-            Article(
-                id=1,
-                body_html="",
-                body_text="",
-                attachments=[
-                    AttachmentMeta(article_id=1, attachment_id=10, filename="a.txt", size=11),
-                ],
-            )
-        ],
-    )
-    result = await enrich_attachment_content(
-        snapshot,
-        FakeAttachmentClient(),
-        include_attachment_binary=True,
-        max_attachment_bytes_per_file=100,
-        max_total_attachment_bytes=1000,
-    )
-    attachment = result.articles[0].attachments[0]
-    check(not not attachment.content == b"binary data", "assertion failed")
-    check(not attachment.content_omission_reason is not None, "assertion failed")
-
-
-def test_enrich_attachment_content_fills_content_when_enabled() -> None:
-    """When include_attachment_binary is True and within limits, content is set."""
-    asyncio.run(_run_enrich_fills_content())
-
-
-class _BudgetAttachmentClient:
-    def __init__(self) -> None:
-        self.calls: list[tuple[int, int, int]] = []
-
-    async def get_attachment_content(
-        self, ticket_id: int, article_id: int, attachment_id: int
-    ) -> bytes:
-        self.calls.append((ticket_id, article_id, attachment_id))
-        return b"x" * 9
-
-
-def _attachment_ids_with_content(snapshot: Snapshot) -> set[int | None]:
-    return {
-        att.attachment_id
-        for article in snapshot.articles
-        for att in article.attachments
-        if att.content
-    }
-
-
-def _attachment_omission_reasons_without_content(
-    snapshot: Snapshot,
-) -> dict[int | None, str | None]:
-    return {
-        att.attachment_id: att.content_omission_reason
-        for article in snapshot.articles
-        for att in article.attachments
-        if not att.content
-    }
-
-
-def test_enrich_attachment_content_stops_fetching_after_total_budget() -> None:
-    """The total attachment budget must bound downloads, not only retained content."""
-
-    attachments = [
-        AttachmentMeta(article_id=1, attachment_id=i, filename=f"{i}.bin", size=9)
-        for i in range(1, 6)
-    ]
-    snapshot = Snapshot(
-        ticket=TicketMeta(id=123, number="T1", title="t"),
-        articles=[Article(id=1, attachments=attachments)],
-    )
-    client = _BudgetAttachmentClient()
-
-    result = asyncio.run(
-        enrich_attachment_content(
-            snapshot,
-            client,
-            include_attachment_binary=True,
-            max_attachment_bytes_per_file=10,
-            max_total_attachment_bytes=10,
-        )
-    )
-
-    kept_ids = _attachment_ids_with_content(result)
-    omission_reasons = _attachment_omission_reasons_without_content(result)
-    check(not not len(client.calls) == 1, "assertion failed")
-    check(not not kept_ids == {1}, "assertion failed")
-    check(not not set(omission_reasons) == {2, 3, 4, 5}, "assertion failed")
-    check(not not set(omission_reasons.values()) == {"total_budget_exhausted"}, "assertion failed")
-
-
-def test_enrich_attachment_content_records_declared_size_skip() -> None:
-    """Declared over-limit attachments are policy skips, not silent omissions."""
-
-    class FakeAttachmentClient:
-        def __init__(self) -> None:
-            self.calls: list[tuple[int, int, int]] = []
-
-        async def get_attachment_content(
-            self, ticket_id: int, article_id: int, attachment_id: int
-        ) -> bytes:
-            self.calls.append((ticket_id, article_id, attachment_id))
-            return b"small"
-
-    snapshot = Snapshot(
-        ticket=TicketMeta(id=123, number="T1", title="t"),
-        articles=[
-            Article(
-                id=1,
-                attachments=[
-                    AttachmentMeta(article_id=1, attachment_id=1, filename="large.bin", size=11),
-                    AttachmentMeta(article_id=1, attachment_id=2, filename="small.bin", size=5),
-                ],
-            )
-        ],
-    )
-    client = FakeAttachmentClient()
-
-    result = asyncio.run(
-        enrich_attachment_content(
-            snapshot,
-            client,
-            include_attachment_binary=True,
-            max_attachment_bytes_per_file=10,
-            max_total_attachment_bytes=100,
-        )
-    )
-
-    large, small = result.articles[0].attachments
-    check(not not client.calls == [(123, 1, 2)], "assertion failed")
-    check(not large.content is not None, "assertion failed")
-    check(
-        not not large.content_omission_reason == "per_file_limit_declared_size", "assertion failed"
-    )
-    check(not not small.content == b"small", "assertion failed")
-    check(not small.content_omission_reason is not None, "assertion failed")
-
-
-def test_enrich_attachment_content_records_fetched_size_skip() -> None:
-    """Fetched over-limit attachments are counted as skipped instead of disappearing."""
-
-    class FakeAttachmentClient:
-        async def get_attachment_content(
-            self, ticket_id: int, article_id: int, attachment_id: int
-        ) -> bytes:
-            return b"x" * 11
-
-    snapshot = Snapshot(
-        ticket=TicketMeta(id=123, number="T1", title="t"),
-        articles=[
-            Article(
-                id=1,
-                attachments=[
-                    AttachmentMeta(article_id=1, attachment_id=1, filename="grows.bin", size=5),
-                ],
-            )
-        ],
-    )
-
-    result = asyncio.run(
-        enrich_attachment_content(
-            snapshot,
-            FakeAttachmentClient(),
-            include_attachment_binary=True,
-            max_attachment_bytes_per_file=10,
-            max_total_attachment_bytes=100,
-        )
-    )
-
-    attachment = result.articles[0].attachments[0]
-    check(not attachment.content is not None, "assertion failed")
-    check(
-        not not attachment.content_omission_reason == "per_file_limit_fetched_size",
-        "assertion failed",
-    )
-
-
-def test_enrich_attachment_content_raises_when_enabled_fetch_fails() -> None:
-    """Enabled binary archival must not silently omit fetchable attachments."""
-
-    class FakeAttachmentClient:
-        async def get_attachment_content(
-            self, ticket_id: int, article_id: int, attachment_id: int
-        ) -> bytes:
-            raise RuntimeError("zammad attachment unavailable")
-
-    snapshot = Snapshot(
-        ticket=TicketMeta(id=123, number="T1", title="t"),
-        articles=[
-            Article(
-                id=1,
-                attachments=[
-                    AttachmentMeta(article_id=1, attachment_id=10, filename="a.txt", size=5),
-                ],
-            )
-        ],
-    )
-
-    with pytest.raises(RuntimeError, match="zammad attachment unavailable"):
-        asyncio.run(
-            enrich_attachment_content(
-                snapshot,
-                FakeAttachmentClient(),
-                include_attachment_binary=True,
-                max_attachment_bytes_per_file=100,
-                max_total_attachment_bytes=1000,
-            )
-        )

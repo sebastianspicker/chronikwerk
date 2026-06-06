@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from test.support.checks import check
+from test.support.config_assertions import check_zammad_credentials
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.config.load import load_settings
 
 
@@ -41,9 +43,9 @@ def test_dotenv_file_is_loaded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     )
 
     settings = load_settings()
-    check(
-        not not str(settings.zammad.base_url).rstrip("/") == "https://zammad.example.local",
-        "assertion failed",
+    check_zammad_credentials(
+        settings,
+        base_url="https://zammad.example.local",
+        api_token=fake_credential("test-token"),
     )
-    check(not not settings.zammad.api_token.get_secret_value() == "test-token", "assertion failed")
     check(not not settings.storage.root == tmp_path, "assertion failed")

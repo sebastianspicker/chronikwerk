@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.integration_helpers import mock_success_zammad_write_routes
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.state_machine import TRIGGER_TAG
@@ -90,15 +91,7 @@ def _mock_successful_ingest_zammad_calls() -> None:
     respx.get("https://zammad.example.local/api/v1/ticket_articles/by_ticket/123").mock(
         return_value=httpx.Response(200, json=[])
     )
-    respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    respx.post("https://zammad.example.local/api/v1/tags/add").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-        return_value=httpx.Response(200, json={"id": 999})
-    )
+    mock_success_zammad_write_routes()
 
 
 def test_metrics_endpoint_returns_prometheus_text(tmp_path) -> None:

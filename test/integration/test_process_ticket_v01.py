@@ -10,9 +10,19 @@ import respx
 
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.integration_helpers import (
+    assert_error_article_note,
+    called_tag_items,
+    expected_agent_archive_pdf_path,
+    mock_success_tag_write_routes,
+    posted_article,
+    zammad_storage_settings,
+)
+from test.support.integration_helpers import (
+    assert_success_tag_transitions as _assert_shared_success_tag_transitions,
+)
 from test.support.time_control import freeze_process_ticket_now
 from zammad_pdf_archiver._version import VERSION
-from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
@@ -25,23 +35,11 @@ from zammad_pdf_archiver.domain.state_machine import (
 
 
 def _test_settings(storage_root: str) -> Settings:
-    return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": storage_root},
-        }
-    )
+    return zammad_storage_settings(storage_root)
 
 
 def _called_tag_items(route: respx.Route) -> list[str]:
-    items: list[str] = []
-    for call in route.calls:
-        body = json.loads(call.request.content.decode("utf-8"))
-        items.append(body.get("item"))
-    return items
+    return called_tag_items(route)
 
 
 def _ticket_json(custom_fields: dict[str, object]) -> dict[str, object]:
@@ -156,12 +154,7 @@ def _mock_ticket_reads_with_tags(
 
 
 def _mock_error_side_effect_routes() -> tuple[respx.Route, respx.Route, respx.Route]:
-    remove_tag_route = respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    add_tag_route = respx.post("https://zammad.example.local/api/v1/tags/add").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
+    remove_tag_route, add_tag_route = mock_success_tag_write_routes()
     article_route = respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
         return_value=httpx.Response(200, json={"id": 999})
     )
@@ -169,13 +162,7 @@ def _mock_error_side_effect_routes() -> tuple[respx.Route, respx.Route, respx.Ro
 
 
 def _expected_pdf_path(tmp_path: Path, settings: Settings, fixed_now: datetime) -> Path:
-    date_iso = fixed_now.date().isoformat()
-    expected_filename = build_filename_from_pattern(
-        settings.storage.path_policy.filename_pattern,
-        ticket_number="20240123",
-        timestamp_utc=date_iso,
-    )
-    return tmp_path / "agent" / "A" / "B" / "C" / expected_filename
+    return expected_agent_archive_pdf_path(tmp_path, settings=settings, fixed_now=fixed_now)
 
 
 def _assert_success_tag_transitions(
@@ -183,16 +170,10 @@ def _assert_success_tag_transitions(
     add_tag_route: respx.Route,
     remove_tag_route: respx.Route,
 ) -> None:
-    added = _called_tag_items(add_tag_route)
-    removed = _called_tag_items(remove_tag_route)
-
-    check(not PROCESSING_TAG not in added, "assertion failed")
-    check(not DONE_TAG not in added, "assertion failed")
-    check(not not ERROR_TAG not in added, "assertion failed")
-
-    check(not TRIGGER_TAG not in removed, "assertion failed")
-    check(not ERROR_TAG not in removed, "assertion failed")
-    check(not PROCESSING_TAG not in removed, "assertion failed")
+    _assert_shared_success_tag_transitions(
+        add_tag_route=add_tag_route,
+        remove_tag_route=remove_tag_route,
+    )
 
 
 def _assert_error_tag_transitions(
@@ -239,13 +220,37 @@ def _assert_permanent_drop_trigger_tags(
     )
 
 
-def _assert_permanent_result_no_files(result, tmp_path: Path) -> None:
-    check(not not result.status == "failed_permanent", "assertion failed")
-    check(not not result.classification == "Permanent", "assertion failed")
+def _assert_failed_result_no_files(
+    result,
+    tmp_path: Path,
+    *,
+    status: str,
+    classification: str,
+) -> None:
+    check(not not result.status == status, "assertion failed")
+    check(not not result.classification == classification, "assertion failed")
     check(not result.error_note_posted is not True, "assertion failed")
     check(not result.error_tag_applied is not True, "assertion failed")
     check(not not list(tmp_path.rglob("*.pdf")) == [], "assertion failed")
     check(not not list(tmp_path.rglob("*.pdf.json")) == [], "assertion failed")
+
+
+def _assert_permanent_result_no_files(result, tmp_path: Path) -> None:
+    _assert_failed_result_no_files(
+        result,
+        tmp_path,
+        status="failed_permanent",
+        classification="Permanent",
+    )
+
+
+def _assert_transient_result_no_files(result, tmp_path: Path) -> None:
+    _assert_failed_result_no_files(
+        result,
+        tmp_path,
+        status="failed_transient",
+        classification="Transient",
+    )
 
 
 def _assert_success_note(
@@ -265,8 +270,7 @@ def _assert_success_note(
 
 
 def _posted_article(route: respx.Route) -> dict[str, object]:
-    check(not not route.called, "assertion failed")
-    return json.loads(route.calls[0].request.content.decode("utf-8"))
+    return posted_article(route)
 
 
 def _assert_error_note_basics(
@@ -313,10 +317,11 @@ def _assert_max_article_failure(
         add_tag_route=add_tag_route,
         remove_tag_route=remove_tag_route,
     )
-    check(not not article_route.called, "assertion failed")
-    req = json.loads(article_route.calls[0].request.content.decode("utf-8"))
-    check(not "Permanent" not in req["body"], "assertion failed")
-    check(not "too many articles" not in req["body"], "assertion failed")
+    assert_error_article_note(
+        article_route,
+        classification="Permanent",
+        body_texts=("too many articles",),
+    )
 
 
 def _assert_attachment_fetch_failure(
@@ -327,18 +332,17 @@ def _assert_attachment_fetch_failure(
     remove_tag_route: respx.Route,
     article_route: respx.Route,
 ) -> None:
-    check(not not result.status == "failed_transient", "assertion failed")
-    check(not not not list(tmp_path.rglob("*.pdf")), "assertion failed")
+    _assert_transient_result_no_files(result, tmp_path)
     _assert_error_tag_transitions(
         add_tag_route=add_tag_route,
         remove_tag_route=remove_tag_route,
         transient=True,
     )
-    check(not not article_route.called, "assertion failed")
-    req = json.loads(article_route.calls[0].request.content.decode("utf-8"))
-    check(not f"PDF archiver error ({VERSION})" not in req["subject"], "assertion failed")
-    check(not "Transient" not in req["body"], "assertion failed")
-    check(not "Zammad server error" not in req["body"], "assertion failed")
+    assert_error_article_note(
+        article_route,
+        classification="Transient",
+        body_texts=("Zammad server error",),
+    )
 
 
 def _assert_success_tags_and_note_posted(

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast, get_args
 
 import pytest
 
 from test.support.checks import check
+from test.support.redis_queue_helpers import FakeRedis as _FakeRedis
+from test.support.redis_queue_helpers import assert_acked_and_deleted, stub_retry_enqueue
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
 from zammad_pdf_archiver.app.jobs._queue_types import _QueueEnvelope
@@ -16,26 +16,6 @@ from zammad_pdf_archiver.app.jobs.process_ticket import (
     ProcessTicketResult,
     ProcessTicketStatus,
 )
-
-
-@dataclass
-class _FakeRedis:
-    xadds: list[tuple[str, dict[str, str]]] = field(default_factory=list)
-    acked: list[tuple[str, str, str]] = field(default_factory=list)
-    deleted: list[tuple[str, str]] = field(default_factory=list)
-
-    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
-        self.xadds.append((stream, fields))
-        return f"{len(self.xadds)}-0"
-
-    async def xack(self, stream: str, group: str, message_id: str) -> int:
-        self.acked.append((stream, group, message_id))
-        return 1
-
-    async def xdel(self, stream: str, message_id: str) -> int:
-        self.deleted.append((stream, message_id))
-        return 1
-
 
 ACK_ONLY_STATUSES: tuple[ProcessTicketStatus, ...] = (
     "processed",
@@ -113,12 +93,12 @@ def _handle_status(
 
 
 def _assert_acked_and_deleted(fake: _FakeRedis, settings: Any) -> None:
-    check(
-        not not fake.acked
-        == [(settings.workflow.queue_stream, settings.workflow.queue_group, "1-0")],
-        "assertion failed",
-    )
-    check(not not fake.deleted == [(settings.workflow.queue_stream, "1-0")], "assertion failed")
+    assert_acked_and_deleted(fake, settings, "1-0")
+
+
+def _assert_dlq_reason(fake: _FakeRedis, settings: Any, reason: str) -> None:
+    check(not not fake.xadds[0][0] == settings.workflow.queue_dlq_stream, "assertion failed")
+    check(not not fake.xadds[0][1]["reason"] == reason, "assertion failed")
 
 
 def test_contract_statuses_match_process_ticket_literal() -> None:
@@ -150,25 +130,7 @@ def test_failed_transient_status_requeues_and_acks(
     fake = _FakeRedis()
     _stub_process_ticket_status(monkeypatch, status="failed_transient", message="retry me")
 
-    async def _stub_enqueue_ticket_job(
-        *,
-        delivery_id: str | None,
-        payload: dict[str, Any],
-        settings: Any,
-        attempt: int,
-        not_before_ts: float,
-        last_error: str | None,
-    ) -> str:
-        fields = {
-            "payload_json": json.dumps(payload, separators=(",", ":"), sort_keys=True),
-            "delivery_id": delivery_id or "",
-            "attempt": str(attempt),
-            "not_before_ts": str(not_before_ts),
-            "last_error": last_error or "",
-        }
-        return await fake.xadd(settings.workflow.queue_stream, fields)
-
-    monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _stub_enqueue_ticket_job)
+    stub_retry_enqueue(monkeypatch, fake, preserve_payload_json=True)
 
     result = asyncio.run(
         redis_queue._handle_envelope(fake, settings=settings, envelope=_envelope())  # noqa: SLF001
@@ -194,8 +156,7 @@ def test_failed_permanent_status_moves_to_dlq_and_acks(
 
     check(not not result == 0.0, "assertion failed")
     _assert_acked_and_deleted(fake, settings)
-    check(not not fake.xadds[0][0] == settings.workflow.queue_dlq_stream, "assertion failed")
-    check(not not fake.xadds[0][1]["reason"] == "permanent_error", "assertion failed")
+    _assert_dlq_reason(fake, settings, "permanent_error")
 
 
 def test_unknown_status_moves_to_dlq_with_unknown_status_reason(
@@ -206,8 +167,7 @@ def test_unknown_status_moves_to_dlq_with_unknown_status_reason(
 
     check(not not result == 0.0, "assertion failed")
     _assert_acked_and_deleted(fake, settings)
-    check(not not fake.xadds[0][0] == settings.workflow.queue_dlq_stream, "assertion failed")
-    check(not not fake.xadds[0][1]["reason"] == "unknown_status", "assertion failed")
+    _assert_dlq_reason(fake, settings, "unknown_status")
     check(
         not not fake.xadds[0][1]["error"] == "unknown process_ticket status: xyzzy",
         "assertion failed",

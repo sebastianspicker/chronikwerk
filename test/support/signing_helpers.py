@@ -37,18 +37,15 @@ def minimal_pdf_bytes() -> bytes:
     return b"".join(parts)
 
 
-def write_test_pfx(
-    path: Path,
-    password: str | None,
+def _self_signed_cert_and_key(
     *,
-    common_name: str = "Test Signer",
+    common_name: str,
     valid_from_days: int = -1,
     valid_until_days: int = 30,
-) -> str:
+):
     from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import pkcs12
     from cryptography.x509.oid import NameOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -65,6 +62,25 @@ def write_test_pfx(
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(private_key=key, algorithm=hashes.SHA256())
     )
+    return key, cert
+
+
+def write_test_pfx(
+    path: Path,
+    password: str | None,
+    *,
+    common_name: str = "Test Signer",
+    valid_from_days: int = -1,
+    valid_until_days: int = 30,
+) -> str:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    key, cert = _self_signed_cert_and_key(
+        common_name=common_name,
+        valid_from_days=valid_from_days,
+        valid_until_days=valid_until_days,
+    )
 
     pfx = pkcs12.serialize_key_and_certificates(
         name=b"test-signer",
@@ -78,4 +94,12 @@ def write_test_pfx(
         ),
     )
     path.write_bytes(pfx)
+    return cert.fingerprint(hashes.SHA256()).hex()
+
+
+def write_test_cert(path: Path, *, common_name: str, encoding) -> str:
+    from cryptography.hazmat.primitives import hashes
+
+    _key, cert = _self_signed_cert_and_key(common_name=common_name)
+    path.write_bytes(cert.public_bytes(encoding))
     return cert.fingerprint(hashes.SHA256()).hex()

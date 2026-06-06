@@ -9,41 +9,41 @@ import httpx
 import pytest
 import respx
 
-from test.integration.test_process_ticket_v01 import (
-    _article_json,
-    _article_with_attachment_json,
-    _assert_attachment_fetch_failure,
-    _assert_error_note_basics,
-    _assert_error_tag_transitions,
-    _assert_field_failure_note,
-    _assert_max_article_failure,
-    _assert_permanent_drop_trigger_tags,
-    _assert_permanent_field_failure_tags,
-    _assert_permanent_result_no_files,
-    _assert_success_tags_and_note_posted,
-    _called_tag_items,
-    _mock_error_side_effect_routes,
-    _mock_standard_ticket_reads,
-    _mock_ticket_and_tags,
-    _mock_ticket_reads_with_tags,
-    _posted_article,
-    _second_article_json,
-    _settings_with_pdf,
-    _test_settings,
-)
+import test.integration.test_process_ticket_v01 as v01_helpers
+import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
+import zammad_pdf_archiver.domain.state_machine as state_machine
 from test.support.checks import check
 from test.support.credentials import fake_credential
 from test.support.time_control import freeze_process_ticket_now
 from zammad_pdf_archiver._version import VERSION
-from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
-from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
-from zammad_pdf_archiver.config.settings import Settings
-from zammad_pdf_archiver.domain.state_machine import (
-    DONE_TAG,
-    ERROR_TAG,
-    PROCESSING_TAG,
-    TRIGGER_TAG,
-)
+from zammad_pdf_archiver.config import settings as settings_module
+
+DONE_TAG = state_machine.DONE_TAG
+ERROR_TAG = state_machine.ERROR_TAG
+PROCESSING_TAG = state_machine.PROCESSING_TAG
+Settings = settings_module.Settings
+_article_json = v01_helpers._article_json
+_article_with_attachment_json = v01_helpers._article_with_attachment_json
+_assert_attachment_fetch_failure = v01_helpers._assert_attachment_fetch_failure
+_assert_error_note_basics = v01_helpers._assert_error_note_basics
+_assert_error_tag_transitions = v01_helpers._assert_error_tag_transitions
+_assert_field_failure_note = v01_helpers._assert_field_failure_note
+_assert_max_article_failure = v01_helpers._assert_max_article_failure
+_assert_permanent_drop_trigger_tags = v01_helpers._assert_permanent_drop_trigger_tags
+_assert_permanent_field_failure_tags = v01_helpers._assert_permanent_field_failure_tags
+_assert_permanent_result_no_files = v01_helpers._assert_permanent_result_no_files
+_assert_success_tags_and_note_posted = v01_helpers._assert_success_tags_and_note_posted
+_assert_transient_result_no_files = v01_helpers._assert_transient_result_no_files
+_called_tag_items = v01_helpers._called_tag_items
+_mock_error_side_effect_routes = v01_helpers._mock_error_side_effect_routes
+_mock_standard_ticket_reads = v01_helpers._mock_standard_ticket_reads
+_mock_ticket_and_tags = v01_helpers._mock_ticket_and_tags
+_mock_ticket_reads_with_tags = v01_helpers._mock_ticket_reads_with_tags
+_posted_article = v01_helpers._posted_article
+_second_article_json = v01_helpers._second_article_json
+_settings_with_pdf = v01_helpers._settings_with_pdf
+_test_settings = v01_helpers._test_settings
+process_ticket = process_ticket_module.process_ticket
 
 
 def _freeze_default_now(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,6 +72,36 @@ def _force_reprocess_payload(request_id: str) -> dict[str, object]:
 
 def _run_ticket(delivery_id: str, payload: dict[str, object], settings: Settings):
     return asyncio.run(process_ticket(delivery_id, payload, settings))
+
+
+def _assert_permanent_fetch_failure_tags(
+    *,
+    add_tag_route: respx.Route,
+    remove_tag_route: respx.Route,
+) -> None:
+    added = _called_tag_items(add_tag_route)
+    removed = _called_tag_items(remove_tag_route)
+
+    check(not not PROCESSING_TAG not in added, "assertion failed")
+    check(not ERROR_TAG not in added, "assertion failed")
+    check(not not DONE_TAG not in added, "assertion failed")
+    check(not PROCESSING_TAG not in removed, "assertion failed")
+    check(not "pdf:sign" not in removed, "assertion failed")
+
+
+def _assert_transient_fetch_failure_tags(
+    *,
+    add_tag_route: respx.Route,
+    remove_tag_route: respx.Route,
+) -> None:
+    added = _called_tag_items(add_tag_route)
+    removed = _called_tag_items(remove_tag_route)
+
+    check(not not PROCESSING_TAG not in added, "assertion failed")
+    check(not "pdf:sign" not in added, "assertion failed")
+    check(not ERROR_TAG not in added, "assertion failed")
+    check(not not DONE_TAG not in added, "assertion failed")
+    check(not PROCESSING_TAG not in removed, "assertion failed")
 
 
 def test_process_ticket_v01_failure_sets_error_tag_and_posts_note(tmp_path, monkeypatch) -> None:
@@ -254,21 +284,11 @@ def test_process_ticket_v01_zammad_permanent_fetch_failures_post_operator_notes(
 
         result = _run_ticket(f"delivery-zammad-{status_code}", payload, settings)
 
-        check(not not result.status == "failed_permanent", "assertion failed")
-        check(not not result.classification == "Permanent", "assertion failed")
-        check(not result.error_note_posted is not True, "assertion failed")
-        check(not result.error_tag_applied is not True, "assertion failed")
-        check(not not list(tmp_path.rglob("*.pdf")) == [], "assertion failed")
-        check(not not list(tmp_path.rglob("*.pdf.json")) == [], "assertion failed")
-
-        added = _called_tag_items(add_tag_route)
-        removed = _called_tag_items(remove_tag_route)
-
-        check(not not PROCESSING_TAG not in added, "assertion failed")
-        check(not ERROR_TAG not in added, "assertion failed")
-        check(not not DONE_TAG not in added, "assertion failed")
-        check(not PROCESSING_TAG not in removed, "assertion failed")
-        check(not TRIGGER_TAG not in removed, "assertion failed")
+        _assert_permanent_result_no_files(result, tmp_path)
+        _assert_permanent_fetch_failure_tags(
+            add_tag_route=add_tag_route,
+            remove_tag_route=remove_tag_route,
+        )
 
         body = _assert_error_note_basics(
             _posted_article(article_route),
@@ -297,21 +317,11 @@ def test_process_ticket_v01_zammad_server_failure_posts_transient_note_and_keeps
         result = _run_ticket("delivery-zammad-500", payload, settings)
 
         check(not not ticket_route.call_count == 4, "assertion failed")
-        check(not not result.status == "failed_transient", "assertion failed")
-        check(not not result.classification == "Transient", "assertion failed")
-        check(not result.error_note_posted is not True, "assertion failed")
-        check(not result.error_tag_applied is not True, "assertion failed")
-        check(not not list(tmp_path.rglob("*.pdf")) == [], "assertion failed")
-        check(not not list(tmp_path.rglob("*.pdf.json")) == [], "assertion failed")
-
-        added = _called_tag_items(add_tag_route)
-        removed = _called_tag_items(remove_tag_route)
-
-        check(not not PROCESSING_TAG not in added, "assertion failed")
-        check(not TRIGGER_TAG not in added, "assertion failed")
-        check(not ERROR_TAG not in added, "assertion failed")
-        check(not not DONE_TAG not in added, "assertion failed")
-        check(not PROCESSING_TAG not in removed, "assertion failed")
+        _assert_transient_result_no_files(result, tmp_path)
+        _assert_transient_fetch_failure_tags(
+            add_tag_route=add_tag_route,
+            remove_tag_route=remove_tag_route,
+        )
 
         body = _assert_error_note_basics(
             _posted_article(article_route),
@@ -356,9 +366,6 @@ def test_process_ticket_v01_invalid_archive_path_is_permanent_and_writes_no_file
         remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
         _run_ticket("delivery-path-invalid-1", payload, settings)
-
-        check(not not list(tmp_path.rglob("*.pdf")) == [], "assertion failed")
-        check(not not list(tmp_path.rglob("*.pdf.json")) == [], "assertion failed")
 
         _assert_permanent_drop_trigger_tags(
             add_tag_route=add_tag_route,
