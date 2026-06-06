@@ -93,7 +93,7 @@ def test_yaml_loading_works(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     check_zammad_credentials(
         settings,
         base_url="https://zammad.example.local",
-        api_token="test-token",
+        api_token=fake_credential("test-token"),
     )
     check(not not settings.storage.root.as_posix() == "/mnt/archive", "assertion failed")
 

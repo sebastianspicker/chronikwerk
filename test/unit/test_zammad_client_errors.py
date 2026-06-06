@@ -5,6 +5,7 @@ import pytest
 import respx
 
 from test.support.checks import check
+from test.support.credentials import fake_credential
 from test.support.zammad_client_helpers import run_client_action
 from zammad_pdf_archiver.adapters.zammad.client import (
     AsyncZammadClient,
@@ -127,7 +128,7 @@ def test_raise_for_status_direct(
         with pytest.raises(expected_error):
             client._raise_for_status(resp)  # noqa: SLF001
 
-    run_client_action(assert_status, api_token="tok")
+    run_client_action(assert_status, api_token=fake_credential("tok"))
 
 
 def test_parse_retry_after_none_returns_none() -> None:

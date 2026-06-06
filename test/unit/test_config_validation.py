@@ -62,7 +62,7 @@ def test_workflow_redis_backends_require_redis_url(
         Settings.from_mapping(
             _settings_mapping(
                 base_url="https://z.example",
-                api_token="t",
+                api_token=fake_credential("t"),
                 storage_root="/mnt",
                 hardening={"webhook": _allow_unsigned_webhook()},
                 workflow=workflow,
