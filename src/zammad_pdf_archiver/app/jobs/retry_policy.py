@@ -4,12 +4,8 @@ import errno
 
 import httpx
 
-from zammad_pdf_archiver.adapters.zammad.errors import (
-    AuthError,
-    ClientError,
-    NotFoundError,
-    RateLimitError,
-    ServerError,
+from zammad_pdf_archiver.app.jobs.retry_policy_zammad import (
+    classify_zammad_exception,
 )
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError, wrap_exception
 
@@ -21,10 +17,6 @@ _HTTP_AUTH_ERROR = "HTTP {status} (auth/permission) from upstream"
 _FS_TEMPORARY_ERROR = "Temporary filesystem error (errno={errno})"
 _FS_POLICY_ERROR = "Filesystem policy/permission error (errno={errno})"
 _FS_GENERIC_ERROR = "Filesystem error"
-
-_ZAMMAD_TRANSIENT_ERROR = "Zammad transient error"
-_ZAMMAD_PERMANENT_ERROR = "Zammad permanent error"
-_ZAMMAD_CLIENT_ERROR = "Zammad client error"
 
 _TRANSIENT_ERRNOS: set[int] = {
     # Temporary / retryable.
@@ -114,7 +106,7 @@ def classify(exc: BaseException) -> TransientError | PermanentError:
     if classified is not None:
         return classified
 
-    classified = _classify_zammad_exception(exc)
+    classified = classify_zammad_exception(exc)
     if classified is not None:
         return classified
 
@@ -134,18 +126,6 @@ def _classify_http_exception(exc: BaseException) -> TransientError | PermanentEr
     if isinstance(exc, httpx.HTTPStatusError):
         return _classify_http_status(exc)
     return None
-
-
-def _classify_zammad_exception(exc: BaseException) -> TransientError | PermanentError | None:
-    if isinstance(exc, (ServerError, RateLimitError)):
-        return TransientError(str(exc) or _ZAMMAD_TRANSIENT_ERROR)
-    if isinstance(exc, (AuthError, NotFoundError)):
-        return PermanentError(str(exc) or _ZAMMAD_PERMANENT_ERROR)
-    if isinstance(exc, ClientError):
-        # Includes validation/path policy issues surfaced via 4xx responses.
-        return PermanentError(str(exc) or _ZAMMAD_CLIENT_ERROR)
-    return None
-
 
 def _classify_local_exception(exc: BaseException) -> TransientError | PermanentError | None:
     if isinstance(exc, OSError):

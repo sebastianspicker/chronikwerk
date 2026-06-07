@@ -12,6 +12,7 @@ from test.support.process_ticket_cleanup_helpers import (
     _patch_process_ticket_client,
     _patch_process_ticket_render_pdf,
     _patch_process_ticket_sleep,
+    _recording_history,
     _settings,
     _SimpleProcessTicketClient,
     asyncio,
@@ -42,22 +43,6 @@ class _CleanupClient(_SimpleProcessTicketClient):
     async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
         type(self).tag_ops.append(("add", tag))
         type(self).tags.add(tag)
-
-
-def _recording_history():
-    history: list[tuple[str, str | None, str]] = []
-
-    async def _record_history(
-        ctx,
-        *,
-        status: str,
-        classification: str | None = None,
-        message: str = "",
-    ) -> bool:  # noqa: ANN001
-        history.append((status, classification, message))
-        return True
-
-    return history, _record_history
 
 
 @pytest.mark.parametrize(

@@ -6,14 +6,15 @@ from test.support.process_ticket_cleanup_helpers import (
     UTC,
     Any,
     Path,
-    SimpleNamespace,
     Snapshot,
-    TagList,
     TicketMeta,
     TransientError,
     _assert_error_visibility_failures,
     _CapturingLog,
+    _patch_process_ticket_client,
+    _patch_process_ticket_render_pdf,
     _settings,
+    _SimpleProcessTicketClient,
     _VisibilityFailureClient,
     asyncio,
     cast,
@@ -81,54 +82,8 @@ def test_process_ticket_reports_unrecorded_history_on_success(monkeypatch, tmp_p
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
 
-    class _FakeClient:
-        added_tags: list[str] = []
-        articles: list[tuple[str, str]] = []
-
-        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
-            pass
-
-        async def __aenter__(self) -> _FakeClient:
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
-            return None
-
-        async def get_ticket(self, ticket_id: int) -> SimpleNamespace:
-            return SimpleNamespace(
-                id=ticket_id,
-                number="12345",
-                title="history unavailable",
-                owner=SimpleNamespace(login="owner.user"),
-                updated_by=SimpleNamespace(login="agent.user"),
-                preferences=SimpleNamespace(
-                    custom_fields={
-                        "archive_path": "Support > Team",
-                        "archive_user_mode": "owner",
-                    }
-                ),
-            )
-
-        async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
-            return TagList(["pdf:sign"])
-
-        async def remove_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
-            return None
-
-        async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
-            type(self).added_tags.append(tag)
-
-        async def list_articles(self, ticket_id: int) -> list[SimpleNamespace]:  # noqa: ARG002
-            return []
-
-        async def create_internal_article(
-            self,
-            ticket_id: int,
-            subject: str,
-            body_html: str,
-        ) -> SimpleNamespace:
-            type(self).articles.append((subject, body_html))
-            return SimpleNamespace(id=1)
+    class _FakeClient(_SimpleProcessTicketClient):
+        ticket_title = "history unavailable"
 
     async def _render_pdf(*args, **kwargs) -> tuple[bytes, Snapshot, bool, int]:  # noqa: ANN002, ANN003
         snapshot = Snapshot(
@@ -140,14 +95,8 @@ def test_process_ticket_reports_unrecorded_history_on_success(monkeypatch, tmp_p
     async def _history_write_failed(*args, **kwargs) -> bool:  # noqa: ANN002, ANN003
         return False
 
-    monkeypatch.setattr(
-        "zammad_pdf_archiver.app.jobs.process_ticket.AsyncZammadClient",
-        _FakeClient,
-    )
-    monkeypatch.setattr(
-        "zammad_pdf_archiver.app.jobs.process_ticket.build_and_render_pdf",
-        _render_pdf,
-    )
+    _patch_process_ticket_client(monkeypatch, _FakeClient)
+    _patch_process_ticket_render_pdf(monkeypatch, _render_pdf)
     monkeypatch.setattr(
         "zammad_pdf_archiver.app.jobs.process_ticket.record_history_event",
         _history_write_failed,

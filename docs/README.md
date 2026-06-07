@@ -28,6 +28,11 @@ pages for deeper operator and maintainer detail.
 - [Mock university demo](demo-mock-university.md)
 - [Demo screenshot assets](assets/demo/README.md)
 
-Historical audit, plan, ledger, and status material is not part of the active
-operator docs. Keep new one-off planning artifacts in the ignored local archive
-or a task prompt unless they are intentionally promoted to public documentation.
+## Documentation Boundary
+
+This index lists the active public documentation surface. Historical audit,
+plan, ledger, status, and archive material is not active operator documentation
+unless it is intentionally promoted and linked from this page.
+
+Keep one-off planning artifacts in task prompts, `docs/agent/`, `docs/archive/`,
+or `/archive/`; those local lanes are ignored by `.gitignore`.

@@ -6,83 +6,9 @@ from typing import Any
 import pytest
 
 from test.support.checks import check
+from test.support.redis_queue_helpers import FakeRedis as _FakeRedis
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import redis_queue
-
-
-@dataclass
-class _Pipeline:
-    redis: _FakeRedis
-    dels: list[tuple[str, str]] = field(default_factory=list)
-
-    def xdel(self, stream: str, message_id: str) -> _Pipeline:
-        self.dels.append((stream, message_id))
-        return self
-
-    async def execute(self) -> list[int]:
-        if self.redis.pipeline_error is not None:
-            raise self.redis.pipeline_error
-        results = self.redis.pipeline_results
-        if results is None:
-            results = [1 for _ in self.dels]
-        for (stream, message_id), deleted in zip(self.dels, results, strict=False):
-            if deleted:
-                self.redis.deleted.append((stream, message_id))
-        return results
-
-
-@dataclass
-class _FakeRedis:
-    xadds: list[tuple[str, dict[str, str]]] = field(default_factory=list)
-    acked: list[tuple[str, str, str]] = field(default_factory=list)
-    deleted: list[tuple[str, str]] = field(default_factory=list)
-    stream_lengths: dict[str, int] = field(default_factory=dict)
-    pending: int = 0
-    dlq_entries: list[tuple[str, dict[str, str]]] = field(default_factory=list)
-    pipeline_results: list[int] | None = None
-    pipeline_error: Exception | None = None
-    xdel_results: list[int] = field(default_factory=list)
-    xdel_errors: dict[str, Exception] = field(default_factory=dict)
-
-    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
-        self.xadds.append((stream, fields))
-        self.stream_lengths[stream] = self.stream_lengths.get(stream, 0) + 1
-        if stream.endswith(":dlq"):
-            self.dlq_entries.append((f"{len(self.dlq_entries) + 1}-0", fields))
-        return f"{len(self.xadds)}-0"
-
-    async def xack(self, stream: str, group: str, message_id: str) -> int:
-        self.acked.append((stream, group, message_id))
-        return 1
-
-    async def xdel(self, stream: str, message_id: str) -> int:
-        error = self.xdel_errors.get(message_id)
-        if error is not None:
-            raise error
-        result = self.xdel_results.pop(0) if self.xdel_results else 1
-        if result:
-            self.deleted.append((stream, message_id))
-        return result
-
-    async def xlen(self, stream: str) -> int:
-        return self.stream_lengths.get(stream, 0)
-
-    async def xpending(self, stream: str, group: str) -> dict[str, int]:
-        return {"pending": self.pending}
-
-    async def xrange(
-        self,
-        stream: str,
-        **kwargs: Any,
-    ) -> list[tuple[str, dict[str, str]]]:  # noqa: ARG002
-        count = int(kwargs["count"])
-        return self.dlq_entries[:count]
-
-    def pipeline(self, transaction: bool = False) -> _Pipeline:  # noqa: ARG002
-        return _Pipeline(redis=self)
-
-    async def aclose(self) -> None:
-        return None
 
 
 @dataclass

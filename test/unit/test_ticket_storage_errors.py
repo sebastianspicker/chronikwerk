@@ -11,103 +11,29 @@ import pytest
 
 import zammad_pdf_archiver.app.jobs.ticket_storage as ticket_storage_module
 from test.support.checks import check
-from test.support.credentials import fake_credential
+from test.support.logging_helpers import CapturingWarningLog as _CapturingLog
+from test.support.ticket_storage_helpers import (
+    make_ticket_storage_settings as _make_settings,
+)
+from test.support.ticket_storage_helpers import (
+    snapshot_no_attachments as _make_snapshot_no_attachments,
+)
+from test.support.ticket_storage_helpers import (
+    snapshot_with_attachments as _make_snapshot_with_attachments,
+)
+from test.support.ticket_storage_helpers import (
+    snapshot_with_skipped_attachments as _make_snapshot_with_skipped_attachments,
+)
 from zammad_pdf_archiver.app.jobs.ticket_storage import (
     _write_attachments,
     store_ticket_files,
 )
-from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.snapshot_models import (
     Article,
     AttachmentMeta,
     Snapshot,
     TicketMeta,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_settings(tmp_path: Path) -> Settings:
-    return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("tok"),
-            },
-            "storage": {"root": str(tmp_path), "fsync": False},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": bool(1),
-                }
-            },
-        }
-    )
-
-
-def _make_snapshot_with_attachments() -> Snapshot:
-    """Build a Snapshot that contains articles with binary attachments."""
-    att1 = AttachmentMeta(
-        article_id=10,
-        attachment_id=1,
-        filename="report.pdf",
-        size=4,
-        content=b"data",
-    )
-    att2 = AttachmentMeta(
-        article_id=10,
-        attachment_id=2,
-        filename="image.png",
-        size=3,
-        content=b"img",
-    )
-    article = Article(id=10, attachments=[att1, att2])
-    ticket = TicketMeta(id=100, number="10001", title="Test Ticket")
-    return Snapshot(ticket=ticket, articles=[article])
-
-
-def _make_snapshot_no_attachments() -> Snapshot:
-    article = Article(id=20, attachments=[])
-    ticket = TicketMeta(id=200, number="20001", title="No Attachments")
-    return Snapshot(ticket=ticket, articles=[article])
-
-
-def _make_snapshot_with_skipped_attachments() -> Snapshot:
-    ticket = TicketMeta(id=500, number="50001", title="Skipped attachment")
-    attachments = [
-        AttachmentMeta(
-            article_id=50,
-            attachment_id=1,
-            filename="kept.txt",
-            content=b"kept",
-        ),
-        AttachmentMeta(
-            article_id=50,
-            attachment_id=2,
-            filename="large.bin",
-            content=None,
-            content_omission_reason="per_file_limit_declared_size",
-        ),
-        AttachmentMeta(
-            article_id=50,
-            attachment_id=3,
-            filename="later.bin",
-            content=None,
-            content_omission_reason="total_budget_exhausted",
-        ),
-    ]
-    return Snapshot(ticket=ticket, articles=[Article(id=50, attachments=attachments)])
-
-
-class _CapturingLog:
-    def __init__(self) -> None:
-        self.warning_events: list[tuple[str, dict[str, object]]] = []
-
-    def warning(self, event: str, **kwargs: object) -> None:
-        self.warning_events.append((event, kwargs))
-
 
 # ===================================================================
 # 1. _write_attachments — happy path
@@ -362,104 +288,3 @@ def test_store_ticket_files_sidecar_records_skipped_attachment_summary(tmp_path:
         not not [entry["filename"] for entry in audit["attachments"]] == ["kept.txt"],
         "assertion failed",
     )
-
-
-# ===================================================================
-# 5. store_ticket_files — sidecar move failure removes orphan PDF
-# ===================================================================
-
-
-def test_store_ticket_files_sidecar_failure_cleans_up_pdf(tmp_path: Path) -> None:
-    """When the sidecar move fails, the already-moved PDF is removed to maintain atomicity."""
-    from unittest.mock import patch
-
-    settings = _make_settings(tmp_path)
-    snapshot = _make_snapshot_no_attachments()
-
-    target_dir = tmp_path / "archive" / "user"
-    target_dir.mkdir(parents=True)
-    pdf_path = target_dir / "Ticket-20001_2025-01-01.pdf"
-    sidecar_path = pdf_path.with_name(pdf_path.name + ".json")
-    now = datetime(2025, 1, 1, tzinfo=UTC)
-
-    call_count = 0
-
-    original_move = __import__(
-        "zammad_pdf_archiver.adapters.storage.fs_storage", fromlist=["move_file_within_root"]
-    ).move_file_within_root
-
-    def _failing_sidecar_move(src: Path, dst: Path, **kwargs: object) -> None:
-        nonlocal call_count
-        call_count += 1
-        if dst == sidecar_path:
-            # PDF already moved at this point - create it to simulate the scenario
-            pdf_path.write_bytes(b"%PDF-moved")
-            raise OSError("sidecar move failed")
-        return original_move(src, dst, **kwargs)
-
-    with patch(
-        "zammad_pdf_archiver.app.jobs.ticket_storage.move_file_within_root",
-        side_effect=_failing_sidecar_move,
-    ):
-        with pytest.raises(OSError, match="sidecar move failed"):
-            store_ticket_files(
-                pdf_bytes=b"%PDF-1.4 fake",
-                snapshot=snapshot,
-                target_path=pdf_path,
-                ticket_id=200,
-                now=now,
-                settings=settings,
-            )
-
-    check(not not not pdf_path.exists(), "assertion failed")
-
-
-def test_store_ticket_files_sidecar_failure_rolls_back_attachments_and_backups(
-    tmp_path: Path,
-) -> None:
-    """Sidecar failure must not leave new attachments or discard previous files."""
-    settings = _make_settings(tmp_path)
-    snapshot = _make_snapshot_with_attachments()
-
-    target_dir = tmp_path / "archive" / "user"
-    target_dir.mkdir(parents=True)
-    attachments_dir = target_dir / "attachments"
-    attachments_dir.mkdir()
-    pdf_path = target_dir / "Ticket-10001_2025-01-01.pdf"
-    sidecar_path = target_dir / "Ticket-10001_2025-01-01.pdf.json"
-    existing_attachment = attachments_dir / "10_1_report.pdf"
-    new_attachment = attachments_dir / "10_2_image.png"
-
-    pdf_path.write_bytes(b"old-pdf")
-    sidecar_path.write_bytes(b"old-sidecar")
-    existing_attachment.write_bytes(b"old-attachment")
-
-    now = datetime(2025, 1, 1, tzinfo=UTC)
-
-    original_move = __import__(
-        "zammad_pdf_archiver.adapters.storage.fs_storage", fromlist=["move_file_within_root"]
-    ).move_file_within_root
-
-    def _failing_sidecar_move(src: Path, dst: Path, **kwargs: object) -> None:
-        if dst == sidecar_path and src.parent != target_dir:
-            raise OSError("sidecar move failed")
-        return original_move(src, dst, **kwargs)
-
-    with patch(
-        "zammad_pdf_archiver.app.jobs.ticket_storage.move_file_within_root",
-        side_effect=_failing_sidecar_move,
-    ):
-        with pytest.raises(OSError, match="sidecar move failed"):
-            store_ticket_files(
-                pdf_bytes=b"%PDF-1.4 fake",
-                snapshot=snapshot,
-                target_path=pdf_path,
-                ticket_id=100,
-                now=now,
-                settings=settings,
-            )
-
-    check(not not pdf_path.read_bytes() == b"old-pdf", "assertion failed")
-    check(not not sidecar_path.read_bytes() == b"old-sidecar", "assertion failed")
-    check(not not existing_attachment.read_bytes() == b"old-attachment", "assertion failed")
-    check(not not not new_attachment.exists(), "assertion failed")

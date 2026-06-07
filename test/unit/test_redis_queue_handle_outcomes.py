@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import pytest
 
+from test.support.logging_helpers import CapturingWarningLog as _CapturingLog
 from test.unit.test_redis_queue import (
     _FakeCounter,
     _FakeRedis,
@@ -15,14 +16,6 @@ from zammad_pdf_archiver.app.jobs._queue_types import _QueueEnvelope
 from zammad_pdf_archiver.app.jobs.process_ticket import ProcessTicketResult
 
 REDIS_WORKFLOW = {"execution_backend": "redis_queue", "redis_url": "redis://localhost:6379"}
-
-
-class _CapturingLog:
-    def __init__(self) -> None:
-        self.warning_events: list[tuple[str, dict[str, object]]] = []
-
-    def warning(self, event: str, **kwargs: object) -> None:
-        self.warning_events.append((event, kwargs))
 
 
 def _settings(tmp_path, *, workflow: dict[str, object] | None = None):

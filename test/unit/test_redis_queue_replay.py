@@ -17,32 +17,45 @@ from test.support.redis_queue_helpers import (
 from zammad_pdf_archiver.app.jobs import redis_queue
 
 
+def _patch_replay_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    fake: FakeRedis,
+    settings: redis_queue.Settings,
+) -> list[dict[str, Any]]:
+    enqueue_calls, tracking_enqueue = track_replay_enqueue(fake, settings)
+
+    async def _stub_get_redis(_s: Any) -> FakeRedis:
+        return fake
+
+    monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
+    monkeypatch.setattr(redis_queue, "enqueue_ticket_job", tracking_enqueue)
+    return enqueue_calls
+
+
+def _check_replay_result(result: dict[str, int], **expected: int) -> None:
+    check(
+        not not result
+        == {
+            "selected": expected["selected"],
+            "replayed": expected["replayed"],
+            "deleted": expected["deleted"],
+            "skipped": expected.get("skipped", 0),
+            "errors": expected.get("errors", 0),
+            "not_deleted": expected.get("not_deleted", 0),
+        },
+        "assertion failed",
+    )
+
+
 class TestReplayDlq:
     def test_replay_dlq(self, monkeypatch, tmp_path) -> None:
         settings = redis_queue_settings(tmp_path)
         fake = FakeRedis(dlq_entries=replayable_dlq_entries())
-        enqueue_calls, tracking_enqueue = track_replay_enqueue(fake, settings)
-
-        async def _stub_get_redis(_s: Any) -> FakeRedis:
-            return fake
-
-        monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
-        monkeypatch.setattr(redis_queue, "enqueue_ticket_job", tracking_enqueue)
+        enqueue_calls = _patch_replay_dependencies(monkeypatch, fake, settings)
 
         result = asyncio.run(redis_queue.replay_dlq(settings, limit=10))
 
-        check(
-            not not result
-            == {
-                "selected": 2,
-                "replayed": 2,
-                "deleted": 2,
-                "skipped": 0,
-                "errors": 0,
-                "not_deleted": 0,
-            },
-            "assertion failed",
-        )
+        _check_replay_result(result, selected=2, replayed=2, deleted=2)
 
         check(not not len(enqueue_calls) == 2, "assertion failed")
         check(not not enqueue_calls[0]["attempt"] == 0, "assertion failed")
@@ -58,18 +71,7 @@ class TestReplayDlq:
         settings = redis_queue_settings(tmp_path)
 
         result = asyncio.run(redis_queue.replay_dlq(settings, limit=0))
-        check(
-            not not result
-            == {
-                "selected": 0,
-                "replayed": 0,
-                "deleted": 0,
-                "skipped": 0,
-                "errors": 0,
-                "not_deleted": 0,
-            },
-            "assertion failed",
-        )
+        _check_replay_result(result, selected=0, replayed=0, deleted=0)
 
     def test_replay_dlq_skips_invalid_payload(self, monkeypatch, tmp_path) -> None:
         settings = redis_queue_settings(tmp_path)
@@ -80,32 +82,11 @@ class TestReplayDlq:
             ]
         )
 
-        enqueue_calls: list[dict[str, Any]] = []
-
-        async def _tracking_enqueue(**kwargs: Any) -> str:
-            enqueue_calls.append(kwargs)
-            return await fake.xadd(settings.workflow.queue_stream, {"payload_json": "{}"})
-
-        async def _stub_get_redis(_s: Any) -> FakeRedis:
-            return fake
-
-        monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
-        monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _tracking_enqueue)
+        enqueue_calls = _patch_replay_dependencies(monkeypatch, fake, settings)
 
         result = asyncio.run(redis_queue.replay_dlq(settings, limit=10))
 
-        check(
-            not not result
-            == {
-                "selected": 2,
-                "replayed": 1,
-                "deleted": 1,
-                "skipped": 1,
-                "errors": 0,
-                "not_deleted": 0,
-            },
-            "assertion failed",
-        )
+        _check_replay_result(result, selected=2, replayed=1, deleted=1, skipped=1)
         check(not not enqueue_calls[0]["payload"] == {"ticket_id": 7}, "assertion failed")
         check(not not ("zammad:jobs:dlq", "1-0") not in fake.deleted, "assertion failed")
         check(not ("zammad:jobs:dlq", "2-0") not in fake.deleted, "assertion failed")
@@ -117,29 +98,11 @@ class TestReplayDlq:
             xdel_results=[0],
         )
 
-        async def _tracking_enqueue(**kwargs: Any) -> str:
-            return await fake.xadd(settings.workflow.queue_stream, {"payload_json": "{}"})
-
-        async def _stub_get_redis(_s: Any) -> FakeRedis:
-            return fake
-
-        monkeypatch.setattr(redis_queue, "_get_redis", _stub_get_redis)
-        monkeypatch.setattr(redis_queue, "enqueue_ticket_job", _tracking_enqueue)
+        _patch_replay_dependencies(monkeypatch, fake, settings)
 
         result = asyncio.run(redis_queue.replay_dlq(settings, limit=10))
 
-        check(
-            not not result
-            == {
-                "selected": 1,
-                "replayed": 1,
-                "deleted": 0,
-                "skipped": 0,
-                "errors": 0,
-                "not_deleted": 1,
-            },
-            "assertion failed",
-        )
+        _check_replay_result(result, selected=1, replayed=1, deleted=0, not_deleted=1)
         check(not not ("zammad:jobs:dlq", "1-0") not in fake.deleted, "assertion failed")
 
 

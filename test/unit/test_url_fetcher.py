@@ -93,30 +93,19 @@ def test_file_url_in_subdirectory_allowed(tmp_path: Path) -> None:
 # -- file:// URLs outside template root are blocked ---------------------------------
 
 
-def test_file_url_outside_template_root_blocked(tmp_path: Path) -> None:
+@pytest.mark.parametrize("url_kind", ["outside-root", "traversal"])
+def test_file_url_outside_template_root_blocked(tmp_path: Path, url_kind: str) -> None:
     template_root = tmp_path / "templates"
     template_root.mkdir()
     secret = tmp_path / "secret.txt"
     secret.write_text("sensitive")
+    url = f"file://{secret}" if url_kind == "outside-root" else f"file://{template_root}/../secret.txt"
 
     ctx, FatalError = _patch_weasyprint_urls()
     with ctx:
         fetcher = _make_fetcher(template_root)
         with pytest.raises(FatalError, match="outside template root"):
-            fetcher.fetch(f"file://{secret}")
-
-
-def test_file_url_traversal_blocked(tmp_path: Path) -> None:
-    template_root = tmp_path / "templates"
-    template_root.mkdir()
-    secret = tmp_path / "secret.txt"
-    secret.write_text("sensitive")
-
-    ctx, FatalError = _patch_weasyprint_urls()
-    with ctx:
-        fetcher = _make_fetcher(template_root)
-        with pytest.raises(FatalError, match="outside template root"):
-            fetcher.fetch(f"file://{template_root}/../secret.txt")
+            fetcher.fetch(url)
 
 
 # -- http/https URLs are blocked ----------------------------------------------------

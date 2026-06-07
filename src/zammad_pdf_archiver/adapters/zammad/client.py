@@ -6,22 +6,34 @@ from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, TypeVar
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
 
 from zammad_pdf_archiver.adapters.http_util import timeouts_for
-from zammad_pdf_archiver.adapters.zammad.errors import (
-    AuthError,
-    ClientError,
-    NotFoundError,
-    RateLimitError,
-    ServerError,
+from zammad_pdf_archiver.adapters.zammad.client_responses import (
+    article_list_from_response,
+    raise_for_status,
+    tag_list_from_response,
 )
+from zammad_pdf_archiver.adapters.zammad.client_responses import (
+    require_tag_mutation_success as _require_tag_mutation_success,
+)
+from zammad_pdf_archiver.adapters.zammad.client_retry import MAX_RETRIES as _MAX_RETRIES
+from zammad_pdf_archiver.adapters.zammad.client_retry import (
+    parse_retry_after_seconds as _parse_retry_after_seconds,
+)
+from zammad_pdf_archiver.adapters.zammad.client_retry import (
+    retry_after_timeout_or_transport,
+    retry_delay_for_response,
+)
+from zammad_pdf_archiver.adapters.zammad.errors import ClientError
 from zammad_pdf_archiver.adapters.zammad.models import Article, TagList, Ticket
 
 _T = TypeVar("_T")
 
-_MAX_RETRIES = 3
-_BACKOFF_BASE_SECONDS = 0.2
+__all__ = [
+    "AsyncZammadClient",
+    "ZammadClientTransportOptions",
+    "_parse_retry_after_seconds",
+]
 
 
 @dataclass(frozen=True)
@@ -29,11 +41,6 @@ class ZammadClientTransportOptions:
     timeout_seconds: float = 10.0
     verify_tls: bool = True
     trust_env: bool = False
-
-
-def _backoff_seconds(attempt: int) -> float:
-    # attempt is 0-based for retry count, i.e. after the first failure.
-    return _BACKOFF_BASE_SECONDS * (2**attempt)
 
 
 class AsyncZammadClient:
@@ -106,19 +113,7 @@ class AsyncZammadClient:
             params={"object": "Ticket", "o_id": str(ticket_id)},
         )
 
-        # Zammad may return either a raw JSON array or an object wrapper depending on version.
-        if isinstance(resp, dict) and "tags" in resp:
-            tags_value = resp["tags"]
-        else:
-            tags_value = resp
-
-        try:
-            tags = TypeAdapter(list[str]).validate_python(tags_value)
-        except ValidationError as exc:
-            raise ClientError(
-                f"Zammad tags response format unexpected for ticket {ticket_id}: {exc!s}"
-            ) from exc
-        return TagList(tags)
+        return tag_list_from_response(resp, ticket_id=ticket_id)
 
     async def add_tag(self, ticket_id: int, tag: str) -> None:
         """Add a tag to a ticket (idempotent)."""
@@ -159,8 +154,7 @@ class AsyncZammadClient:
     async def list_articles(self, ticket_id: int) -> list[Article]:
         """List all articles belonging to a ticket."""
         resp = await self._request_json("GET", f"api/v1/ticket_articles/by_ticket/{ticket_id}")
-        items = TypeAdapter(list[dict[str, Any]]).validate_python(resp)
-        return [Article.model_validate(item) for item in items]
+        return article_list_from_response(resp)
 
     async def get_attachment_content(
         self, ticket_id: int, article_id: int, attachment_id: int
@@ -207,22 +201,24 @@ class AsyncZammadClient:
                     method, path, params=params, json=json, headers=headers
                 )
             except httpx.TimeoutException as exc:
-                retry_count = await self._retry_after_timeout_or_transport(
+                retry_count = await retry_after_timeout_or_transport(
                     retry_count=retry_count,
                     max_attempts=max_attempts,
                     exc=exc,
+                    sleep=self._sleep,
                     timeout_path=path,
                 )
                 continue
             except httpx.TransportError as exc:
-                retry_count = await self._retry_after_timeout_or_transport(
+                retry_count = await retry_after_timeout_or_transport(
                     retry_count=retry_count,
                     max_attempts=max_attempts,
                     exc=exc,
+                    sleep=self._sleep,
                 )
                 continue
 
-            retry_delay = self._retry_delay_for_response(
+            retry_delay = retry_delay_for_response(
                 response,
                 retry_count=retry_count,
                 max_attempts=max_attempts,
@@ -237,89 +233,5 @@ class AsyncZammadClient:
 
             self._raise_for_status(response)
 
-    async def _retry_after_timeout_or_transport(
-        self,
-        *,
-        retry_count: int,
-        max_attempts: int,
-        exc: Exception,
-        timeout_path: str | None = None,
-    ) -> int:
-        if retry_count >= _MAX_RETRIES:
-            if isinstance(exc, httpx.TimeoutException):
-                path = timeout_path or "<unknown>"
-                raise ServerError(
-                    f"Zammad API timeout after {max_attempts} attempts at {path}"
-                ) from exc
-            raise ServerError(f"Network error after {max_attempts} attempts") from exc
-        await self._sleep(_backoff_seconds(retry_count))
-        return retry_count + 1
-
-    def _retry_delay_for_response(
-        self,
-        response: httpx.Response,
-        *,
-        retry_count: int,
-        max_attempts: int,
-    ) -> float | None:
-        status = response.status_code
-        if status >= 500:
-            if retry_count >= _MAX_RETRIES:
-                raise ServerError(
-                    f"Zammad server error (status={status}) after {max_attempts} attempts"
-                )
-            return _backoff_seconds(retry_count)
-        if status == 429:
-            if retry_count >= _MAX_RETRIES:
-                raise RateLimitError(
-                    f"Zammad rate limit (status=429) after {max_attempts} attempts"
-                )
-            retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
-            return retry_after or _backoff_seconds(retry_count)
-        return None
-
     def _raise_for_status(self, response: httpx.Response) -> NoReturn:
-        status = response.status_code
-        url = str(response.request.url)
-
-        if status in (401, 403):
-            raise AuthError(f"Zammad auth failed (status={status}) at {url}")
-        if status == 404:
-            raise NotFoundError(f"Zammad resource not found (status=404) at {url}")
-        if status == 429:
-            raise RateLimitError(f"Zammad rate limit (status=429) at {url}")
-        if 300 <= status < 400:
-            location = response.headers.get("Location", "")
-            raise ClientError(f"Unexpected redirect {status} from Zammad at {url}: {location}")
-        if status >= 500:
-            raise ServerError(f"Zammad server error (status={status}) at {url}")
-        if status >= 400:
-            raise ClientError(f"Zammad client error (status={status}) at {url}")
-
-        raise ClientError(f"Unexpected Zammad HTTP status={status} at {url}")
-
-
-def _parse_retry_after_seconds(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        seconds = float(value)
-    except ValueError:
-        return None
-    if seconds < 0:
-        return None
-    return min(seconds, 60)
-
-
-def _require_tag_mutation_success(
-    response: Any,
-    *,
-    operation: str,
-    ticket_id: int,
-    tag: str,
-) -> None:
-    if isinstance(response, dict) and response.get("success") is True:
-        return
-    raise ClientError(
-        f"Zammad tag {operation} for ticket {ticket_id} and tag {tag!r} did not confirm success"
-    )
+        raise_for_status(response)

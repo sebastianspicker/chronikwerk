@@ -2,7 +2,11 @@ import asyncio
 
 import structlog
 
-from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down
+from zammad_pdf_archiver.app.jobs.ticket_store_selection import (
+    delivery_id_store,
+    redis_store,
+    ticket_lock_store,
+)
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.errors import TransientError
 from zammad_pdf_archiver.domain.idempotency import DeliveryIdStore, InMemoryTTLSet
@@ -34,31 +38,16 @@ def _get_redis_store(
     prefix: str | None = None,
 ) -> RedisDeliveryIdStore:
     """Helper to deduplicate Redis store initialization."""
-    cache_key = (redis_url, ttl_seconds, prefix)
-    result = _REDIS_STORES.get(cache_key)
-    if result is None:
-        if prefix is None:
-            result = RedisDeliveryIdStore(redis_url, ttl_seconds)
-        else:
-            result = RedisDeliveryIdStore(redis_url, ttl_seconds, prefix=prefix)
-        _REDIS_STORES[cache_key] = result
-    return result
+    return redis_store(_REDIS_STORES, redis_url, ttl_seconds, prefix)
 
 
 def _get_delivery_id_store(settings: Settings) -> DeliveryIdStore | None:
     """Delivery-ID store or None if idempotency off (ttl<=0). Caller must hold _STORE_GUARD."""
-    ttl = int(settings.workflow.delivery_id_ttl_seconds)
-    if ttl <= 0 or is_shutting_down():
-        return None
-    backend = (settings.workflow.idempotency_backend or "memory").strip().lower()
-    if backend == "redis" and settings.workflow.redis_url:
-        return _get_redis_store(settings.workflow.redis_url, ttl)
-
-    result = _DELIVERY_ID_SETS.get(ttl)
-    if result is None:
-        result = InMemoryTTLSet(ttl_seconds=float(ttl))
-        _DELIVERY_ID_SETS[ttl] = result
-    return result
+    return delivery_id_store(
+        settings,
+        memory_sets=_DELIVERY_ID_SETS,
+        redis_stores=_REDIS_STORES,
+    )
 
 
 async def try_claim_delivery_id(settings: Settings, delivery_id: str) -> bool:
@@ -76,14 +65,12 @@ async def try_claim_delivery_id(settings: Settings, delivery_id: str) -> bool:
 
 def _get_ticket_lock_store(settings: Settings) -> RedisDeliveryIdStore | None:
     """Distributed ticket lock store or None if Redis off. Caller must hold _STORE_GUARD."""
-    if is_shutting_down():
-        return None
-    backend = (settings.workflow.idempotency_backend or "memory").strip().lower()
-    if backend == "redis" and settings.workflow.redis_url:
-        return _get_redis_store(
-            settings.workflow.redis_url, _TICKET_LOCK_TTL, prefix=_TICKET_LOCK_PREFIX
-        )
-    return None
+    return ticket_lock_store(
+        settings,
+        redis_stores=_REDIS_STORES,
+        ttl_seconds=_TICKET_LOCK_TTL,
+        prefix=_TICKET_LOCK_PREFIX,
+    )
 
 
 async def try_acquire_ticket(settings: Settings, ticket_id: int) -> bool:

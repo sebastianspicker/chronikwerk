@@ -22,6 +22,10 @@ assignees: ""
 
 <!-- Note API, config, storage layout, PDF/sidecar shape, tags, queue/idempotency, security, or deployment impact. -->
 
+## Verification idea
+
+<!-- What test, smoke check, or operational proof would show this works? -->
+
 ## Alternatives considered
 
 <!-- Optional -->

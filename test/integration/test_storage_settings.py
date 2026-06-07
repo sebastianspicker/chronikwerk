@@ -12,23 +12,19 @@ from pydantic import ValidationError
 
 from test.support.checks import check
 from test.support.credentials import fake_credential
+from test.support.integration_helpers import (
+    expected_agent_archive_pdf_path,
+    mock_success_zammad_write_routes,
+    zammad_storage_settings,
+)
 from test.support.time_control import freeze_process_ticket_now
-from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
 
 
 def _settings(storage_root: str, *, fsync: bool = True) -> Settings:
-    return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": storage_root, "fsync": fsync},
-        }
-    )
+    return zammad_storage_settings(storage_root, storage_overrides={"fsync": fsync})
 
 
 def _mock_happy_zammad(ticket_id: int = 123) -> None:
@@ -60,15 +56,7 @@ def _mock_happy_zammad(ticket_id: int = 123) -> None:
         return_value=httpx.Response(200, json=[])
     )
 
-    respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    respx.post("https://zammad.example.local/api/v1/tags/add").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-        return_value=httpx.Response(200, json={"id": 999})
-    )
+    mock_success_zammad_write_routes()
 
 
 def _expected_pdf_path(
@@ -78,12 +66,12 @@ def _expected_pdf_path(
     ticket_number: str,
     fixed_now: datetime,
 ) -> Path:
-    filename = build_filename_from_pattern(
-        settings.storage.path_policy.filename_pattern,
+    return expected_agent_archive_pdf_path(
+        tmp_path,
+        settings=settings,
+        fixed_now=fixed_now,
         ticket_number=ticket_number,
-        timestamp_utc=fixed_now.date().isoformat(),
     )
-    return tmp_path / "agent" / "A" / "B" / "C" / filename
 
 
 def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

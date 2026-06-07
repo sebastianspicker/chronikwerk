@@ -14,6 +14,9 @@ from typing import Any
 import structlog
 
 from zammad_pdf_archiver.adapters.redis_pool import import_redis
+from zammad_pdf_archiver.app.jobs._queue_stream_parse import (
+    parse_stream_entries as _parse_stream_entries,
+)
 from zammad_pdf_archiver.app.jobs._queue_types import (
     _as_str,
     _parse_int,
@@ -74,41 +77,6 @@ async def _push_dlq(
         fields["error"] = bounded_exc_message(error_message)
     await redis.xadd(settings.workflow.queue_dlq_stream, fields)
     queue_dlq_total.inc()
-
-
-def _parse_stream_entries(records: Any, *, nested: bool) -> list[tuple[Any, Any]]:
-    if not isinstance(records, list):
-        return []
-
-    entries = _flatten_nested_stream_entries(records) if nested else records
-    out: list[tuple[Any, Any]] = []
-    for message in entries:
-        entry = _message_entry(message)
-        if entry is not None:
-            out.append(entry)
-    return out
-
-
-def _flatten_nested_stream_entries(records: list[Any]) -> list[Any]:
-    entries: list[Any] = []
-    for record in records:
-        messages = _nested_stream_messages(record)
-        if messages is not None:
-            entries.extend(messages)
-    return entries
-
-
-def _nested_stream_messages(record: Any) -> list[Any] | None:
-    if not isinstance(record, (list, tuple)) or len(record) != 2:
-        return None
-    _stream_name, messages = record
-    return messages if isinstance(messages, list) else None
-
-
-def _message_entry(message: Any) -> tuple[Any, Any] | None:
-    if isinstance(message, (list, tuple)) and len(message) == 2:
-        return (message[0], message[1])
-    return None
 
 
 async def _claim_stale_pending(

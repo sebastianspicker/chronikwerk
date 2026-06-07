@@ -1,6 +1,10 @@
 from typing import Any
 
 from zammad_pdf_archiver.adapters.zammad.models import Ticket
+from zammad_pdf_archiver.app.jobs._ticket_path_segments import (
+    parse_archive_path_list,
+    parse_archive_path_text,
+)
 from zammad_pdf_archiver.domain.archive_errors import missing_archive_path_error
 
 
@@ -77,9 +81,9 @@ def parse_archive_path_segments(value: Any) -> list[str]:
         raise missing_archive_path_error()
 
     if isinstance(value, str):
-        parts = _parse_archive_path_text(value)
+        parts = parse_archive_path_text(value)
     elif isinstance(value, list):
-        parts = _parse_archive_path_list(value)
+        parts = parse_archive_path_list(value)
     else:
         raise ValueError("custom_fields.archive_path must be a string or list of strings")
 
@@ -90,22 +94,3 @@ def parse_archive_path_segments(value: Any) -> list[str]:
         )
 
     return parts
-
-
-def _parse_archive_path_text(value: str) -> list[str]:
-    return [part for part in (raw_part.strip() for raw_part in value.split(">")) if part]
-
-
-def _parse_archive_path_list(value: list[Any]) -> list[str]:
-    parts: list[str] = []
-    for idx, item in enumerate(value):
-        item = _archive_path_list_item(item, idx=idx)
-        if item:
-            parts.append(item)
-    return parts
-
-
-def _archive_path_list_item(item: Any, *, idx: int) -> str:
-    if not isinstance(item, str):
-        raise ValueError(f"custom_fields.archive_path[{idx}] must be a string")
-    return item.strip()

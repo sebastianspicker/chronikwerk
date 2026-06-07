@@ -17,6 +17,11 @@ from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.app.jobs.redis_queue import enqueue_ticket_job
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down, track_task
 from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_auth
+from zammad_pdf_archiver.app.routes.ingest_background import handle_process_ticket_result
+from zammad_pdf_archiver.app.routes.ingest_batch import (
+    batch_too_large_response,
+    dispatch_batch_payloads,
+)
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.ticket_id import extract_ticket_id
 from zammad_pdf_archiver.observability.metrics import history_record_failed_total
@@ -76,40 +81,6 @@ def _normalized_delivery_id(value: str | None) -> str | None:
     return (value or "").strip() or None
 
 
-def _batch_item_delivery_id(batch_delivery_id: str | None, index: int) -> str | None:
-    if batch_delivery_id is None:
-        return None
-    # One delivery header represents the batch request; suffix with the item index so
-    # idempotency is still tracked per ticket payload.
-    return ":".join((batch_delivery_id, str(index)))
-
-
-def _batch_too_large_response() -> JSONResponse:
-    return api_error(
-        422,
-        f"batch too large (max {MAX_BATCH_SIZE} items)",
-        code="batch_too_large",
-    )
-
-
-def _batch_dispatch_failure_response(
-    *,
-    accepted: int,
-    failed_index: int,
-    ticket_id: int,
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=503,
-        content={
-            "status": "partial_failure" if accepted else "failed",
-            "code": "batch_dispatch_failed",
-            "accepted": accepted,
-            "failed_index": failed_index,
-            "failed_ticket_id": ticket_id,
-        },
-    )
-
-
 async def _run_process_ticket_background(
     *,
     delivery_id: str | None,
@@ -128,19 +99,12 @@ async def _run_process_ticket_background(
     structlog.contextvars.bind_contextvars(**bound)
     try:
         result = await process_ticket(delivery_id, payload, settings)
-        if result.history_recorded is False:
-            history_record_failed_total.inc()
-            log.warning(
-                "process_ticket.history_not_recorded",
-                ticket_id=result.ticket_id,
-                delivery_id=delivery_id,
-            )
-        if result.lock_release_failed:
-            log.warning(
-                "ingest.ticket_lock_release_failed",
-                ticket_id=result.ticket_id,
-                delivery_id=delivery_id,
-            )
+        handle_process_ticket_result(
+            result,
+            delivery_id=delivery_id,
+            history_record_failed_total=history_record_failed_total,
+            log=log,
+        )
     except Exception:
         log.exception(
             "ingest.process_ticket_unhandled_error",
@@ -188,44 +152,6 @@ async def dispatch_ticket(
     track_task(task)
 
 
-async def _dispatch_batch_payloads(
-    *,
-    request: Request,
-    payloads: list[IngestPayload],
-    settings: Settings,
-) -> tuple[int, JSONResponse | None]:
-    accepted = 0
-    batch_delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
-    request_id = getattr(request.state, "request_id", None)
-
-    for index, payload in enumerate(payloads):
-        ticket_id = payload.resolved_ticket_id()
-        if ticket_id is None:
-            continue
-
-        try:
-            await dispatch_ticket(
-                delivery_id=_batch_item_delivery_id(batch_delivery_id, index),
-                payload_for_job=_public_payload_for_job(payload, request_id),
-                settings=settings,
-            )
-        except Exception:
-            log.exception(
-                "ingest.batch_dispatch_failed",
-                accepted=accepted,
-                failed_index=index,
-                ticket_id=ticket_id,
-            )
-            return accepted, _batch_dispatch_failure_response(
-                accepted=accepted,
-                failed_index=index,
-                ticket_id=ticket_id,
-            )
-        accepted += 1
-
-    return accepted, None
-
-
 @router.post("/ingest", status_code=202, response_model=IngestAcceptedResponse)
 async def ingest_webhook(
     request: Request,
@@ -268,12 +194,16 @@ async def batch_ingest(
 
     # Security: reject oversized batches before processing any items.
     if len(payloads) > MAX_BATCH_SIZE:
-        return _batch_too_large_response()
+        return batch_too_large_response(MAX_BATCH_SIZE)
 
-    accepted, error_response = await _dispatch_batch_payloads(
-        request=request,
+    accepted, error_response = await dispatch_batch_payloads(
         payloads=payloads,
         settings=settings,
+        batch_delivery_id=_normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER)),
+        request_id=getattr(request.state, "request_id", None),
+        dispatch_ticket=dispatch_ticket,
+        public_payload_for_job=_public_payload_for_job,
+        log=log,
     )
     if error_response is not None:
         return error_response

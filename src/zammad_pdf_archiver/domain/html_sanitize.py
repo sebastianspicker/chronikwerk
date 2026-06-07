@@ -3,7 +3,12 @@ from __future__ import annotations
 from html import escape
 from html.parser import HTMLParser
 from typing import Final
-from urllib.parse import urlparse
+
+from zammad_pdf_archiver.domain.html_sanitize_attrs import clean_attrs, rendered_attrs
+from zammad_pdf_archiver.domain.html_sanitize_stack import (
+    close_matching_open_tag,
+    pop_skip_stack_for_tag,
+)
 
 _ALLOWED_TAGS: Final[frozenset[str]] = frozenset(
     {
@@ -60,33 +65,6 @@ _DROP_WITH_CONTENT: Final[frozenset[str]] = frozenset(
 
 _VOID_TAGS: Final[frozenset[str]] = frozenset({"br", "hr"})
 
-_ALLOWED_ATTRS: Final[dict[str, frozenset[str]]] = {
-    "a": frozenset({"href", "title"}),
-    "td": frozenset({"colspan", "rowspan"}),
-    "th": frozenset({"colspan", "rowspan"}),
-}
-
-_ALLOWED_HREF_SCHEMES: Final[frozenset[str]] = frozenset({"", "http", "https", "mailto"})
-
-
-def _sanitize_href(raw: str) -> str | None:
-    href = raw.strip()
-    if not href or "\x00" in href:
-        return None
-
-    parsed = urlparse(href)
-    scheme = (parsed.scheme or "").lower()
-
-    # Disallow scheme-relative URLs like //example.com (netloc present, no scheme).
-    if not scheme and parsed.netloc:
-        return None
-
-    if scheme not in _ALLOWED_HREF_SCHEMES:
-        return None
-
-    return href
-
-
 class _AllowlistHTMLSanitizer(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -104,8 +82,7 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         if not self._is_allowed_tag(tag):
             return
 
-        cleaned = self._clean_attrs(tag, attrs)
-        attr_text = "".join(f' {k}="{escape(v, quote=True)}"' for k, v in cleaned)
+        attr_text = rendered_attrs(clean_attrs(tag, attrs))
         if tag in _VOID_TAGS:
             self._out.append(f"<{tag}{attr_text} />")
             return
@@ -123,67 +100,19 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         # Keep malformed or intentionally deep fragments from creating excessive parser output.
         return tag in _ALLOWED_TAGS and len(self._open) < 50
 
-    def _clean_attrs(self, tag: str, attrs: list[tuple[str, str | None]]) -> list[tuple[str, str]]:
-        allowed_attrs = _ALLOWED_ATTRS.get(tag, frozenset())
-        cleaned: list[tuple[str, str]] = []
-        for key, value in attrs:
-            normalized = self._normalized_attr_key(key)
-            if normalized is None or value is None:
-                continue
-            if normalized not in allowed_attrs:
-                continue
-            sanitized = self._sanitize_attr_value(tag, normalized, value)
-            if sanitized is None:
-                continue
-            cleaned.append((normalized, sanitized))
-        return cleaned
-
-    @staticmethod
-    def _normalized_attr_key(key: str | None) -> str | None:
-        if not key:
-            return None
-        key_norm = key.lower().strip()
-        if not key_norm or key_norm.startswith("on") or key_norm == "style":
-            return None
-        return key_norm
-
-    @staticmethod
-    def _sanitize_attr_value(tag: str, key: str, value: str) -> str | None:
-        if tag == "a" and key == "href":
-            return _sanitize_href(value)
-        return value
-
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         # Normalize <br/> style tags; route through the same allowlist logic.
         self.handle_starttag(tag, attrs)
 
     def _pop_skip_stack_for_tag(self, tag: str) -> bool:
-        if tag not in _DROP_WITH_CONTENT or not self._skip_stack:
-            return False
-        # Pop up to and including the matching tag to handle mismatched
-        # nested tags (e.g. <script><style></script> leaves style orphaned).
-        while self._skip_stack:
-            popped = self._skip_stack.pop()
-            if popped == tag:
-                break
-        return True
+        return pop_skip_stack_for_tag(
+            self._skip_stack,
+            tag=tag,
+            drop_with_content=_DROP_WITH_CONTENT,
+        )
 
     def _close_matching_open_tag(self, tag: str) -> bool:
-        if not self._open:
-            return False
-        if self._open[-1] == tag:
-            self._open.pop()
-            self._out.append(f"</{tag}>")
-            return True
-        # Browser-style error recovery: search backwards for a matching open tag.
-        for i in range(len(self._open) - 1, -1, -1):
-            if self._open[i] == tag:
-                # Close all intermediate unclosed tags, then the matching one.
-                for j in range(len(self._open) - 1, i - 1, -1):
-                    self._out.append(f"</{self._open[j]}>")
-                del self._open[i:]
-                return True
-        return False
+        return close_matching_open_tag(self._open, self._out, tag)
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()

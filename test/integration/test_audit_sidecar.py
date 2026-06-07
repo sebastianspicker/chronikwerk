@@ -5,58 +5,28 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-import httpx
 import respx
 
+import test.support.integration_helpers as integration_helpers
 from test.support.checks import check
-from test.support.credentials import fake_credential
 from test.support.time_control import freeze_process_ticket_now
-from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record
 
 
-def _test_settings(storage_root: str) -> Settings:
-    return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": storage_root},
-        }
-    )
-
-
 def _audit_ticket_payload() -> dict[str, object]:
-    return {
-        "id": 123,
-        "number": "20240123",
-        "title": "Example Ticket",
-        "owner": {"login": "agent"},
-        "updated_by": {"login": "fallback-agent"},
-        "preferences": {
-            "custom_fields": {
-                "archive_user_mode": "owner",
-                "archive_path": "A > B > C",
-            }
-        },
-    }
+    return integration_helpers.zammad_ticket_payload(
+        title="Example Ticket",
+        archive_path="A > B > C",
+    )
 
 
 def _audit_article_payload() -> list[dict[str, object]]:
     return [
-        {
-            "id": 1,
-            "created_at": "2026-02-07T11:59:00Z",
-            "internal": False,
-            "subject": "Hello",
-            "body": "<p>Hello World</p>",
-            "content_type": "text/html",
-            "from": "customer@example.invalid",
-            "attachments": [
+        integration_helpers.zammad_article_payload(
+            attachments=[
                 {
                     "id": 10,
                     "filename": "a.txt",
@@ -64,36 +34,22 @@ def _audit_article_payload() -> list[dict[str, object]]:
                     "content_type": "text/plain",
                 }
             ],
-        }
+        )
     ]
 
 
 def _mock_audit_sidecar_reads() -> None:
-    respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
-        return_value=httpx.Response(200, json=_audit_ticket_payload())
-    )
-    respx.get(
-        "https://zammad.example.local/api/v1/tags",
-        params={"object": "Ticket", "o_id": "123"},
-    ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
-    respx.get("https://zammad.example.local/api/v1/ticket_articles/by_ticket/123").mock(
-        return_value=httpx.Response(200, json=_audit_article_payload())
+    integration_helpers.mock_standard_zammad_reads(
+        ticket_payload=_audit_ticket_payload(),
+        tags=["pdf:sign"],
+        articles=_audit_article_payload(),
     )
 
 
 def _mock_audit_sidecar_zammad_routes() -> respx.Route:
     _mock_audit_sidecar_reads()
-    respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    respx.post("https://zammad.example.local/api/v1/tags/add").mock(
-        return_value=httpx.Response(200, json={"success": True})
-    )
-    return respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-        return_value=httpx.Response(
-            200,
-            json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
-        )
+    return integration_helpers.mock_success_zammad_write_routes(
+        article_response={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
     )
 
 
@@ -103,13 +59,11 @@ def _expected_audit_paths(
     settings: Settings,
     fixed_now: datetime,
 ) -> tuple[object, object]:
-    date_iso = fixed_now.date().isoformat()
-    expected_filename = build_filename_from_pattern(
-        settings.storage.path_policy.filename_pattern,
-        ticket_number="20240123",
-        timestamp_utc=date_iso,
+    expected_pdf_path = integration_helpers.expected_agent_archive_pdf_path(
+        tmp_path,
+        settings=settings,
+        fixed_now=fixed_now,
     )
-    expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
     expected_sidecar_path = expected_pdf_path.parent / (expected_pdf_path.name + ".json")
     return expected_pdf_path, expected_sidecar_path
 
@@ -146,7 +100,7 @@ def _assert_audit_sidecar(
 
 
 def test_audit_sidecar_written_next_to_pdf_and_matches_sha256(tmp_path, monkeypatch) -> None:
-    settings = _test_settings(str(tmp_path))
+    settings = integration_helpers.zammad_storage_settings(str(tmp_path))
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
 

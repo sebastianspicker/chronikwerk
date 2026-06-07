@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml)
 [![Docker](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/c8e80b68fa004dca84457fb85ca40032)](https://app.codacy.com/gh/sebastianspicker/zammad-ticket-archiver/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 
@@ -314,23 +315,23 @@ make test-e2e      # manual Docker Compose API E2E lane
 make dev           # Docker Compose dev stack (hot-reload)
 ```
 
-## Documentation (index)
+## Documentation
 
-- [`docs/01-architecture.md`](docs/01-architecture.md)
-- [`docs/02-zammad-setup.md`](docs/02-zammad-setup.md)
-- [`docs/03-data-model.md`](docs/03-data-model.md)
-- [`docs/04-path-policy.md`](docs/04-path-policy.md)
-- [`docs/05-pdf-rendering.md`](docs/05-pdf-rendering.md)
-- [`docs/06-signing-and-timestamp.md`](docs/06-signing-and-timestamp.md)
-- [`docs/07-storage.md`](docs/07-storage.md)
-- [`docs/08-operations.md`](docs/08-operations.md)
-- [`docs/09-security.md`](docs/09-security.md)
-- [`docs/api.md`](docs/api.md)
-- [`docs/config-reference.md`](docs/config-reference.md)
-- [`docs/faq.md`](docs/faq.md)
-- [`docs/deploy.md`](docs/deploy.md) – Production deployment
-- [`CONTRIBUTING.md`](CONTRIBUTING.md#releases) – Release workflow
-- [`docs/demo-mock-university.md`](docs/demo-mock-university.md) – Local mock university demo stack and screenshot workflow
+Start with the [documentation index](docs/README.md) for the current operator
+and maintainer docs. The main public surfaces are:
+
+- [`docs/02-zammad-setup.md`](docs/02-zammad-setup.md) - Zammad-side setup
+- [`docs/config-reference.md`](docs/config-reference.md) - complete settings reference
+- [`docs/deploy.md`](docs/deploy.md) - production deployment
+- [`docs/08-operations.md`](docs/08-operations.md) - operations runbook
+- [`docs/api.md`](docs/api.md) - HTTP API contract
+- [`docs/09-security.md`](docs/09-security.md) - security model and hardening notes
+- [`CONTRIBUTING.md`](CONTRIBUTING.md#releases) - release workflow
+- [`docs/demo-mock-university.md`](docs/demo-mock-university.md) - local mock university demo
+
+Historical audit, plan, ledger, status, and archive packets are not part of the
+active public docs unless they are intentionally promoted and linked from
+`docs/README.md`.
 
 ## Glossary
 
