@@ -1,5 +1,6 @@
 # zammad-ticket-archiver
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/028aaf3c30984b99b4b3f586da0febbe)](https://app.codacy.com/gh/sebastianspicker/zammad-ticket-archiver?utm_source=github.com&utm_medium=referral&utm_content=sebastianspicker/zammad-ticket-archiver&utm_campaign=Badge_Grade)
 [![CI](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml)
 [![Docker](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
