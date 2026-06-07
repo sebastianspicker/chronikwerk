@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml)
 [![Docker](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/c8e80b68fa004dca84457fb85ca40032)](https://app.codacy.com/gh/sebastianspicker/zammad-ticket-archiver/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 
