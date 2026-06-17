@@ -177,11 +177,8 @@ async def successful_render(
     tags: TagList,
     ticket_id: int,
     settings: Settings,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        pdf_bytes=b"%PDF-1.7\n%%EOF\n",
-        snapshot=SimpleNamespace(ticket=ticket),
-    )
+) -> tuple[bytes, SimpleNamespace]:
+    return b"%PDF-1.7\n%%EOF\n", SimpleNamespace(ticket=ticket)
 
 
 def stored_pdf_result(tmp_path: Path) -> SimpleNamespace:
@@ -210,7 +207,7 @@ def flaky_then_successful_render():
         tags: TagList,
         ticket_id: int,
         settings: Settings,
-    ) -> SimpleNamespace:
+    ) -> tuple[bytes, SimpleNamespace]:
         calls["n"] += 1
         if calls["n"] == 1:
             raise TransientError("transient-render-failure")

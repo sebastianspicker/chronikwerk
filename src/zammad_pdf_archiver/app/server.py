@@ -25,6 +25,7 @@ from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.app.routes.healthz import router as healthz_router
 from zammad_pdf_archiver.app.routes.ingest import router as ingest_router
 from zammad_pdf_archiver.app.routes.jobs import router as jobs_router
+from zammad_pdf_archiver.app.routes.metrics import router as metrics_router
 from zammad_pdf_archiver.config.settings import Settings
 
 
@@ -42,7 +43,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 async def _global_exception_handler(request: Request, exc: Exception) -> Response:
     request_id = getattr(request.state, "request_id", None)
-    response = api_error(500, "internal_server_error", code="internal_server_error")
+    response = api_error(
+        500,
+        "An internal server error occurred.",
+        code="internal_error",
+        request_id=request_id,
+    )
     if request_id:
         response.headers[_REQUEST_ID_HEADER] = request_id
     return response
@@ -58,6 +64,8 @@ def _wire_app(app: FastAPI, *, settings: Settings | None) -> None:
     app.include_router(healthz_router)
     app.include_router(ingest_router)
     app.include_router(jobs_router)
+    if settings is not None and settings.observability.metrics_enabled:
+        app.include_router(metrics_router)
     app.state.track_task = track_task
 
 

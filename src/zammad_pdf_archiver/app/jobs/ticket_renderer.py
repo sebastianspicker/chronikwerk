@@ -1,6 +1,7 @@
 """Build normalized snapshots from Zammad tickets and render them as PDFs."""
 from __future__ import annotations
 
+import asyncio
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -63,6 +64,7 @@ async def build_and_render_pdf(
     render_started = perf_counter()
     pdf_bytes = await render_pdf(
         snapshot,
+        max_articles=settings.pdf.max_articles,
         locale=settings.pdf.locale,
         timezone=settings.pdf.timezone,
     )
@@ -70,7 +72,7 @@ async def build_and_render_pdf(
 
     if settings.signing.enabled:
         sign_started = perf_counter()
-        pdf_bytes = sign_pdf(pdf_bytes, signing=settings.signing)
+        pdf_bytes = await asyncio.to_thread(sign_pdf, pdf_bytes, signing=settings.signing)
         sign_seconds.observe(perf_counter() - sign_started)
 
     return pdf_bytes, snapshot

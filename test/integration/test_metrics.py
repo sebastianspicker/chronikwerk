@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import re
 
@@ -7,7 +9,9 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
+from test.support.process_ticket_helpers import fake_store_ticket_files, successful_render
 from test.support.settings_factory import make_settings
+from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.state_machine import TRIGGER_TAG
@@ -16,6 +20,7 @@ from zammad_pdf_archiver.domain.state_machine import TRIGGER_TAG
 def _test_settings(storage_root: str) -> Settings:
     return make_settings(
         storage_root,
+        secret="metrics-test-secret",
         overrides={"observability": {"metrics_enabled": True}},
     )
 
@@ -77,6 +82,11 @@ def _ingest_body() -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
+def _signature(body: bytes) -> str:
+    digest = hmac.new(b"metrics-test-secret", body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
+
+
 def test_metrics_endpoint_returns_prometheus_text(tmp_path) -> None:
     app = create_app(_test_settings(str(tmp_path)))
     client = TestClient(app)
@@ -117,7 +127,13 @@ def test_metrics_requires_bearer_when_configured(tmp_path) -> None:
     )
 
 
-def test_ingest_success_increments_processed_total(tmp_path) -> None:
+def test_ingest_success_increments_processed_total(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(process_ticket_module, "build_and_render_pdf", successful_render)
+    monkeypatch.setattr(
+        process_ticket_module,
+        "store_ticket_files",
+        fake_store_ticket_files(tmp_path),
+    )
     app = create_app(_test_settings(str(tmp_path)))
     client = TestClient(app)
 
@@ -132,6 +148,7 @@ def test_ingest_success_increments_processed_total(tmp_path) -> None:
             headers={
                 "Content-Type": "application/json",
                 "X-Zammad-Delivery": "delivery-metrics-20260207-0001",
+                "X-Hub-Signature": _signature(body),
             },
         )
 
