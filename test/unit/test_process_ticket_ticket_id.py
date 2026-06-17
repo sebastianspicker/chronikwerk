@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from test.support.checks import check
 from zammad_pdf_archiver.domain.ticket_id import extract_ticket_id as _extract_ticket_id
 
 
@@ -18,7 +17,7 @@ from zammad_pdf_archiver.domain.ticket_id import extract_ticket_id as _extract_t
 def test_extract_ticket_id_accepts_integer_values(
     payload: dict[str, object], expected: int
 ) -> None:
-    check(not not _extract_ticket_id(payload) == expected, "assertion failed")
+    assert _extract_ticket_id(payload) == expected
 
 
 @pytest.mark.parametrize(
@@ -38,4 +37,4 @@ def test_extract_ticket_id_accepts_integer_values(
     ],
 )
 def test_extract_ticket_id_rejects_non_integer_values(payload: dict[str, object]) -> None:
-    check(not _extract_ticket_id(payload) is not None, "assertion failed")
+    assert _extract_ticket_id(payload) is None

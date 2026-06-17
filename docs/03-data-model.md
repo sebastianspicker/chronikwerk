@@ -8,7 +8,6 @@ storage/audit output.
 The renderer operates on a strict “snapshot” object:
 - it is built from Zammad API data
 - it is the single source of truth for HTML templates
-- it keeps attachments as **metadata** in the snapshot/PDF by default; optional **attachment binary inclusion** (configurable) can store binary content in the snapshot and write files to storage (see [config-reference](config-reference.md) `pdf.include_attachment_binary`)
 
 Example (human-friendly):
 - [`examples/ticket-snapshot.sample.json`](../examples/ticket-snapshot.sample.json)
@@ -44,22 +43,10 @@ Fields (current):
   - `enabled` (bool)
   - `tsa_used` (bool)
   - `cert_fingerprint` (string; optional SHA-256 hex of signer certificate)
-- `attachment_summary` (optional object):
-  - `total` (int)
-  - `written` (int)
-  - `skipped` (int)
-  - `reasons` (object keyed by omission reason)
-- `attachments` (optional array when binaries are written):
-  - `storage_path`
-  - `article_id`
-  - `attachment_id`
-  - `filename`
-  - `sha256`
 - `service`:
   - `name`
   - `version` (may be `"unknown"` in non-packaged deployments)
   - `python` (runtime Python version)
 
 Operational note:
-- The PDF signature validation scripts (`scripts/ops/verify-pdf.sh`) validate the embedded signature and
   timestamp token (if present). The audit sidecar checksum validates the on-disk file integrity.

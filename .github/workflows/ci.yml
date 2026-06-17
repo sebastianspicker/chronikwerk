@@ -80,7 +80,6 @@ jobs:
           docker build -f Dockerfile.dev -t zammad-pdf-archiver-dev:ci .
           docker run -d --rm --name zpa-dev-smoke \
             -p 18080:8080 \
-            -e SERVER_HOST=0.0.0.0 \
             -e ZAMMAD_BASE_URL=https://example.invalid \
             -e ZAMMAD_API_TOKEN=x \
             -e STORAGE_ROOT=/tmp \

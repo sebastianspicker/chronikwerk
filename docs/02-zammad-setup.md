@@ -7,9 +7,8 @@ flowchart TD
   A["Create custom fields"] --> B["Core Workflow validation"]
   B --> C["Agent macro adds trigger tag"]
   C --> D["Trigger calls /ingest webhook"]
-  D --> E{"Archiver execution backend"}
+  D --> E{"Archiver service"}
   E --> F["In-process worker"]
-  E --> G["Redis queue worker"]
   F --> H["Ticket note + final tags"]
   G --> H
 ```
@@ -19,10 +18,7 @@ flowchart TD
 - Zammad admin access.
 - Reachable archiver endpoint, for example: `https://archiver.example.com/ingest`.
 - Archiver service configured with one of:
-  - `WEBHOOK_HMAC_SECRET` (recommended)
-  - both `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` and
-    `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET=true`
-    (internal/testing only)
+  - `ZAMMAD__WEBHOOK_HMAC_SECRET` (recommended)
 
 ## 2. Create Ticket Custom Fields
 
@@ -86,11 +82,10 @@ Admin path:
   - Method: `POST`
   - Content-Type: `application/json`
   - Enable HMAC signing if available
-  - Use SHA-1 or SHA-256 signature format (`X-Hub-Signature: sha1=<hex>` or `sha256=<hex>`)
 
 If HMAC is enabled:
 - Generate secret: `openssl rand -hex 32`
-- Set same secret in Zammad and archiver (`WEBHOOK_HMAC_SECRET`)
+- Set same secret in Zammad and archiver (`ZAMMAD__WEBHOOK_HMAC_SECRET`)
 
 ## 6. Create Trigger
 

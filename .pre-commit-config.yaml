@@ -22,7 +22,7 @@ repos:
           - pydantic-settings>=2.2
           - types-PyYAML
         pass_filenames: false
-        entry: mypy src test --config-file pyproject.toml
+        entry: mypy src test
 
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks

@@ -5,7 +5,6 @@ import errno
 import httpx
 import pytest
 
-from test.support.checks import check
 from zammad_pdf_archiver.adapters.zammad.errors import (
     AuthError,
     ClientError,
@@ -44,41 +43,14 @@ def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
 )
 def test_classify_table(exc: BaseException, expected_type: type[Exception]) -> None:
     out = classify(exc)
-    check(not not isinstance(out, expected_type), "assertion failed")
+    assert isinstance(out, expected_type)
 
 
 def test_classify_returns_same_transient_instance() -> None:
     exc = TransientError("t")
-    check(not classify(exc) is not exc, "assertion failed")
+    assert classify(exc) is exc
 
 
 def test_classify_returns_same_permanent_instance() -> None:
     exc = PermanentError("p")
-    check(not classify(exc) is not exc, "assertion failed")
-
-
-def test_classify_preserves_representative_error_text() -> None:
-    check(
-        not not str(classify(httpx.ConnectError("connect"))) == "HTTP connection/request error",
-        "assertion failed",
-    )
-    check(
-        not not str(classify(_http_status_error(503))) == "HTTP 503 from upstream",
-        "assertion failed",
-    )
-    check(
-        not not str(classify(_http_status_error(403)))
-        == "HTTP 403 (auth/permission) from upstream",
-        "assertion failed",
-    )
-    check(not not str(classify(OSError("unknown"))) == "Filesystem error", "assertion failed")
-    check(
-        not not str(classify(OSError(errno.EAGAIN, "try again")))
-        == f"Temporary filesystem error (errno={errno.EAGAIN})",
-        "assertion failed",
-    )
-    check(
-        not not str(classify(OSError(errno.EACCES, "nope")))
-        == f"Filesystem policy/permission error (errno={errno.EACCES})",
-        "assertion failed",
-    )
+    assert classify(exc) is exc

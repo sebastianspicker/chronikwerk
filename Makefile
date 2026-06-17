@@ -1,4 +1,4 @@
-.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build build-check verify verify-local ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
+.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build verify ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -49,7 +49,7 @@ test-cov:
 	python -m pytest --cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=85
 
 docs-check:
-	@for p in README.md docs/01-architecture.md docs/08-operations.md docs/api.md docs/config-reference.md; do \
+	@for p in README.md docs/01-architecture.md docs/02-zammad-setup.md docs/03-data-model.md docs/04-path-policy.md docs/05-pdf-rendering.md docs/06-signing-and-timestamp.md docs/07-storage.md docs/08-operations.md docs/09-security.md docs/api.md docs/config-reference.md docs/deploy.md docs/faq.md docs/release-checklist.md; do \
 		test -f $$p || (echo "Missing docs: $$p" && exit 1); \
 	done; \
 	echo "docs-check: OK"
@@ -65,12 +65,7 @@ qa: lint smoke
 build:
 	python -m build
 
-build-check:
-	python -m build --outdir /tmp/zammad-ticket-archiver-build-local
-
 verify: qa build
-
-verify-local: qa build-check
 
 ci: lint typecheck test
 
@@ -79,22 +74,3 @@ clean:
 	rm -rf .ruff_cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name '*.py[co]' -delete 2>/dev/null || true
-
-demo-up:
-	docker compose -f docker-compose.demo.yml up -d --build
-	docker compose -f docker-compose.demo.yml ps
-
-demo-seed:
-	python scripts/demo/seed_demo_data.py
-
-demo-shots:
-	@python scripts/demo/capture_screenshots.py --check-only >/dev/null 2>&1 || (echo "Playwright setup missing. Run: python -m playwright install chromium" && exit 1)
-	python scripts/demo/capture_screenshots.py
-
-demo-reset:
-	python -c "import urllib.request; req=urllib.request.Request('http://127.0.0.1:18090/__demo/reset', method='POST', data=b''); print(urllib.request.urlopen(req, timeout=5).read().decode('utf-8'))"
-
-demo-down:
-	docker compose -f docker-compose.demo.yml down -v --remove-orphans
-
-demo-all: demo-up demo-seed demo-shots

@@ -57,20 +57,10 @@ Examples:
 Resolved target path must remain under `storage.root`.
 If a target escapes root, write is rejected.
 
-### Optional allow-list prefixes
-
-`storage.path_policy.allow_prefixes` can restrict allowed archive path prefixes.
-
-Prefix entries may use either separator style:
-- `Customers > ACME GmbH`
-- `Customers/ACME GmbH`
-
-Comparison is done on canonically normalized raw segments, not on the lossy sanitized filesystem segments.
-
 ## 5. Filename Policy
 
 Filename template key:
-- `storage.path_policy.filename_pattern`
+- `storage.filename_pattern`
 
 Default:
 - `Ticket-{ticket_number}_{timestamp_utc}.pdf`
@@ -78,6 +68,7 @@ Default:
 Supported placeholders:
 - `{ticket_number}`
 - `{timestamp_utc}` (date string provided by job: `YYYY-MM-DD`)
+- `{date_utc}` (alias)
 
 Validation constraints:
 - single segment only (no path separators)

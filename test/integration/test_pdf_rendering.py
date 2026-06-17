@@ -3,12 +3,11 @@ from __future__ import annotations
 import logging
 import warnings
 
-from test.support.checks import check
 from zammad_pdf_archiver.adapters.pdf.render_pdf import render_pdf
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
 
-def _snapshot_with_article_and_attachment() -> Snapshot:
+def _rendering_snapshot() -> Snapshot:
     return Snapshot.model_validate(
         {
             "ticket": {
@@ -25,46 +24,50 @@ def _snapshot_with_article_and_attachment() -> Snapshot:
                     "archive_user_mode": "owner",
                 },
             },
-            "articles": [
-                {
-                    "id": 100,
-                    "created_at": "2024-01-01T10:05:00Z",
-                    "internal": False,
-                    "sender": "customer@acme.invalid",
-                    "subject": "Initial request",
-                    "body_html": "<p>Hello <strong>World</strong></p>",
-                    "body_text": "Hello World",
-                    "attachments": [
-                        {
-                            "article_id": 100,
-                            "attachment_id": 10,
-                            "filename": "invoice.pdf",
-                            "size": 12345,
-                            "content_type": "application/pdf",
-                        }
-                    ],
-                },
-                {
-                    "id": 101,
-                    "created_at": "2024-01-01T11:00:00Z",
-                    "internal": True,
-                    "sender": "agent1@acme.invalid",
-                    "subject": "Internal note",
-                    "body_html": "<p>Internal note.</p>",
-                    "body_text": "Internal note.",
-                    "attachments": [],
-                },
-            ],
+            "articles": [_customer_article(), _internal_article()],
         }
     )
 
 
-def test_render_pdf_default_template_produces_pdf_bytes() -> None:
-    snapshot = _snapshot_with_article_and_attachment()
-    pdf_bytes = render_pdf(snapshot, "default")
+def _customer_article() -> dict[str, object]:
+    return {
+        "id": 100,
+        "created_at": "2024-01-01T10:05:00Z",
+        "internal": False,
+        "sender": "customer@acme.invalid",
+        "subject": "Initial request",
+        "body_html": "<p>Hello <strong>World</strong></p>",
+        "body_text": "Hello World",
+        "attachments": [
+            {
+                "article_id": 100,
+                "attachment_id": 10,
+                "filename": "invoice.pdf",
+                "size": 12345,
+                "content_type": "application/pdf",
+            }
+        ],
+    }
 
-    check(not not pdf_bytes.startswith(b"%PDF"), "assertion failed")
-    check(not not len(pdf_bytes) > 5000, "assertion failed")
+
+def _internal_article() -> dict[str, object]:
+    return {
+        "id": 101,
+        "created_at": "2024-01-01T11:00:00Z",
+        "internal": True,
+        "sender": "agent1@acme.invalid",
+        "subject": "Internal note",
+        "body_html": "<p>Internal note.</p>",
+        "body_text": "Internal note.",
+        "attachments": [],
+    }
+
+
+def test_render_pdf_default_template_produces_pdf_bytes() -> None:
+    pdf_bytes = render_pdf(_rendering_snapshot(), "default")
+
+    assert pdf_bytes.startswith(b"%PDF")
+    assert len(pdf_bytes) > 5_000
 
 
 def test_render_pdf_does_not_emit_pydyf_identifier_deprecation_warning() -> None:
@@ -87,14 +90,13 @@ def test_render_pdf_does_not_emit_pydyf_identifier_deprecation_warning() -> None
         warnings.simplefilter("always")
         pdf_bytes = render_pdf(snapshot, "default")
 
-    check(not not pdf_bytes.startswith(b"%PDF"), "assertion failed")
-    check(
-        not not not any(
+    assert pdf_bytes.startswith(b"%PDF")
+    assert not any(
+        (
             isinstance(item.message, DeprecationWarning)
             and "PDF objects don’t take version or identifier" in str(item.message)
-            for item in caught
-        ),
-        "assertion failed",
+        )
+        for item in caught
     )
 
 
@@ -117,18 +119,12 @@ def test_render_pdf_default_template_avoids_ignored_css_warnings(caplog) -> None
     with caplog.at_level(logging.WARNING, logger="weasyprint"):
         pdf_bytes = render_pdf(snapshot, "default")
 
-    check(not not pdf_bytes.startswith(b"%PDF"), "assertion failed")
-    check(
-        not not not any(
-            "Ignored `" in rec.getMessage() and "invalid value" in rec.getMessage()
-            for rec in caplog.records
-        ),
-        "assertion failed",
+    assert pdf_bytes.startswith(b"%PDF")
+    assert not any(
+        "Ignored `" in rec.getMessage() and "invalid value" in rec.getMessage()
+        for rec in caplog.records
     )
-    check(
-        not not not any(
-            "Ignored `" in rec.getMessage() and "unknown property" in rec.getMessage()
-            for rec in caplog.records
-        ),
-        "assertion failed",
+    assert not any(
+        "Ignored `" in rec.getMessage() and "unknown property" in rec.getMessage()
+        for rec in caplog.records
     )

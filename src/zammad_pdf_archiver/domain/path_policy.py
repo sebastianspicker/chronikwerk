@@ -4,9 +4,23 @@ import re
 import unicodedata
 from pathlib import Path
 
-_ALLOWED_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+_ALLOWED_SEGMENT_RE = re.compile(r"[A-Za-z0-9._-]")
 _WHITESPACE_RE = re.compile(r"\s+")
 _MULTI_UNDERSCORE_RE = re.compile(r"_+")
+
+
+def _asciiish_char(ch: str) -> str:
+    if unicodedata.category(ch) == "Mn":
+        return ""
+    if ord(ch) < 128:
+        return ch
+    return "_"
+
+
+def _safe_segment_char(ch: str) -> str:
+    if _ALLOWED_SEGMENT_RE.fullmatch(ch) is not None:
+        return ch
+    return "_"
 
 
 def sanitize_segment(seg: str) -> str:
@@ -27,7 +41,9 @@ def sanitize_segment(seg: str) -> str:
     # Normalize to a stable representation. Strip combining marks (so "ü" => "u"),
     # and replace other non-ASCII characters with "_" (so segments never become empty
     # just because they contain e.g. CJK/emoji).
-    normalized = _asciiish_segment(seg)
+    normalized = unicodedata.normalize("NFKD", seg)
+    normalized = "".join(_asciiish_char(ch) for ch in normalized)
+
     normalized = _WHITESPACE_RE.sub("_", normalized)
 
     out = "".join(_safe_segment_char(ch) for ch in normalized)
@@ -35,24 +51,6 @@ def sanitize_segment(seg: str) -> str:
     if seg and not out:
         out = "_"
     return out
-
-
-def _asciiish_segment(seg: str) -> str:
-    return "".join(_asciiish_char(ch) for ch in unicodedata.normalize("NFKD", seg))
-
-
-def _asciiish_char(ch: str) -> str:
-    if unicodedata.category(ch) == "Mn":
-        return ""
-    if ord(ch) < 128:
-        return ch
-    return "_"
-
-
-def _safe_segment_char(ch: str) -> str:
-    if ch in _ALLOWED_CHARS:
-        return ch
-    return "_"
 
 
 def validate_segments(

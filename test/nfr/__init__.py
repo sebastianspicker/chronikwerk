@@ -1,1 +1,1 @@
-"""NFR verification tests for public project requirements."""
+# NFR verification tests: one module per PRD non-functional requirement.

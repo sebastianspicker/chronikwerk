@@ -1,80 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter
 
-from zammad_pdf_archiver.app.jobs.redis_queue import get_queue_stats
-from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down
-from zammad_pdf_archiver.app.jobs.ticket_stores import (
-    is_ticket_distributed_in_flight,
-    is_ticket_in_flight,
-)
-from zammad_pdf_archiver.app.responses import settings_or_503, verify_bearer_auth
-from zammad_pdf_archiver.app.routes import operations
+from zammad_pdf_archiver.app.jobs.history import read_history
 
-router = APIRouter()
+router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-@router.get("/jobs/queue/stats")
-async def get_queue_status(request: Request) -> dict[str, object]:
-    """Return current queue statistics for the configured execution backend."""
-    settings = settings_or_503(request)
-    verify_bearer_auth(request, settings)
-    try:
-        return await get_queue_stats(settings)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="queue_unavailable") from exc
-
-
-@router.get("/jobs/history")
-async def get_job_history(
-    request: Request,
+@router.get("/history")
+async def job_history(
     limit: int = 100,
-    ticket_id: int | None = Query(default=None, ge=1),
+    ticket_id: int | None = None,
 ) -> dict[str, object]:
-    """Return recent job history events, optionally filtered by ticket ID."""
-    settings = settings_or_503(request)
-    verify_bearer_auth(request, settings)
-
-    bounded_limit = max(1, min(int(limit), 5000))
-    try:
-        return await operations.history_payload(
-            settings,
-            limit=bounded_limit,
-            ticket_id=ticket_id,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="history_unavailable") from exc
-
-
-@router.post("/jobs/queue/dlq/drain")
-async def drain_queue_dlq(request: Request, limit: int = 100) -> dict[str, object]:
-    """Delete up to limit messages from the dead-letter queue without replaying them."""
-    settings = settings_or_503(request)
-    verify_bearer_auth(request, settings)
-    bounded_limit = max(1, min(int(limit), 1000))
-    try:
-        return await operations.drain_dlq_payload(settings, limit=bounded_limit)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="dlq_unavailable") from exc
-
-
-@router.get("/jobs/{ticket_id}")
-async def get_job_status(
-    request: Request,
-    ticket_id: int = Path(..., ge=1),
-) -> dict[str, bool | int | None]:
-    """Return the best-known in-flight status and shutdown state for a ticket ID."""
-    settings = settings_or_503(request)
-    verify_bearer_auth(request, settings)
-    process_local_in_flight = is_ticket_in_flight(ticket_id)
-    try:
-        distributed_in_flight = await is_ticket_distributed_in_flight(settings, ticket_id)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="ticket_lock_unavailable") from exc
-    return {
-        "ticket_id": ticket_id,
-        "in_flight": process_local_in_flight or bool(distributed_in_flight),
-        "process_local_in_flight": process_local_in_flight,
-        "distributed_in_flight": distributed_in_flight,
-        "shutting_down": is_shutting_down(),
-    }
+    entries = read_history(limit=limit, ticket_id=ticket_id)
+    return {"entries": entries}
