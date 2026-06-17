@@ -7,16 +7,9 @@ This document describes how archive files are written and what storage assumptio
 Each successful ticket run writes:
 - one PDF file
 - one sidecar JSON file (`<pdf_filename>.json`)
-- optionally: attachment binaries in an `attachments/` subdir when `pdf.include_attachment_binary=true` (see [config-reference](config-reference.md)); the sidecar includes `attachment_summary` counts for tickets with attachments and, when binaries are written, an `attachments` array with `storage_path`, `article_id`, `attachment_id`, `filename`, and `sha256` per file.
-- if `pdf.include_attachment_binary=true`, an in-budget attachment fetch failure
-  fails the archive job before storage commit; the service must not write a
-  successful archive while silently omitting that binary.
-- attachments omitted because binary inclusion is disabled or configured size
-  budgets are exhausted remain successful policy omissions, but the sidecar must
-  report written and omitted counts plus omission reasons.
 
 Output root is configured by:
-- `storage.root` / `STORAGE_ROOT`
+- `storage.root` / `STORAGE__ROOT`
 
 Layout:
 - `<storage.root>/<archive_user>/<archive_path...>/<filename>.pdf`
@@ -35,24 +28,11 @@ Default container user:
 Required permissions on target filesystem:
 - execute (`x`) on parent directories
 - write (`w`) in destination directory
-- create/remove temporary files and temporary work directories
+- create/remove temporary files (when atomic writes enabled)
 
 For CIFS/SMB mounts, share ACLs and UID/GID mapping must permit these operations.
 
-## 3. Commit Behavior
-
-Archive commits always use the ticket-storage commit path:
-1. create a temporary work directory under the target archive directory
-2. write attachments, PDF, and sidecar into the temporary work directory
-3. move files into their final locations with `os.replace`
-4. publish the sidecar last so its presence is the completeness signal
-5. optionally fsync files/directories when `storage.fsync=true`
-
-`storage.atomic_write` / `STORAGE_ATOMIC_WRITE` is not a supported setting.
-
-Implementation:
-- `src/zammad_pdf_archiver/app/jobs/ticket_storage.py`
-- `src/zammad_pdf_archiver/adapters/storage/fs_storage.py`
+## 3. Atomic Write Behavior
 
 ## 4. Path Safety and Symlink Defense
 
@@ -71,7 +51,7 @@ This reduces path traversal and symlink abuse risk.
 
 Recommended production pattern:
 1. mount share on host OS
-2. bind-mount host path into container as `STORAGE_ROOT`
+2. bind-mount host path into container as `STORAGE__ROOT`
 
 Why:
 - keeps mount credentials/lifecycle outside container
@@ -84,7 +64,7 @@ Treat helper script as baseline only; review options for your environment.
 
 ## 6. Operational Checklist
 
-- confirm effective `STORAGE_ROOT` path
+- confirm effective `STORAGE__ROOT` path
 - confirm mount is read/write
 - verify UID/GID mapping for runtime user
 - verify ACLs on all parent directories

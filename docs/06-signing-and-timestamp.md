@@ -34,9 +34,7 @@ Current signing behavior:
 Implemented signer input:
 - PKCS#12/PFX bundle (`signing.pfx_path`, `signing.pfx_password`)
 
-`signing.pades.cert_path` is audit-only fallback metadata for certificate
-fingerprint sidecars. It is not signer material. The signer still requires a
-PKCS#12/PFX bundle.
+Compatibility keys exist in settings but are not used by current signer:
 
 ## 3. RFC3161 Timestamping
 
@@ -49,10 +47,9 @@ Behavior:
 - request uses strict response checks:
   - HTTP status must be `200`
   - `Content-Type` must be `application/timestamp-reply`
-- optional basic auth can be configured with YAML keys
-  `signing.timestamp.rfc3161.user` /
-  `signing.timestamp.rfc3161.password` or the flat env aliases `TSA_USER` /
-  `TSA_PASS`
+- optional basic auth is env-only:
+  - `TSA_USER`
+  - `TSA_PASS`
 
 Important:
 - Timestamping is executed only inside signing flow.
@@ -76,8 +73,6 @@ signing:
       tsa_url: "https://tsa.example.local/rfc3161"
       timeout_seconds: 10
       ca_bundle_path: null
-      user: "tsa-user"
-      password: null
 ```
 
 ### Environment
@@ -85,7 +80,7 @@ signing:
 ```bash
 SIGNING_ENABLED=true
 SIGNING_PFX_PATH=/run/secrets/signing.pfx
-SIGNING_PFX_PASSWORD=CHANGE_ME
+SIGNING_PFX_PASSWORD=change-me
 TSA_ENABLED=true
 TSA_URL=https://tsa.example.local/rfc3161
 TSA_TIMEOUT_SECONDS=10
@@ -118,13 +113,10 @@ These classifications feed ticket tag behavior in `process_ticket`.
 ## 6. Verification
 
 Scripts:
-- `scripts/ops/verify-pdf.sh`
-- `scripts/ops/verify-pdf.py`
 
 Example:
 
 ```bash
-scripts/ops/verify-pdf.sh /path/to/file.pdf
 ```
 
 Expected output:

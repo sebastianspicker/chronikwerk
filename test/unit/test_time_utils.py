@@ -2,24 +2,23 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timezone
 
-from test.support.checks import check
 from zammad_pdf_archiver.domain.time_utils import format_timestamp_utc
 
 
 def test_format_timestamp_utc_naive_datetime_treated_as_utc() -> None:
     """A naive datetime (no tzinfo) should be treated as UTC."""
     naive = datetime(2024, 6, 15, 12, 30, 45)  # noqa: DTZ001
-    check(not naive.tzinfo is not None, "assertion failed")
+    assert naive.tzinfo is None
 
     result = format_timestamp_utc(naive)
-    check(not not result == "2024-06-15T12:30:45Z", "assertion failed")
+    assert result == "2024-06-15T12:30:45Z"
 
 
 def test_format_timestamp_utc_aware_datetime() -> None:
     """An aware UTC datetime should format correctly."""
     aware = datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
     result = format_timestamp_utc(aware)
-    check(not not result == "2024-06-15T12:30:45Z", "assertion failed")
+    assert result == "2024-06-15T12:30:45Z"
 
 
 def test_format_timestamp_utc_non_utc_timezone() -> None:
@@ -27,11 +26,11 @@ def test_format_timestamp_utc_non_utc_timezone() -> None:
     cet = timezone(offset=__import__("datetime").timedelta(hours=2))
     aware_cet = datetime(2024, 6, 15, 14, 30, 45, tzinfo=cet)
     result = format_timestamp_utc(aware_cet)
-    check(not not result == "2024-06-15T12:30:45Z", "assertion failed")
+    assert result == "2024-06-15T12:30:45Z"
 
 
 def test_format_timestamp_utc_truncates_microseconds() -> None:
     """Microseconds should be truncated in the output."""
     dt = datetime(2024, 6, 15, 12, 30, 45, 123456, tzinfo=UTC)
     result = format_timestamp_utc(dt)
-    check(not not result == "2024-06-15T12:30:45Z", "assertion failed")
+    assert result == "2024-06-15T12:30:45Z"

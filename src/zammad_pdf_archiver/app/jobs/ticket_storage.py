@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import tempfile
 import time as _time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,19 +24,12 @@ from zammad_pdf_archiver.adapters.storage.fs_storage import (
     move_file_within_root,
     write_bytes,
 )
-from zammad_pdf_archiver.app.jobs.ticket_storage_attachments import (
-    attachment_audit_entry,
-    attachment_safe_name,
-    iter_binary_attachments,
-)
-from zammad_pdf_archiver.app.jobs.ticket_storage_summary import attachment_summary
-from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record, compute_sha256
+from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record
+from zammad_pdf_archiver.domain.path_policy import sanitize_segment
 
 if TYPE_CHECKING:
     from zammad_pdf_archiver.config.settings import Settings
     from zammad_pdf_archiver.domain.snapshot_models import Snapshot
-
-log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -47,9 +41,7 @@ class StorageResult:
 
 
 @dataclass(frozen=True)
-class _AuditSidecarRequest:
-    tmp_dir: Path
-    sidecar_name: str
+class AuditWriteContext:
     ticket_id: int
     snapshot: Snapshot
     now: datetime
@@ -57,6 +49,52 @@ class _AuditSidecarRequest:
     sha256_hex: str
     settings: Settings
     attachment_entries: list[dict[str, Any]]
+
+
+def _iter_attachment_payloads(snapshot: Snapshot) -> list[tuple[Any, Any]]:
+    return [
+        (article, attachment)
+        for article in snapshot.articles
+        for attachment in article.attachments
+        if getattr(attachment, "content", None) is not None
+    ]
+
+
+def _attachment_safe_name(article: Any, attachment: Any) -> str:
+    return (
+        sanitize_segment(
+            f"{article.id}_{attachment.attachment_id or 0}_{attachment.filename or 'bin'}"
+        )
+        or f"article_{article.id}_{attachment.attachment_id or 0}"
+    )
+
+
+def _write_attachment_payload(
+    *,
+    temp_attachments_dir: Path,
+    storage_root: Path,
+    attachments_dir: Path,
+    article: Any,
+    attachment: Any,
+    fsync: bool,
+) -> dict[str, Any]:
+    safe_name = _attachment_safe_name(article, attachment)
+    content = getattr(attachment, "content", None)
+    if content is None:
+        raise ValueError("attachment content missing")
+    write_bytes(
+        temp_attachments_dir / safe_name,
+        content,
+        fsync=fsync,
+        storage_root=storage_root,
+    )
+    return {
+        "storage_path": str(attachments_dir / safe_name),
+        "article_id": article.id,
+        "attachment_id": attachment.attachment_id,
+        "filename": attachment.filename,
+        "sha256": sha256(attachment.content).hexdigest(),
+    }
 
 
 def _write_attachments(
@@ -72,93 +110,62 @@ def _write_attachments(
     Only articles whose attachments carry binary content are written.
     Returns an empty list when there are no attachments to write.
     """
-    binary_attachments = list(iter_binary_attachments(snapshot))
-    if not binary_attachments:
+    attachment_payloads = _iter_attachment_payloads(snapshot)
+    if not attachment_payloads:
         return []
 
     temp_attachments_dir = tmp_dir / "attachments"
     ensure_dir(temp_attachments_dir)
-    entries: list[dict[str, Any]] = []
-
-    for article, att, content in binary_attachments:
-        safe_name = attachment_safe_name(article, att)
-        write_bytes(
-            temp_attachments_dir / safe_name,
-            content,
-            fsync=fsync,
+    return [
+        _write_attachment_payload(
+            temp_attachments_dir=temp_attachments_dir,
             storage_root=storage_root,
+            attachments_dir=attachments_dir,
+            article=article,
+            attachment=attachment,
+            fsync=fsync,
         )
-        entries.append(attachment_audit_entry(article, att, content, attachments_dir / safe_name))
-    return entries
+        for article, attachment in attachment_payloads
+    ]
 
 
-def _build_and_write_audit(request: _AuditSidecarRequest) -> None:
+def _build_and_write_audit(
+    tmp_dir: Path,
+    sidecar_name: str,
+    *,
+    context: AuditWriteContext,
+) -> None:
     """Build the audit record and write the sidecar JSON into *tmp_dir*."""
-    summary = attachment_summary(request.snapshot, request.attachment_entries)
     audit_record = build_audit_record(
         AuditRecordInput(
-            ticket_id=request.ticket_id,
-            ticket_number=request.snapshot.ticket.number,
-            title=request.snapshot.ticket.title,
-            created_at=request.now,
-            storage_path=str(request.target_path),
-            sha256=request.sha256_hex,
-            signing_settings=request.settings.signing,
-            attachments=request.attachment_entries if request.attachment_entries else None,
-            attachment_summary=summary,
-        )
+            ticket_id=context.ticket_id,
+            ticket_number=context.snapshot.ticket.number,
+            title=context.snapshot.ticket.title,
+            created_at=context.now,
+            storage_path=str(context.target_path),
+            sha256=context.sha256_hex,
+        ),
+        signing_settings=context.settings.signing,
+        attachments=context.attachment_entries if context.attachment_entries else None,
     )
     audit_bytes = (
         json.dumps(audit_record, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     ).encode("utf-8")
     write_bytes(
-        request.tmp_dir / request.sidecar_name,
+        tmp_dir / sidecar_name,
         audit_bytes,
-        fsync=request.settings.storage.fsync,
-        storage_root=request.settings.storage.root,
+        fsync=context.settings.storage.fsync,
+        storage_root=context.settings.storage.root,
     )
 
 
-def _backup_if_exists(path: Path, *, storage_root: Path, fsync: bool) -> Path | None:
+def _backup_if_exists(path: Path, *, storage_root: Path, fsync: bool) -> None:
     """If *path* already exists, rename it with a ``.bak.<timestamp>`` suffix."""
     if not path.exists():
-        return None
+        return
     timestamp = str(int(_time.time()))
     backup_path = path.with_name(f"{path.name}.bak.{timestamp}")
     move_file_within_root(path, backup_path, storage_root=storage_root, fsync=fsync)
-    return backup_path
-
-
-def _remove_committed_path(path: Path, *, event: str) -> None:
-    _log = structlog.get_logger(__name__)
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        return
-    except OSError:
-        _log.error(event, path=str(path))
-
-
-def _restore_backup(
-    backup_path: Path | None,
-    target_path: Path,
-    *,
-    storage_root: Path,
-    fsync: bool,
-    event: str,
-) -> None:
-    if backup_path is None:
-        return
-    _log = structlog.get_logger(__name__)
-    try:
-        move_file_within_root(
-            backup_path,
-            target_path,
-            storage_root=storage_root,
-            fsync=fsync,
-        )
-    except Exception:
-        _log.error(event, backup_path=str(backup_path), target_path=str(target_path))
 
 
 def _commit_files_to_storage(
@@ -175,16 +182,58 @@ def _commit_files_to_storage(
     Order matters: attachments first, then the PDF, then the sidecar last.
     The sidecar arriving last signals a complete, successful archival.
     """
-    temp_attachments_dir = tmp_dir / "attachments"
-    moved_attachments = _commit_attachment_files(
-        temp_attachments_dir,
-        target_path.parent,
+    _commit_attachments(
+        tmp_dir,
+        target_path,
+        sidecar_path,
         attachment_entries,
         storage_root=storage_root,
         fsync=fsync,
     )
+    _commit_pdf(
+        tmp_dir, target_path, sidecar_path, storage_root=storage_root, fsync=fsync
+    )
+    _commit_sidecar(
+        tmp_dir, target_path, sidecar_path, storage_root=storage_root, fsync=fsync
+    )
 
-    pdf_backup = _backup_if_exists(target_path, storage_root=storage_root, fsync=fsync)
+
+def _commit_attachments(
+    tmp_dir: Path,
+    target_path: Path,
+    sidecar_path: Path,
+    attachment_entries: list[dict[str, Any]],
+    *,
+    storage_root: Path,
+    fsync: bool,
+) -> None:
+    temp_attachments_dir = tmp_dir / "attachments"
+    if not attachment_entries:
+        return
+
+    attachments_dir = target_path.parent / "attachments"
+    ensure_dir(attachments_dir)
+    for entry in attachment_entries:
+        fname = Path(entry["storage_path"]).name
+        dst = attachments_dir / fname
+        _backup_if_exists(dst, storage_root=storage_root, fsync=fsync)
+        move_file_within_root(
+            temp_attachments_dir / fname,
+            dst,
+            storage_root=storage_root,
+            fsync=fsync,
+        )
+
+
+def _commit_pdf(
+    tmp_dir: Path,
+    target_path: Path,
+    sidecar_path: Path,
+    *,
+    storage_root: Path,
+    fsync: bool,
+) -> None:
+    _backup_if_exists(target_path, storage_root=storage_root, fsync=fsync)
     move_file_within_root(
         tmp_dir / target_path.name,
         target_path,
@@ -192,129 +241,44 @@ def _commit_files_to_storage(
         fsync=fsync,
     )
 
-    # Sidecar last — its presence signals successful archival.
-    # If sidecar move fails, roll back visible PDF/attachment side effects.
-    sidecar_backup = _backup_if_exists(sidecar_path, storage_root=storage_root, fsync=fsync)
-    try:
-        _commit_sidecar_file(tmp_dir, sidecar_path, storage_root=storage_root, fsync=fsync)
-    except Exception:
-        _rollback_failed_sidecar_commit(
-            target_path=target_path,
-            sidecar_path=sidecar_path,
-            moved_attachments=moved_attachments,
-            pdf_backup=pdf_backup,
-            sidecar_backup=sidecar_backup,
-            storage_root=storage_root,
-            fsync=fsync,
-        )
-        raise
 
-
-def _commit_attachment_files(
-    temp_attachments_dir: Path,
-    target_parent: Path,
-    attachment_entries: list[dict[str, Any]],
-    *,
-    storage_root: Path,
-    fsync: bool,
-) -> list[tuple[Path, Path | None]]:
-    moved_attachments: list[tuple[Path, Path | None]] = []
-    if not attachment_entries:
-        return moved_attachments
-
-    attachments_dir = target_parent / "attachments"
-    ensure_dir(attachments_dir)
-    for entry in attachment_entries:
-        fname = Path(entry["storage_path"]).name
-        dst = attachments_dir / fname
-        attachment_backup = _backup_if_exists(dst, storage_root=storage_root, fsync=fsync)
-        move_file_within_root(
-            temp_attachments_dir / fname,
-            dst,
-            storage_root=storage_root,
-            fsync=fsync,
-        )
-        moved_attachments.append((dst, attachment_backup))
-    return moved_attachments
-
-
-def _commit_sidecar_file(
+def _commit_sidecar(
     tmp_dir: Path,
-    sidecar_path: Path,
-    *,
-    storage_root: Path,
-    fsync: bool,
-) -> None:
-    move_file_within_root(
-        tmp_dir / sidecar_path.name,
-        sidecar_path,
-        storage_root=storage_root,
-        fsync=fsync,
-    )
-
-
-def _rollback_failed_sidecar_commit(
-    *,
     target_path: Path,
     sidecar_path: Path,
-    moved_attachments: list[tuple[Path, Path | None]],
-    pdf_backup: Path | None,
-    sidecar_backup: Path | None,
-    storage_root: Path,
-    fsync: bool,
-) -> None:
-    _log = structlog.get_logger(__name__)
-    _log.error(
-        "ticket_storage.sidecar_move_failed_removing_orphan_pdf",
-        pdf_path=str(target_path),
-    )
-    _remove_committed_path(sidecar_path, event="ticket_storage.sidecar_cleanup_failed")
-    _remove_committed_path(target_path, event="ticket_storage.orphan_pdf_removal_failed")
-    _rollback_moved_attachments(
-        moved_attachments,
-        storage_root=storage_root,
-        fsync=fsync,
-    )
-    _restore_backup(
-        pdf_backup,
-        target_path,
-        storage_root=storage_root,
-        fsync=fsync,
-        event="ticket_storage.pdf_backup_restore_failed",
-    )
-    _restore_backup(
-        sidecar_backup,
-        sidecar_path,
-        storage_root=storage_root,
-        fsync=fsync,
-        event="ticket_storage.sidecar_backup_restore_failed",
-    )
-
-
-def _rollback_moved_attachments(
-    moved_attachments: list[tuple[Path, Path | None]],
     *,
     storage_root: Path,
     fsync: bool,
 ) -> None:
-    for attachment_path, attachment_backup in reversed(moved_attachments):
-        _remove_committed_path(
-            attachment_path,
-            event="ticket_storage.orphan_attachment_removal_failed",
-        )
-        _restore_backup(
-            attachment_backup,
-            attachment_path,
+    _backup_if_exists(sidecar_path, storage_root=storage_root, fsync=fsync)
+    try:
+        move_file_within_root(
+            tmp_dir / sidecar_path.name,
+            sidecar_path,
             storage_root=storage_root,
             fsync=fsync,
-            event="ticket_storage.attachment_backup_restore_failed",
         )
+    except Exception:
+        _log = structlog.get_logger(__name__)
+        _log.error(
+            "ticket_storage.sidecar_move_failed_removing_orphan_pdf",
+            pdf_path=str(target_path),
+        )
+        try:
+            os.remove(target_path)
+        except OSError:
+            _log.error(
+                "ticket_storage.orphan_pdf_removal_failed",
+                pdf_path=str(target_path),
+            )
+        raise
 
 
 def store_ticket_files(
     pdf_bytes: bytes,
     snapshot: Snapshot,
     target_path: Path,
+    sidecar_path: Path,
     ticket_id: int,
     now: datetime,
     settings: Settings,
@@ -324,27 +288,42 @@ def store_ticket_files(
     Uses a temp directory under the target parent; all files are renamed into place.
     The sidecar is moved last so its presence reliably indicates a complete archival.
     """
-    sha256_hex = compute_sha256(pdf_bytes)
+    sha256_hex = sha256(pdf_bytes).hexdigest()
     size_bytes = len(pdf_bytes)
-    sidecar_path = target_path.with_name(target_path.name + ".json")
 
-    ensure_dir(target_path.parent)
-    temp_archive_root = Path(
-        tempfile.mkdtemp(prefix=f".tmp-archiving-{ticket_id}-", dir=target_path.parent)
+    temp_archive_root = (
+        target_path.parent / f".tmp-archiving-{ticket_id}-{uuid.uuid4().hex[:8]}"
     )
 
     try:
-        attachment_entries = _stage_ticket_files(
-            temp_archive_root=temp_archive_root,
-            pdf_bytes=pdf_bytes,
-            snapshot=snapshot,
-            target_path=target_path,
-            ticket_id=ticket_id,
-            now=now,
-            sha256_hex=sha256_hex,
-            settings=settings,
+        ensure_dir(temp_archive_root)
+        attachments_dir = target_path.parent / "attachments"
+        attachment_entries = _write_attachments(
+            temp_archive_root,
+            snapshot,
+            settings.storage.root,
+            attachments_dir,
+            fsync=settings.storage.fsync,
         )
-
+        write_bytes(
+            temp_archive_root / target_path.name,
+            pdf_bytes,
+            fsync=settings.storage.fsync,
+            storage_root=settings.storage.root,
+        )
+        _build_and_write_audit(
+            temp_archive_root,
+            sidecar_path.name,
+            context=AuditWriteContext(
+                ticket_id=ticket_id,
+                snapshot=snapshot,
+                now=now,
+                target_path=target_path,
+                sha256_hex=sha256_hex,
+                settings=settings,
+                attachment_entries=attachment_entries,
+            ),
+        )
         _commit_files_to_storage(
             temp_archive_root,
             target_path,
@@ -354,7 +333,8 @@ def store_ticket_files(
             fsync=settings.storage.fsync,
         )
     finally:
-        _cleanup_staging_dir(temp_archive_root)
+        if temp_archive_root.exists():
+            shutil.rmtree(temp_archive_root, ignore_errors=True)
 
     return StorageResult(
         target_path=target_path,
@@ -362,57 +342,3 @@ def store_ticket_files(
         sha256_hex=sha256_hex,
         size_bytes=size_bytes,
     )
-
-
-def _stage_ticket_files(
-    *,
-    temp_archive_root: Path,
-    pdf_bytes: bytes,
-    snapshot: Snapshot,
-    target_path: Path,
-    ticket_id: int,
-    now: datetime,
-    sha256_hex: str,
-    settings: Settings,
-) -> list[dict[str, Any]]:
-    attachments_dir = target_path.parent / "attachments"
-    attachment_entries = _write_attachments(
-        temp_archive_root,
-        snapshot,
-        settings.storage.root,
-        attachments_dir,
-        fsync=settings.storage.fsync,
-    )
-    write_bytes(
-        temp_archive_root / target_path.name,
-        pdf_bytes,
-        fsync=settings.storage.fsync,
-        storage_root=settings.storage.root,
-    )
-    _build_and_write_audit(
-        _AuditSidecarRequest(
-            tmp_dir=temp_archive_root,
-            sidecar_name=target_path.name + ".json",
-            ticket_id=ticket_id,
-            snapshot=snapshot,
-            now=now,
-            target_path=target_path,
-            sha256_hex=sha256_hex,
-            settings=settings,
-            attachment_entries=attachment_entries,
-        )
-    )
-    return attachment_entries
-
-
-def _cleanup_staging_dir(temp_archive_root: Path) -> None:
-    if not temp_archive_root.exists():
-        return
-    try:
-        shutil.rmtree(temp_archive_root)
-    except OSError:
-        log.warning(
-            "staging_dir_cleanup_failed",
-            path=str(temp_archive_root),
-            exc_info=True,
-        )

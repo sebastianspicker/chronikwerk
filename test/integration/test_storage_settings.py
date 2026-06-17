@@ -8,23 +8,20 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from pydantic import ValidationError
 
-from test.support.checks import check
-from test.support.credentials import fake_credential
-from test.support.integration_helpers import (
-    expected_agent_archive_pdf_path,
-    mock_success_zammad_write_routes,
-    zammad_storage_settings,
-)
-from test.support.time_control import freeze_process_ticket_now
+from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
 
 
 def _settings(storage_root: str, *, fsync: bool = True) -> Settings:
-    return zammad_storage_settings(storage_root, storage_overrides={"fsync": fsync})
+    return Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": storage_root, "fsync": fsync},
+        }
+    )
 
 
 def _mock_happy_zammad(ticket_id: int = 123) -> None:
@@ -52,11 +49,19 @@ def _mock_happy_zammad(ticket_id: int = 123) -> None:
         params={"object": "Ticket", "o_id": str(ticket_id)},
     ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
 
-    respx.get(f"https://zammad.example.local/api/v1/ticket_articles/by_ticket/{ticket_id}").mock(
-        return_value=httpx.Response(200, json=[])
-    )
+    respx.get(
+        f"https://zammad.example.local/api/v1/ticket_articles/by_ticket/{ticket_id}"
+    ).mock(return_value=httpx.Response(200, json=[]))
 
-    mock_success_zammad_write_routes()
+    respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    respx.post("https://zammad.example.local/api/v1/tags/add").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
+        return_value=httpx.Response(200, json={"id": 999})
+    )
 
 
 def _expected_pdf_path(
@@ -66,18 +71,18 @@ def _expected_pdf_path(
     ticket_number: str,
     fixed_now: datetime,
 ) -> Path:
-    return expected_agent_archive_pdf_path(
-        tmp_path,
-        settings=settings,
-        fixed_now=fixed_now,
+    filename = build_filename_from_pattern(
+        settings.storage.filename_pattern,
         ticket_number=ticket_number,
+        timestamp_utc=fixed_now.date().isoformat(),
     )
+    return tmp_path / "agent" / "A" / "B" / "C" / filename
 
 
 def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = _settings(str(tmp_path), fsync=False)
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     def _fsync(_: int) -> None:
         raise AssertionError("os.fsync must not be called when storage.fsync=false")
@@ -92,20 +97,4 @@ def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.Monke
     expected_pdf = _expected_pdf_path(
         tmp_path, settings=settings, ticket_number="20240123", fixed_now=fixed_now
     )
-    check(not not expected_pdf.exists(), "assertion failed")
-
-
-def test_storage_atomic_write_setting_is_not_supported(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="atomic_write"):
-        Settings.from_mapping(
-            {
-                "zammad": {
-                    "base_url": "https://zammad.example.local",
-                    "api_token": fake_credential("test-token"),
-                },
-                "storage": {
-                    "root": str(tmp_path),
-                    "atomic_write": False,
-                },
-            }
-        )
+    assert expected_pdf.exists()

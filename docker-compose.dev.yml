@@ -20,7 +20,7 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"
       SERVER_PORT: "${SERVER_PORT:-8080}"
-      STORAGE_ROOT: "${STORAGE_ROOT:-/mnt/archive}"
+      STORAGE__ROOT: "${STORAGE__ROOT:-/mnt/archive}"
     volumes:
       # Mount entire project for hot-reload during development.
       - ./:/app

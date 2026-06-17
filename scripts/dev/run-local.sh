@@ -1,11 +1,11 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Make executable:
-#   chmod +x scripts/dev/run-local.sh
+# chmod +x scripts/dev/run-local.sh
 #
 # Purpose:
-#   Local developer entrypoint for running the FastAPI service.
+# Local developer entrypoint running FastAPI service.
 
 usage() {
   cat >&2 <<'EOF'
@@ -13,18 +13,18 @@ Usage:
   scripts/dev/run-local.sh [--reload] [--dry-run]
 
 Environment:
-  SERVER_HOST (default: 127.0.0.1)
+  SERVER_HOST (default: 0.0.0.0)
   SERVER_PORT (default: 8080)
 
 Notes:
-  - Loads configuration via the normal Settings loader, so `.env` in the repo root is supported.
+  - Loads the normal Settings loader, so `.env` in the repo root is supported.
 EOF
 }
 
 reload=0
 dry_run=0
 
-while [[ $# -gt 0 ]]; do
+while [ "$#" -gt 0 ]; do
   case "$1" in
     --reload)
       reload=1
@@ -46,26 +46,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -- "${script_dir}/../.." && pwd)"
+script_dir="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+repo_root="$(CDPATH='' cd "${script_dir}/../.." && pwd)"
 
-host="${SERVER_HOST:-127.0.0.1}"
+host="${SERVER_HOST:-0.0.0.0}"
 port="${SERVER_PORT:-8080}"
-
-cmd=(python -m uvicorn zammad_pdf_archiver.asgi:app --host "${host}" --port "${port}")
-if [[ "${reload}" -eq 1 ]]; then
-  cmd+=(--reload)
-fi
 
 echo "Repo: ${repo_root}"
 echo "Command:"
-printf '  %q' "${cmd[@]}"
+printf '%s' "python -m uvicorn zammad_pdf_archiver.asgi:app --host ${host} --port ${port}"
+if [ "${reload}" -eq 1 ]; then
+  printf '%s' " --reload"
+fi
 echo
 
-if [[ "${dry_run}" -eq 1 ]]; then
+if [ "${dry_run}" -eq 1 ]; then
   exit 0
 fi
 
 cd "${repo_root}"
 export PYTHONPATH="${repo_root}/src"
-exec "${cmd[@]}"
+if [ "${reload}" -eq 1 ]; then
+  exec python -m uvicorn zammad_pdf_archiver.asgi:app --host "${host}" --port "${port}" --reload
+fi
+exec python -m uvicorn zammad_pdf_archiver.asgi:app --host "${host}" --port "${port}"

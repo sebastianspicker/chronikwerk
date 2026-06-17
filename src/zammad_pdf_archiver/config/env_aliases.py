@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 
@@ -126,10 +126,13 @@ _CANONICAL_MAPPINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def get_flat_env_settings_source() -> dict[str, Any]:
-    env = os.environ
-    data: dict[str, Any] = {}
+def get_flat_env_settings_source() -> Callable[[], dict[str, Any]]:
+    def source() -> dict[str, Any]:
+        env = os.environ
+        data: dict[str, Any] = {}
 
-    _apply_alias_mappings(env, data, _CANONICAL_MAPPINGS)
+        _apply_alias_mappings(env, data, _CANONICAL_MAPPINGS)
 
-    return data
+        return data
+
+    return source

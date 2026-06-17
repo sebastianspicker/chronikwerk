@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from zammad_pdf_archiver._version import __version__
 from zammad_pdf_archiver.config.settings import SigningSettings
-from zammad_pdf_archiver.domain.package_version import get_package_version
 from zammad_pdf_archiver.domain.time_utils import format_timestamp_utc
-
-
-def compute_sha256(data: bytes) -> str:
-    if not isinstance(data, (bytes, bytearray)):
-        raise TypeError("data must be bytes")
-    return hashlib.sha256(data).hexdigest()
 
 
 def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
@@ -23,7 +16,6 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
     Best-effort extraction of a signing certificate fingerprint (SHA-256 hex).
     """
     try:
-        from cryptography import x509
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.serialization import pkcs12
 
@@ -37,21 +29,9 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
             if cert is None:
                 return None
             return cert.fingerprint(hashes.SHA256()).hex()
-
-        # KEEP: this is an audit-only fingerprint fallback for legacy/constructed
-        # signing settings. Validated runtime signing still requires pfx_path;
-        # cert_path is not signer material.
-        cert_path = signing_settings.pades.cert_path
-        if cert_path is None:
-            return None
-        raw = Path(cert_path).read_bytes()
-        if raw.lstrip().startswith(b"-----BEGIN"):
-            cert = x509.load_pem_x509_certificate(raw)
-        else:
-            cert = x509.load_der_x509_certificate(raw)
-        return cert.fingerprint(hashes.SHA256()).hex()
     except Exception:
         return None
+    return None
 
 
 def _get_fingerprint(signing_settings: SigningSettings) -> str | None:
@@ -68,33 +48,27 @@ class AuditRecordInput:
     created_at: datetime
     storage_path: str
     sha256: str
-    signing_settings: SigningSettings | None = None
-    service_name: str = "zammad-pdf-archiver"
-    service_dist_name: str = "zammad-pdf-archiver"
-    attachments: list[dict[str, Any]] | None = None
-    attachment_summary: dict[str, Any] | None = None
 
 
-def build_audit_record(record: AuditRecordInput) -> dict[str, Any]:
+def build_audit_record(
+    record: AuditRecordInput,
+    *,
+    signing_settings: SigningSettings | None = None,
+    service_name: str = "zammad-pdf-archiver",
+    attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Build a JSON-serialisable audit record for a successfully archived ticket."""
-    signing_enabled = record.signing_settings.enabled if record.signing_settings else False
-    tsa_used = record.signing_settings.timestamp.enabled if record.signing_settings else False
-    cert_fingerprint = (
-        _get_fingerprint(record.signing_settings) if record.signing_settings else None
-    )
+    signing_enabled = signing_settings.enabled if signing_settings else False
+    tsa_used = signing_settings.timestamp.enabled if signing_settings else False
+    cert_fingerprint = _get_fingerprint(signing_settings) if signing_settings else None
 
     signing: dict[str, Any] = {"enabled": signing_enabled, "tsa_used": tsa_used}
     if cert_fingerprint:
         signing["cert_fingerprint"] = cert_fingerprint
 
-    version = get_package_version(
-        record.service_dist_name,
-        fallback="unknown",
-        catch_unexpected=True,
-    )
     service: dict[str, Any] = {
-        "name": record.service_name,
-        "version": version,
+        "name": service_name,
+        "version": __version__,
         "python": sys.version.split(" ", 1)[0],
     }
 
@@ -108,8 +82,6 @@ def build_audit_record(record: AuditRecordInput) -> dict[str, Any]:
         "signing": signing,
         "service": service,
     }
-    if record.attachments:
-        out["attachments"] = record.attachments
-    if record.attachment_summary:
-        out["attachment_summary"] = record.attachment_summary
+    if attachments:
+        out["attachments"] = attachments
     return out

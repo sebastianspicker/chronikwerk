@@ -41,11 +41,9 @@ sudo ${EDITOR:-vi} /etc/zammad-archiver/zammad-archiver.env
 
 Minimum required values:
 
-- `ZAMMAD_BASE_URL`
-- `ZAMMAD_API_TOKEN`
-- `WEBHOOK_HMAC_SECRET` (recommended), or both unsigned-mode test flags for
-  internal test environments only
-- `STORAGE_ROOT`
+- `ZAMMAD__BASE_URL`
+- `ZAMMAD__API_TOKEN`
+- `STORAGE__ROOT`
 
 Config file (optional):
 
@@ -79,7 +77,7 @@ services:
 
 ## 5) CIFS mount example (brief)
 
-If your archive storage is a CIFS/SMB share, mount it on the host and point `STORAGE_ROOT` to the mountpoint.
+If your archive storage is a CIFS/SMB share, mount it on the host and point `STORAGE__ROOT` to the mountpoint.
 
 One-off mount (placeholder helper; review options before production):
 

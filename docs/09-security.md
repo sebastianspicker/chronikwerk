@@ -8,41 +8,36 @@ This document summarizes the service threat model and implemented mitigations.
 flowchart LR
   Z["Zammad"] -->|"Webhook"| I["Ingress: /ingest"]
   OP["Operators"] -->|"Config + secrets"| I
-  A["Admin / Ops clients"] -->|"Bearer/Basic auth: /admin; Bearer auth: /admin/api/* + /jobs/{ticket_id} + /jobs/queue/stats + /jobs/history + /jobs/queue/dlq/drain"| I
+  A["Ops clients"] -->|"Bearer auth: /retry/*"| I
   I -->|"API token"| ZA["Zammad API"]
-  I -->|"Queue + history streams"| R["Redis (optional)"]
   I -->|"Write output"| FS["Archive filesystem"]
   I -->|"Optional RFC3161"| TSA["TSA endpoint"]
 ```
 
 ## 2. Security-Relevant Assets
 
-- webhook secret (`WEBHOOK_HMAC_SECRET` / legacy `WEBHOOK_SHARED_SECRET`)
-- Zammad API token (`ZAMMAD_API_TOKEN`)
+- webhook secret (`ZAMMAD__WEBHOOK_HMAC_SECRET`)
+- Zammad API token (`ZAMMAD__API_TOKEN`)
 - signing material (`SIGNING_PFX_PATH`, `SIGNING_PFX_PASSWORD`)
-- TSA credentials (`signing.timestamp.rfc3161.user` /
-  `signing.timestamp.rfc3161.password`, or `TSA_USER` / `TSA_PASS`)
+- TSA credentials (`TSA_USER`, `TSA_PASS`)
 - archive outputs (PDFs + sidecar checksums)
-- Redis queue/history/DLQ payloads when `workflow.execution_backend=redis_queue`
 
 ## 3. Threats and Mitigations
 
 ### Threat: forged webhook requests
 
 Mitigations:
-- HMAC verification (`X-Hub-Signature: sha1=<hex>` or `sha256=<hex>`) using `hmac.compare_digest`
-- optional SHA-1 rejection with `hardening.webhook.webhook_reject_sha1=true`
 - fail-closed default when no webhook secret is configured
 - unsigned mode requires explicit opt-in
 
 ### Threat: replayed/duplicate webhook delivery
 
 Mitigations:
-- TTL dedupe keyed by `X-Zammad-Delivery`; memory-backed by default, Redis-backed when `workflow.idempotency_backend=redis`
+- in-memory TTL dedupe keyed by `X-Zammad-Delivery`
 - optional strict delivery ID requirement
 
 Residual risk:
-- memory-backed dedupe state is process-local and reset on restart
+- dedupe state is process-local and reset on restart
 
 ### Threat: path traversal or arbitrary file write
 
@@ -50,7 +45,7 @@ Mitigations:
 - strict segment validation and deterministic sanitization
 - root confinement (`ensure_within_root`)
 - symlink traversal rejection under storage root
-- sidecar-last storage commits through a temporary work directory
+- atomic replace writes
 
 ### Threat: secret leakage in logs or ticket notes
 
@@ -64,10 +59,8 @@ Redaction is best-effort (known keys and common patterns). Operators should avoi
 ### Threat: request flood / oversized payload DoS
 
 Mitigations:
-- body size limit middleware (`MAX_BODY_BYTES`)
-- over-limit bodies return `413` immediately; the application does not drain
-  attacker-controlled bytes after the limit is known or exceeded
-- token-bucket rate limiting (`RATE_LIMIT_*`)
+- body size limit middleware (`HARDENING__BODY_SIZE_LIMIT__MAX_BYTES`)
+- token-bucket rate limiting (`HARDENING__RATE_LIMIT__*`)
 
 ### Threat: unsafe upstream transport settings
 
@@ -92,11 +85,11 @@ Operational controls required:
 
 ## 4. Residual Risks
 
-- distributed durable dedupe requires Redis idempotency to be configured
+- no distributed durable dedupe store
 - no built-in immutable/WORM enforcement
 - **TOCTOU on symlink check:** the storage layer rejects paths that traverse symlinks under the root, but the check happens before the write. A symlink can be created between the check and the write (time-of-check to time-of-use race). For high-assurance deployments, use a dedicated mount or filesystem controls; the application cannot fully remove this risk.
 - **O_NOFOLLOW (Bugs #14/#41):** Final file open uses `O_NOFOLLOW` where the platform provides it (`os.O_NOFOLLOW`). On platforms where `O_NOFOLLOW` is not defined (e.g. some Windows builds), it is passed as `0` and the kernel may follow a symlink at the target path. Symlink rejection under the storage root is still performed before write; this residual risk applies only to the last path component. Operators on such platforms should use a dedicated mount or avoid symlinks in the archive tree.
-- **Delivery ID dedupe is in-memory by default:** duplicate webhook deliveries can be processed again after a process restart unless Redis idempotency is configured.
+- **Delivery ID dedupe is in-memory only:** duplicate webhook deliveries can be processed again after a process restart; no durable idempotency store.
 - **TEMPLATES_ROOT:** when set (env), the process loads HTML templates from that path. Only the process owner should set it; point it to a controlled directory.
 - archive long-term trust depends on external trust and storage controls
 
@@ -106,12 +99,12 @@ Operational controls required:
 - configure and rotate webhook HMAC secret
 - keep body/rate limits enabled and tuned
 - require delivery IDs when available
-- protect `/metrics` access when enabled (set `METRICS_BEARER_TOKEN` and restrict by network where possible)
-- when behind a reverse proxy, set `RATE_LIMIT_CLIENT_KEY_HEADER=X-Forwarded-For` so rate limits apply per client IP (trust proxy to set the header)
+- protect `/metrics` access when enabled (set `OBSERVABILITY__METRICS_BEARER_TOKEN` or restrict by network)
+- when behind a reverse proxy, set `HARDENING__RATE_LIMIT__CLIENT_KEY_HEADER=X-Forwarded-For` so rate limits apply per client IP (trust proxy to set the header)
 - secure and monitor storage mount permissions
 - keep signing/TSA credentials in secrets management, not source-controlled files
 
 ## 6. See also
 
+- [`docs/release-checklist.md`](release-checklist.md) – release and deployment safety checks.
 - [`docs/api.md`](api.md) – public API and webhook contract.
-- [`docs/08-operations.md`](08-operations.md#10-residual-risks-and-release-readiness) – deployment readiness and residual risks.

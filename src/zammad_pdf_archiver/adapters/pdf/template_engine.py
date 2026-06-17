@@ -1,128 +1,59 @@
 from __future__ import annotations
 
-import re
-from datetime import datetime
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import structlog
-from jinja2 import (
-    Environment,
-    FileSystemLoader,
-    PackageLoader,
-    pass_context,
-    select_autoescape,
-)
-from jinja2.loaders import BaseLoader
+from jinja2 import Environment, PackageLoader, pass_context, select_autoescape
 
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
+_TEMPLATE_NAME = "default"
 _TEMPLATE_FILE = "ticket.html"
-log = structlog.get_logger(__name__)
-
-BUILTIN_TEMPLATE_NAMES: frozenset[str] = frozenset({"default", "minimal", "compact"})
-_SAFE_TEMPLATE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def validate_template_name(template_name: str) -> str:
-    """
-    Validate and normalize template name. Raises ValueError if empty, contains path
-    separators/traversal, or uses characters outside the safe variant-name subset.
-    Returns stripped name.
-    """
-    if not isinstance(template_name, str):
-        raise ValueError("template_name must be a string")
-    name = template_name.strip()
-    if not name:
-        raise ValueError("template_name must be a non-empty string")
-    if "/" in name or "\\" in name or ".." in name:
-        raise ValueError("template_name must not contain path separators or '..'")
-    if not _SAFE_TEMPLATE_NAME_RE.fullmatch(name):
-        raise ValueError(
-            "template_name may contain only letters, numbers, '_' and '-'"
-        )
-    return name
 
-
-@lru_cache(maxsize=32)
-def _env_for(template_name: str, templates_root: Path | None = None) -> Environment:
-    # NOTE: The lru_cache means template file changes on disk are NOT picked up
-    # until the process is restarted.  This is acceptable for production where
-    # templates are baked into the container image and rarely change at runtime.
-    template_name = validate_template_name(template_name)
-
-    loader = _loader_for(template_name, templates_root=templates_root)
-
+@lru_cache(maxsize=1)
+def _env_for() -> Environment:
     env = Environment(
-        loader=loader,
+        loader=PackageLoader("zammad_pdf_archiver", "templates"),
         autoescape=select_autoescape(["html", "xml"]),
     )
     _register_filters(env)
     return env
 
 
-def _loader_for(template_name: str, templates_root: Path | None) -> BaseLoader:
-    template_name = validate_template_name(template_name)
-
-    if templates_root is None:
-        if template_name not in BUILTIN_TEMPLATE_NAMES:
-            raise ValueError(
-                f"built-in template_name must be one of {sorted(BUILTIN_TEMPLATE_NAMES)}, "
-                f"got {template_name!r}; set pdf.templates_root for custom variants"
-            )
-        return PackageLoader("zammad_pdf_archiver", "templates")
-
-    if not templates_root.exists() or not templates_root.is_dir():
-        raise FileNotFoundError(f"Template root folder not found: {templates_root}")
-    template_dir = templates_root / template_name
-    if not template_dir.exists() or not template_dir.is_dir():
-        raise FileNotFoundError(f"Template folder not found: {template_dir}")
-    return FileSystemLoader(str(templates_root))
-
-
 def _register_filters(env: Environment) -> None:
-    def format_dt(value: Any, tz_name: str = "UTC") -> str:
-        return _format_datetime(value, tz_name=tz_name, fmt="%Y-%m-%d %H:%M")
-
     @pass_context
-    def format_dt_local(context: Any, value: Any, fmt: str = "%Y-%m-%d %H:%M") -> str:
-        tz_name = context.get("pdf_timezone", "UTC")
-        return _format_datetime(value, tz_name=tz_name, fmt=fmt)
+    def datetime_filter(ctx: dict[str, Any], value: Any, fmt: str = "%d.%m.%Y %H:%M") -> str:
+        return _format_datetime(
+            value,
+            fmt=fmt,
+            timezone=str(ctx.get("pdf_timezone") or "Europe/Berlin"),
+        )
 
-    env.filters["format_dt"] = format_dt
-    env.filters["format_dt_local"] = format_dt_local
+    env.filters["datetime"] = datetime_filter
+    env.filters["format_dt_local"] = datetime_filter
 
 
-def _format_datetime(value: Any, *, tz_name: str, fmt: str) -> str:
-    if not isinstance(value, datetime):
-        return str(value) if value is not None else "—"
+def _format_datetime(value: Any, *, fmt: str, timezone: str) -> str:
+    if value is None:
+        return ""
     try:
-        target_tz = ZoneInfo(tz_name)
+        target_tz = ZoneInfo(timezone)
         localized = value.astimezone(target_tz)
         return localized.strftime(fmt)
     except Exception:
-        log.warning("datetime_format_failed", raw=str(value), timezone=tz_name, exc_info=True)
-        return value.strftime(fmt)
+        return value.strftime(fmt) if hasattr(value, "strftime") else str(value)
 
 
 def render_html(
     snapshot: Snapshot,
-    template_name: str,
     *,
     locale: str = "de_DE",
     timezone: str = "Europe/Berlin",
-    templates_root: Path | None = None,
 ) -> str:
-    """
-    Render a Snapshot to HTML using templates/<template_name>/ticket.html.
-
-    Jinja context is restricted to a minimal whitelist: only snapshot, ticket, and
-    articles are passed; no config, request, or full object graph.
-    """
-    env = _env_for(template_name, templates_root=templates_root)
-    template = env.get_template(f"{template_name}/{_TEMPLATE_FILE}")
+    template = _env_for().get_template(f"{_TEMPLATE_NAME}/{_TEMPLATE_FILE}")
     return template.render(
         snapshot=snapshot,
         ticket=snapshot.ticket,

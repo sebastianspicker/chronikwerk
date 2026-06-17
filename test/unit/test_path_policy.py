@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from test.support.checks import check
 from zammad_pdf_archiver.adapters.storage.layout import build_target_dir
 from zammad_pdf_archiver.domain.path_policy import (
     ensure_within_root,
@@ -14,21 +13,21 @@ from zammad_pdf_archiver.domain.path_policy import (
 
 
 def test_sanitize_segment_allows_safe_chars() -> None:
-    check(not not sanitize_segment("Az09._-") == "Az09._-", "assertion failed")
+    assert sanitize_segment("Az09._-") == "Az09._-"
 
 
 def test_sanitize_segment_replaces_whitespace() -> None:
-    check(not not sanitize_segment("a b\tc\nd") == "a_b_c_d", "assertion failed")
+    assert sanitize_segment("a b\tc\nd") == "a_b_c_d"
 
 
 def test_sanitize_segment_normalizes_unicode() -> None:
-    check(not not sanitize_segment("über café") == "uber_cafe", "assertion failed")
+    assert sanitize_segment("über café") == "uber_cafe"
 
 
 def test_sanitize_segment_non_ascii_fallback() -> None:
     # Docs promise unsupported characters become "_" rather than producing empty segments.
-    check(not not sanitize_segment("客户") == "_", "assertion failed")
-    check(not not sanitize_segment("🤷") == "_", "assertion failed")
+    assert sanitize_segment("客户") == "_"
+    assert sanitize_segment("🤷") == "_"
 
 
 def test_unicode_homoglyph_traversal_segments_are_rejected(tmp_path: Path) -> None:
@@ -41,8 +40,8 @@ def test_unicode_homoglyph_traversal_segments_are_rejected(tmp_path: Path) -> No
 
 
 def test_sanitize_segment_collapses_multiple_underscores() -> None:
-    check(not not sanitize_segment("a  b") == "a_b", "assertion failed")
-    check(not not sanitize_segment("a***b") == "a_b", "assertion failed")
+    assert sanitize_segment("a  b") == "a_b"
+    assert sanitize_segment("a***b") == "a_b"
 
 
 def test_sanitize_segment_rejects_non_string() -> None:

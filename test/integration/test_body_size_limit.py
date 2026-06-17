@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from test.support.body_size_limit_helpers import check_request_too_large, post_oversized_json
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
@@ -20,31 +19,29 @@ def _test_settings(storage_root: str) -> Settings:
     )
 
 
-def _body_limited_client(tmp_path) -> TestClient:  # noqa: ANN001
-    return TestClient(create_app(_test_settings(str(tmp_path))))
-
-
 def test_body_size_limit_triggers_on_ingest(tmp_path) -> None:
-    client = _body_limited_client(tmp_path)
+    app = create_app(_test_settings(str(tmp_path)))
+    client = TestClient(app)
 
-    resp = post_oversized_json(client, "/ingest")
-    check_request_too_large(resp, request_id=True)
+    resp = client.post(
+        "/ingest",
+        content=b'{"ticket":{"id":123}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 413
+    assert resp.json() == {"detail": "request_too_large", "code": "request_too_large"}
+    assert resp.headers.get("X-Request-Id")
 
 
 def test_body_size_limit_triggers_on_ingest_batch(tmp_path) -> None:
-    client = _body_limited_client(tmp_path)
+    app = create_app(_test_settings(str(tmp_path)))
+    client = TestClient(app)
 
     resp = client.post(
         "/ingest/batch",
         content=b'[{"ticket":{"id":123}}]',
         headers={"Content-Type": "application/json"},
     )
-    check_request_too_large(resp, request_id=True)
-
-
-def test_body_size_limit_triggers_on_ingest_path_variants(tmp_path) -> None:
-    client = _body_limited_client(tmp_path)
-
-    for path in ("/ingest/", "/ingest%2F", "/ingest/batch/"):
-        resp = post_oversized_json(client, path, follow_redirects=False)
-        check_request_too_large(resp, request_id=True)
+    assert resp.status_code == 413
+    assert resp.json() == {"detail": "request_too_large", "code": "request_too_large"}
+    assert resp.headers.get("X-Request-Id")

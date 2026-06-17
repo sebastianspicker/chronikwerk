@@ -16,7 +16,7 @@ def timeouts_for(seconds: float) -> httpx.Timeout:
 async def drain_stream(receive: Receive) -> None:
     """
     Consume the request body so the connection is left in a clean state.
-    Shared by middleware paths that reject a request before it reaches the route.
+    Shared helper to replace duplicates in middleware (Bug #P3-3).
     """
     while True:
         message = await receive()

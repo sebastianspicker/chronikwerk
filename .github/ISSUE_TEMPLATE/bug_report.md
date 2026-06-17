@@ -10,14 +10,6 @@ assignees: ""
 
 <!-- What happened? What did you expect? -->
 
-## Impact
-
-<!-- Who is affected? Is this data loss, failed archival, false success, security, UX, or docs-only? -->
-
-## Affected contract
-
-<!-- API, config, storage layout, PDF/sidecar, tags, queue/idempotency, auth, admin UI, deployment, or docs. -->
-
 ## Steps to reproduce
 
 1.
@@ -29,23 +21,20 @@ assignees: ""
 - OS:
 - Python:
 - Deployment: (docker/systemd/other)
-- Version/commit:
-- Execution backend: (inprocess/redis_queue)
-- Idempotency backend: (memory/redis)
+- Archiver version/commit:
+- Zammad version:
+
+## Impact
+
+- Affected endpoint/job/operation:
+- Expected status/tag/storage result:
+- Actual status/tag/storage result:
 
 ## Logs / Output
 
 ```text
 paste relevant logs here
 ```
-
-## Configuration context
-
-<!-- Redact secrets. Include relevant settings such as storage, signing/TSA, Redis, hardening, or template settings. -->
-
-## Workaround
-
-<!-- Is there a safe workaround? If none, write "none known". -->
 
 ## Additional context
 
