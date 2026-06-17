@@ -1,15 +1,15 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Make executable:
-#   chmod +x scripts/dev/gen-dev-certs.sh
+# chmod +x scripts/dev/gen-dev-certs.sh
 #
 # Purpose:
-#   Generate local development TLS certificates (self-signed).
-#   Useful for testing webhook delivery via HTTPS locally.
+# Generate local development TLS certificates (self-signed).
+# Useful for testing webhook delivery via HTTPS locally.
 #
 # Note:
-#   Do not use these certificates in production.
+# Do not use certificates in production.
 
 usage() {
   cat >&2 <<'EOF'
@@ -27,7 +27,7 @@ EOF
 dry_run=0
 out_dir="./.dev-certs"
 
-while [[ $# -gt 0 ]]; do
+while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run)
       dry_run=1
@@ -47,19 +47,12 @@ done
 key_path="${out_dir%/}/dev.key"
 crt_path="${out_dir%/}/dev.crt"
 
-cmd=(
-  openssl req -x509 -newkey rsa:2048 -sha256 -days 7 -nodes
-  -keyout "${key_path}"
-  -out "${crt_path}"
-  -subj "/CN=localhost"
-)
-
 echo "Output directory: ${out_dir}"
 echo "Command:"
-printf '  %q' "${cmd[@]}"
+printf '%s\n' "openssl req -x509 -newkey rsa:2048 -sha256 -days 7 -nodes -keyout ${key_path} -out ${crt_path} -subj /CN=localhost"
 echo
 
-if [[ "${dry_run}" -eq 1 ]]; then
+if [ "${dry_run}" -eq 1 ]; then
   exit 0
 fi
 
@@ -69,4 +62,7 @@ if ! command -v openssl >/dev/null 2>&1; then
 fi
 
 mkdir -p "${out_dir}"
-exec "${cmd[@]}"
+exec openssl req -x509 -newkey rsa:2048 -sha256 -days 7 -nodes \
+  -keyout "${key_path}" \
+  -out "${crt_path}" \
+  -subj "/CN=localhost"

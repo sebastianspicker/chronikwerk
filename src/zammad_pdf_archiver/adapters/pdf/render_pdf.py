@@ -33,7 +33,8 @@ def _css_file_paths(template_folder: Path) -> list[Path]:
 def _validate_article_limit(snapshot: Snapshot, max_articles: int) -> None:
     if max_articles > 0 and len(snapshot.articles) > max_articles:
         raise PermanentError(
-            f"Ticket has {len(snapshot.articles)} articles; maximum allowed is {max_articles}"
+            f"Ticket has {len(snapshot.articles)} articles; too many articles; "
+            f"maximum allowed is {max_articles}"
         )
 
 
