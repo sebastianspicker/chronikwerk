@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 from pydantic.networks import AnyHttpUrl
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
+from zammad_pdf_archiver.config.env_aliases import get_flat_env_settings_source
+
 
 class _BaseSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -221,6 +223,7 @@ class Settings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource | Any, ...]:
         return (
             env_settings,
+            get_flat_env_settings_source(),
             init_settings,
             dotenv_settings,
             file_secret_settings,
