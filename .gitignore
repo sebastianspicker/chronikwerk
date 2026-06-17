@@ -35,14 +35,7 @@ Thumbs.db
 
 # Local runtime artifacts
 *.log
-*.tmp
 coverage.json
-reports/
-scratch/
-tmp/
-playwright-report/
-test-results/
-.playwright/
 
 # IDEs
 .idea/
@@ -50,52 +43,36 @@ test-results/
 .cursor/
 .kilo/
 
-# Local automation and audit artifacts
+# Local audit and planning artifacts
 audit/
 docs/audit/
-deprecated/local-agent-harness/
 plans/
 progress.md
-.claude/
-.codacy/
-.codex/
-.agents/
-.github/codex/
-.github/workflows/codex.yml
 AGENTS.md
 AUDIT.md
 HARNESS_PRINCIPLES.md
 code_review.md
 docs/agent/
-docs/internal/
-docs/plans/
-docs/archive/
-/archive/
 docs/source-audit/
-docs/PRD.md
-docs/adr/
-docs/*-audit.md
-docs/*-plan.md
+docs/archive/
+docs/deprecated/
+deprecated/
+reports/
+.jscpd/
+*.sarif
+codacy-*.json
+codacy-*.sarif
+docs/codacy-*-ledger.md
 docs/*-ledger.md
-docs/*-status.md
-docs/*-remediation-*.md
-docs/remediation-*.md
-docs/plan.md
-docs/ledger.md
-docs/status.md
-docs/refactor-plan.md
-docs/release-checklist.md
-docs/overengineering-index.md
-docs/code-index.md
-docs/verification-baseline.md
-plan.md
-plan-*.md
-ledger.md
-status.md
-*-ledger.md
-*-status.md
+docs/*-status-ledger.md
+docs/*-remediation-ledger.md
+docs/*-remediation-status.md
 scripts/topology_inventory.sh
 
-# Local package/publish staging
-wheelhouse/
-*.tar.gz
+# Local agent/tool state
+.codacy/
+.claude/
+.codex/
+.agents/
+.github/codex/
+.github/workflows/codex.yml

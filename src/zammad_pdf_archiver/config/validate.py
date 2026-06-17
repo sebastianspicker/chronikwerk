@@ -1,61 +1,150 @@
 from __future__ import annotations
 
-from zammad_pdf_archiver.config.settings import Settings
-from zammad_pdf_archiver.config.validate_auth import (
-    validate_admin_settings as _validate_admin_settings,
-)
-from zammad_pdf_archiver.config.validate_auth import (
-    validate_metrics_settings as _validate_metrics_settings,
-)
-from zammad_pdf_archiver.config.validate_auth import (
-    validate_webhook_auth as _validate_webhook_auth,
-)
-from zammad_pdf_archiver.config.validate_transport import (
-    is_local_upstream_host as _is_local_upstream_host,
-)
-from zammad_pdf_archiver.config.validate_transport import (
-    validate_primary_transport as _validate_primary_transport,
-)
-from zammad_pdf_archiver.config.validate_transport import (
-    validate_tsa_transport as _validate_tsa_transport,
-)
-from zammad_pdf_archiver.config.validate_workflow import (
-    validate_delivery_id_requirement as _validate_delivery_id_requirement,
-)
-from zammad_pdf_archiver.config.validate_workflow import (
-    validate_multi_worker_without_redis as _validate_multi_worker_without_redis,
-)
-from zammad_pdf_archiver.config.validate_workflow import (
-    validate_redis_url as _validate_redis_url,
-)
-from zammad_pdf_archiver.config.validation_issues import (
-    ConfigValidationError,
-    ConfigValidationIssue,
-    issues_from_pydantic_error,
-)
+from collections.abc import Iterable
+from dataclasses import dataclass
+from urllib.parse import urlparse
 
-__all__ = [
-    "ConfigValidationError",
-    "ConfigValidationIssue",
-    "_is_local_upstream_host",
-    "issues_from_pydantic_error",
-    "validate_settings",
-]
+import structlog
+from pydantic import ValidationError
+
+from zammad_pdf_archiver.config.settings import Settings
+
+log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ConfigValidationIssue:
+    path: str
+    message: str
+
+
+class ConfigValidationError(ValueError):
+    def __init__(self, issues: Iterable[ConfigValidationIssue]):
+        self.issues = list(issues)
+        super().__init__(self._format_message())
+
+    def _format_message(self) -> str:
+        lines = ["Configuration invalid:"]
+        for issue in self.issues:
+            lines.append(f"- {issue.path}: {issue.message}")
+        return "\n".join(lines)
+
+
+def issues_from_pydantic_error(error: ValidationError) -> list[ConfigValidationIssue]:
+    issues: list[ConfigValidationIssue] = []
+    for item in error.errors(include_url=False):
+        loc = ".".join(str(part) for part in item.get("loc", ())) or "<root>"
+        msg = item.get("msg", "Invalid value")
+        issues.append(ConfigValidationIssue(path=loc, message=msg))
+    return issues
+
+
+
+def _validate_webhook_auth(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    secret = settings.zammad.webhook_hmac_secret
+    secret_value = secret.get_secret_value().strip() if secret is not None else ""
+    if not secret_value:
+        issues.append(
+            ConfigValidationIssue(
+                path="zammad.webhook_hmac_secret",
+        message="Missing webhook HMAC secret. Set ZAMMAD__WEBHOOK_HMAC_SECRET.",
+            )
+        )
+
+
+def _validate_delivery_id_requirement(
+    settings: Settings, issues: list[ConfigValidationIssue]
+) -> None:
+    if settings.hardening.webhook.require_delivery_id:
+        if int(settings.workflow.delivery_id_ttl_seconds) <= 0:
+            issues.append(
+                ConfigValidationIssue(
+                    path="workflow.delivery_id_ttl_seconds",
+                    message=(
+                        "hardening.webhook.require_delivery_id requires "
+                        "workflow.delivery_id_ttl_seconds to be > 0."
+                    ),
+                )
+            )
+
+
+def _validate_transport(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    zammad_url = str(settings.zammad.base_url)
+    if zammad_url.lower().startswith("http://"):
+        issues.append(
+            ConfigValidationIssue(
+                path="zammad.base_url",
+                message="Plain HTTP upstream URL is not allowed. Use https://.",
+            )
+        )
+    if not settings.zammad.verify_tls:
+        issues.append(
+            ConfigValidationIssue(
+                path="zammad.verify_tls",
+                message="TLS verification must stay enabled.",
+            )
+        )
+    _validate_tsa_transport(settings, issues=issues)
+
+
+def _validate_tsa_transport(
+    settings: Settings,
+    *,
+    issues: list[ConfigValidationIssue],
+) -> None:
+    if not settings.signing.timestamp.enabled:
+        return
+    tsa_url = settings.signing.timestamp.rfc3161.tsa_url
+    if tsa_url is None:
+        return
+    tsa_url_str = str(tsa_url)
+    parsed_tsa_url = urlparse(tsa_url_str)
+    if tsa_url_str.lower().startswith("http://"):
+        issues.append(
+            ConfigValidationIssue(
+                path="signing.timestamp.rfc3161.tsa_url",
+                message="Plain HTTP TSA URL is not allowed. Use https://.",
+            )
+        )
+    if (parsed_tsa_url.hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}:
+        issues.append(
+            ConfigValidationIssue(
+                path="signing.timestamp.rfc3161.tsa_url",
+                message="Localhost TSA URL is not allowed.",
+            )
+        )
+
+
+def _validate_observability(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    if settings.observability.metrics_enabled:
+        token = settings.observability.metrics_bearer_token
+        token_value = token.get_secret_value().strip() if token is not None else ""
+        if not token_value:
+            issues.append(
+                ConfigValidationIssue(
+                    path="observability.metrics_bearer_token",
+                    message="Metrics enabled but observability.metrics_bearer_token is missing.",
+                )
+            )
+
+
+def _validate_log_level(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    level = settings.observability.log_level.strip().upper()
+    if level not in {"TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        issues.append(
+            ConfigValidationIssue(
+                path="observability.log_level",
+                message="Unsupported log level.",
+            )
+        )
 
 
 def validate_settings(settings: Settings) -> None:
-    """Run all cross-field validation rules; raises ConfigValidationError on failure."""
     issues: list[ConfigValidationIssue] = []
-    transport = settings.hardening.transport
-
-    _validate_primary_transport(settings, transport=transport, issues=issues)
     _validate_webhook_auth(settings, issues)
     _validate_delivery_id_requirement(settings, issues)
-    _validate_tsa_transport(settings, transport=transport, issues=issues)
-    _validate_redis_url(settings, issues)
-    _validate_admin_settings(settings, issues)
-    _validate_metrics_settings(settings, issues)
-    _validate_multi_worker_without_redis(settings, issues)
-
+    _validate_transport(settings, issues)
+    _validate_observability(settings, issues)
+    _validate_log_level(settings, issues)
     if issues:
         raise ConfigValidationError(issues)

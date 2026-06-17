@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from zammad_pdf_archiver.domain.package_version import get_package_version
+from importlib import metadata
 
 
 def _read_version() -> str:
-    return get_package_version("zammad-pdf-archiver", fallback="0.0.0")
+    try:
+        return metadata.version("zammad-pdf-archiver")
+    except metadata.PackageNotFoundError:
+        return "0.0.0"
 
 
 __version__ = _read_version()

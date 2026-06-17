@@ -10,7 +10,6 @@ RemainAfterExit=yes
 
 # Environment file (see infra/systemd/zammad-archiver.env)
 EnvironmentFile=/etc/zammad-archiver/zammad-archiver.env
-Environment=ARCHIVER_ENV_FILE=/etc/zammad-archiver/zammad-archiver.env
 
 # Directory that contains docker-compose.yml
 WorkingDirectory=/opt/zammad-ticket-archiver
@@ -21,8 +20,7 @@ WorkingDirectory=/opt/zammad-ticket-archiver
 ExecStart=/usr/bin/docker compose --env-file ${ARCHIVER_ENV_FILE} -f docker-compose.yml up -d --remove-orphans
 ExecStop=/usr/bin/docker compose --env-file ${ARCHIVER_ENV_FILE} -f docker-compose.yml down
 
-TimeoutStartSec=300
-TimeoutStopSec=60
+TimeoutStartSec=0
 
 NoNewPrivileges=true
 

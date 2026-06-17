@@ -9,9 +9,8 @@ Source of truth:
 
 Effective precedence (highest first):
 1. environment variables (including `.env` values loaded into process env)
-2. flat env aliases (operator-friendly env keys)
-3. YAML mapping (`CONFIG_PATH` or `config/config.yaml` when present)
-4. defaults in settings model
+2. YAML mapping (`CONFIG_PATH` or `config/config.yaml` when present)
+3. defaults in settings model
 
 Notes:
 - nested env keys use `__`, example: `ZAMMAD__BASE_URL`
@@ -24,174 +23,129 @@ Required unless overridden by explicit unsafe/test options:
 - `zammad.base_url`
 - `zammad.api_token`
 - `storage.root`
-- webhook auth secret (`zammad.webhook_hmac_secret` or legacy
-  `server.webhook_shared_secret`), unless both
-  `hardening.webhook.allow_unsigned=true` and
-  `hardening.webhook.allow_unsigned_when_no_secret=true` are set for internal
-  testing
 
 ## 3. Key Reference
 
 ### `server`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `server.host` | `127.0.0.1` | `SERVER_HOST` | bind host; set `0.0.0.0` explicitly for container/listener deployments |
-| `server.port` | `8080` | `SERVER_PORT` | bind port |
-| `server.webhook_shared_secret` | `null` | `WEBHOOK_SHARED_SECRET` | legacy webhook secret fallback |
+| `server.host` | `0.0.0.0` | `SERVER__HOST` | bind host |
+| `server.port` | `8080` | `SERVER__PORT` | bind port |
 
 ### `zammad`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `zammad.base_url` | required | `ZAMMAD_BASE_URL` | Zammad base URL |
-| `zammad.api_token` | required | `ZAMMAD_API_TOKEN` | API token |
-| `zammad.webhook_hmac_secret` | `null` | `WEBHOOK_HMAC_SECRET` | webhook HMAC secret |
-| `zammad.timeout_seconds` | `10.0` | `ZAMMAD_TIMEOUT_SECONDS` | outbound timeout |
-| `zammad.verify_tls` | `true` | `ZAMMAD_VERIFY_TLS` | verify upstream TLS certs |
+| `zammad.base_url` | required | `ZAMMAD__BASE_URL` | Zammad base URL |
+| `zammad.api_token` | required | `ZAMMAD__API_TOKEN` | API token |
+| `zammad.webhook_hmac_secret` | `null` | `ZAMMAD__WEBHOOK_HMAC_SECRET` | webhook HMAC secret |
+| `zammad.timeout_seconds` | `10.0` | `ZAMMAD__TIMEOUT_SECONDS` | outbound timeout |
+| `zammad.verify_tls` | `true` | `ZAMMAD__VERIFY_TLS` | verify upstream TLS certs |
 
 ### `workflow`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `workflow.trigger_tag` | `pdf:sign` | `WORKFLOW_TRIGGER_TAG` | trigger tag |
-| `workflow.require_tag` | `true` | `WORKFLOW_REQUIRE_TAG` | require trigger tag for processing |
+| `workflow.trigger_tag` | `pdf:sign` | `WORKFLOW__TRIGGER_TAG` | trigger tag |
+| `workflow.require_tag` | `true` | `WORKFLOW__REQUIRE_TAG` | require trigger tag for processing |
 | `workflow.acknowledge_on_success` | `true` | none | create success note on ticket |
-| `workflow.delivery_id_ttl_seconds` | `3600` | `WORKFLOW_DELIVERY_ID_TTL_SECONDS` | delivery-ID dedupe TTL |
-| `workflow.execution_backend` | `inprocess` | `WORKFLOW_EXECUTION_BACKEND` | execution backend: `inprocess` or `redis_queue` |
-| `workflow.idempotency_backend` | `memory` | `IDEMPOTENCY_BACKEND` | delivery-ID store: `memory` or `redis` |
-| `workflow.redis_url` | `null` | `REDIS_URL` | Redis URL when `idempotency_backend=redis` or `execution_backend=redis_queue` |
-| `workflow.queue_stream` | `zammad:jobs` | `WORKFLOW_QUEUE_STREAM` | Redis stream name for queued jobs |
-| `workflow.queue_group` | `zammad:jobs:workers` | `WORKFLOW_QUEUE_GROUP` | consumer group name |
-| `workflow.queue_consumer` | `null` | `WORKFLOW_QUEUE_CONSUMER` | static consumer name (auto-generated when unset) |
-| `workflow.queue_read_block_ms` | `1000` | `WORKFLOW_QUEUE_READ_BLOCK_MS` | blocking read timeout for worker loop |
-| `workflow.queue_read_count` | `10` | `WORKFLOW_QUEUE_READ_COUNT` | max messages read per poll |
-| `workflow.queue_retry_max_attempts` | `3` | `WORKFLOW_QUEUE_RETRY_MAX_ATTEMPTS` | transient retry attempts before DLQ |
-| `workflow.queue_retry_backoff_seconds` | `2.0` | `WORKFLOW_QUEUE_RETRY_BACKOFF_SECONDS` | retry backoff base seconds |
-| `workflow.queue_dlq_stream` | `zammad:jobs:dlq` | `WORKFLOW_QUEUE_DLQ_STREAM` | dead-letter stream name |
-| `workflow.history_stream` | `zammad:jobs:history` | `WORKFLOW_HISTORY_STREAM` | Redis stream for processing history events |
-| `workflow.history_retention_maxlen` | `5000` | `WORKFLOW_HISTORY_RETENTION_MAXLEN` | approximate max history entries (`0` disables) |
+| `workflow.delivery_id_ttl_seconds` | `3600` | `WORKFLOW__DELIVERY_ID_TTL_SECONDS` | in-memory dedupe TTL |
 
 ### `fields`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `fields.archive_path` | `archive_path` | `FIELDS_ARCHIVE_PATH` | ticket custom field name for archive path |
-| `fields.archive_user_mode` | `archive_user_mode` | `FIELDS_ARCHIVE_USER_MODE` | ticket custom field name for user mode |
-| `fields.archive_user` | `archive_user` | `FIELDS_ARCHIVE_USER` | ticket custom field name for fixed user (when mode is `fixed`) |
+| `fields.archive_path` | `archive_path` | `FIELDS__ARCHIVE_PATH` | ticket custom field name for archive path |
+| `fields.archive_user_mode` | `archive_user_mode` | `FIELDS__ARCHIVE_USER_MODE` | ticket custom field name for user mode |
+| `fields.archive_user` | `archive_user` | `FIELDS__ARCHIVE_USER` | ticket custom field name for fixed user (when mode is `fixed`) |
 
 ### `storage`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `storage.root` | required | `STORAGE_ROOT` | storage root path |
-| `storage.fsync` | `true` | `STORAGE_FSYNC` | file/dir fsync behavior |
+| `storage.root` | required | `STORAGE__ROOT` | storage root path |
+| `storage.fsync` | `true` | `STORAGE__FSYNC` | file/dir fsync behavior |
 
-`storage.atomic_write` / `STORAGE_ATOMIC_WRITE` is not supported. Archive
-commits always use the ticket-storage temp-directory commit path and sidecar-last
-publication rule.
-
-#### `storage.path_policy`
-
-| Key | Default | Flat env alias | Description |
-|---|---|---|---|
-| `storage.path_policy.allow_prefixes` | `null` | none | allowed path prefixes; `null` = no restriction, `[]` = no path allowed |
-| `storage.path_policy.filename_pattern` | `Ticket-{ticket_number}_{timestamp_utc}.pdf` | none | output filename template |
-
-Path segment sanitization is deterministic and not configurable.
+| `storage.filename_pattern` | `Ticket-{ticket_number}_{timestamp_utc}.pdf` | none | output filename template |
 
 ### `pdf`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `pdf.template_variant` | `default` | `PDF_TEMPLATE_VARIANT` | built-in template variant (`default`, `minimal`, `compact`) or a safe custom variant name when `pdf.templates_root` is set |
-| `pdf.templates_root` | `null` | `TEMPLATES_ROOT` | custom template root directory; enables custom variants under `<templates_root>/<template_variant>/` |
-| `pdf.locale` | `de_DE` | `PDF_LOCALE` | locale setting (template-dependent) |
-| `pdf.timezone` | `Europe/Berlin` | `PDF_TIMEZONE` | timezone setting (template-dependent) |
-| `pdf.max_articles` | `250` | `PDF_MAX_ARTICLES` | max article count (`0` disables limit) |
-| `pdf.article_limit_mode` | `fail` | `PDF_ARTICLE_LIMIT_MODE` | `fail` (raise when over limit) or `cap_and_continue` (truncate and warn) |
-| `pdf.include_attachment_binary` | `false` | `PDF_INCLUDE_ATTACHMENT_BINARY` | include attachment binaries in snapshot/storage; see [PDF rendering](05-pdf-rendering.md) and [storage](07-storage.md) |
-| `pdf.max_attachment_bytes_per_file` | `10485760` | `PDF_MAX_ATTACHMENT_BYTES_PER_FILE` | max bytes per attachment when including binary |
-| `pdf.max_total_attachment_bytes` | `52428800` | `PDF_MAX_TOTAL_ATTACHMENT_BYTES` | max total attachment bytes per ticket |
+| `pdf.locale` | `de_DE` | `PDF__LOCALE` | locale setting (template-dependent) |
+| `pdf.timezone` | `Europe/Berlin` | `PDF__TIMEZONE` | timezone setting (template-dependent) |
+| `pdf.max_articles` | `250` | `PDF__MAX_ARTICLES` | max article count (`0` disables limit) |
+| `pdf.article_limit_mode` | `fail` | `PDF__ARTICLE_LIMIT_MODE` | `fail` (raise when over limit) or `cap_and_continue` (truncate and warn) |
+| `pdf.max_total_attachment_bytes` | `52428800` | `PDF__MAX_TOTAL_ATTACHMENT_BYTES` | max total attachment bytes per ticket |
 
 ### `signing`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `signing.enabled` | `false` | `SIGNING_ENABLED` | enable signing flow |
-| `signing.pfx_path` | `null` | `SIGNING_PFX_PATH` | PKCS#12/PFX path |
-| `signing.pfx_password` | `null` | `SIGNING_PFX_PASSWORD` | PFX password |
+| `signing.enabled` | `false` | `SIGNING__ENABLED` | enable signing flow |
+| `signing.pfx_path` | `null` | `SIGNING__PFX_PATH` | PKCS#12/PFX path |
+| `signing.pfx_password` | `null` | `SIGNING__PFX_PASSWORD` | PFX password |
 
 #### `signing.pades`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `signing.pades.cert_path` | `null` | `SIGNING_CERT_PATH` | audit certificate fingerprint fallback only; not signer material |
-| `signing.pades.reason` | `Ticket Archivierung` | `SIGNING_REASON` | PDF signature reason |
-| `signing.pades.location` | `Datacenter` | `SIGNING_LOCATION` | PDF signature location |
+| `signing.pades.reason` | `Ticket Archivierung` | `SIGNING__PADES__REASON` | PDF signature reason |
+| `signing.pades.location` | `Datacenter` | `SIGNING__PADES__LOCATION` | PDF signature location |
 
 #### `signing.timestamp.rfc3161`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `signing.timestamp.enabled` | `false` | `TSA_ENABLED` | enable RFC3161 timestamping |
-| `signing.timestamp.rfc3161.tsa_url` | `null` | `TSA_URL` | TSA endpoint URL |
-| `signing.timestamp.rfc3161.timeout_seconds` | `10.0` | `TSA_TIMEOUT_SECONDS` | TSA timeout |
-| `signing.timestamp.rfc3161.ca_bundle_path` | `null` | `TSA_CA_BUNDLE_PATH` | custom trust bundle path |
-| `signing.timestamp.rfc3161.user` | `null` | `TSA_USER` | TSA HTTP basic auth username |
-| `signing.timestamp.rfc3161.password` | `null` | `TSA_PASS` | TSA HTTP basic auth password (SecretStr) |
+| `signing.timestamp.enabled` | `false` | `SIGNING__TIMESTAMP__ENABLED` | enable RFC3161 timestamping |
+| `signing.timestamp.rfc3161.tsa_url` | `null` | `SIGNING__TIMESTAMP__RFC3161__TSA_URL` | TSA endpoint URL |
+| `signing.timestamp.rfc3161.timeout_seconds` | `10.0` | `SIGNING__TIMESTAMP__RFC3161__TIMEOUT_SECONDS` | TSA timeout |
+| `signing.timestamp.rfc3161.ca_bundle_path` | `null` | `SIGNING__TIMESTAMP__RFC3161__CA_BUNDLE_PATH` | custom trust bundle path |
+| `signing.timestamp.rfc3161.user` | `null` | `SIGNING__TIMESTAMP__RFC3161__USER` | TSA HTTP basic auth username |
+| `signing.timestamp.rfc3161.password` | `null` | `SIGNING__TIMESTAMP__RFC3161__PASSWORD` | TSA HTTP basic auth password (SecretStr) |
 
 ### `observability`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `observability.log_level` | `INFO` | `LOG_LEVEL` | log level |
-| `observability.log_format` | `null` | `LOG_FORMAT` | `json` or `human` |
-| `observability.metrics_enabled` | `false` | `METRICS_ENABLED` | expose `/metrics`; requires `observability.metrics_bearer_token` |
-| `observability.metrics_bearer_token` | `null` | `METRICS_BEARER_TOKEN` | required when metrics are enabled; requests must use `Authorization: Bearer <token>` |
-| `observability.healthz_omit_version` | `false` | `HEALTHZ_OMIT_VERSION` | omit `version` and `service` from `/healthz` response |
+| `observability.log_level` | `INFO` | `OBSERVABILITY__LOG_LEVEL` | log level |
+| `observability.log_format` | `null` | `OBSERVABILITY__LOG_FORMAT` | `json` or `human` |
+| `observability.metrics_enabled` | `false` | `OBSERVABILITY__METRICS_ENABLED` | expose `/metrics` |
+| `observability.metrics_bearer_token` | `null` | `OBSERVABILITY__METRICS_BEARER_TOKEN` | when set, require `Authorization: Bearer <token>` for `/metrics` |
+| `observability.healthz_omit_version` | `false` | `OBSERVABILITY__HEALTHZ_OMIT_VERSION` | omit `version` and `service` from `/healthz` response |
 
 ### `hardening.rate_limit`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `hardening.rate_limit.enabled` | `true` | `RATE_LIMIT_ENABLED` | enable rate limit middleware |
-| `hardening.rate_limit.rps` | `5.0` | `RATE_LIMIT_RPS` | token refill rate |
-| `hardening.rate_limit.burst` | `10` | `RATE_LIMIT_BURST` | token bucket capacity |
-| `hardening.rate_limit.include_metrics` | `false` | `RATE_LIMIT_INCLUDE_METRICS` | include `/metrics` path |
-| `hardening.rate_limit.client_key_header` | `null` | `RATE_LIMIT_CLIENT_KEY_HEADER` | header for rate-limit key (e.g. `X-Forwarded-For`) when behind proxy |
+| `hardening.rate_limit.enabled` | `true` | `HARDENING__RATE_LIMIT__ENABLED` | enable rate limit middleware |
+| `hardening.rate_limit.rps` | `5.0` | `HARDENING__RATE_LIMIT__RPS` | token refill rate |
+| `hardening.rate_limit.burst` | `10` | `HARDENING__RATE_LIMIT__BURST` | token bucket capacity |
+| `hardening.rate_limit.include_metrics` | `false` | `HARDENING__RATE_LIMIT__INCLUDE_METRICS` | include `/metrics` path |
+| `hardening.rate_limit.client_key_header` | `null` | `HARDENING__RATE_LIMIT__CLIENT_KEY_HEADER` | header for rate-limit key (e.g. `X-Forwarded-For`) when behind proxy |
 
 ### `hardening.body_size_limit`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `hardening.body_size_limit.max_bytes` | `1048576` | `MAX_BODY_BYTES` | max request body bytes (`0` disables) |
+| `hardening.body_size_limit.max_bytes` | `1048576` | `HARDENING__BODY_SIZE_LIMIT__MAX_BYTES` | max request body bytes (`0` disables) |
 
 ### `hardening.webhook`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `hardening.webhook.allow_unsigned` | `false` | `HARDENING_WEBHOOK_ALLOW_UNSIGNED` | allow unsigned webhooks |
-| `hardening.webhook.allow_unsigned_when_no_secret` | `false` | `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET` | explicit opt-in for unsigned mode when no secret is configured |
-| `hardening.webhook.require_delivery_id` | `true` | `HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID` | require `X-Zammad-Delivery` header |
-| `hardening.webhook.webhook_reject_sha1` | `false` | none | reject SHA-1 webhook signatures and accept SHA-256 only; env uses nested key `HARDENING__WEBHOOK__WEBHOOK_REJECT_SHA1` |
+| `hardening.webhook.require_delivery_id` | `false` | `HARDENING__WEBHOOK__REQUIRE_DELIVERY_ID` | require `X-Zammad-Delivery` header |
 
 ### `hardening.transport`
 
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `hardening.transport.trust_env` | `false` | `HARDENING_TRANSPORT_TRUST_ENV` | allow proxy env for outbound HTTP |
-| `hardening.transport.allow_insecure_http` | `false` | `HARDENING_TRANSPORT_ALLOW_INSECURE_HTTP` | allow `http://` upstreams |
-| `hardening.transport.allow_insecure_tls` | `false` | `HARDENING_TRANSPORT_ALLOW_INSECURE_TLS` | allow TLS verify disable |
-| `hardening.transport.allow_local_upstreams` | `false` | `HARDENING_TRANSPORT_ALLOW_LOCAL_UPSTREAMS` | allow loopback/link-local upstreams |
+| `hardening.transport.trust_env` | `false` | `HARDENING__TRANSPORT__TRUST_ENV` | allow proxy env for outbound HTTP |
 
-### `admin`
-
-| Key | Default | Flat env alias | Description |
+| Key | Default | Env key | Description |
 |---|---|---|---|
-| `admin.enabled` | `false` | `ADMIN_ENABLED` | mount `/admin` UI and `/admin/api/*` endpoints |
-| `admin.bearer_token` | `null` | `ADMIN_BEARER_TOKEN` | required when `admin.enabled=true`; used for Bearer admin API auth and Bearer/Basic dashboard auth |
-| `admin.history_limit` | `100` | `ADMIN_HISTORY_LIMIT` | default history page size in admin API/UI |
+| `retry_bearer_token` | `null` | `RETRY_BEARER_TOKEN` | Bearer auth token for `POST /retry/{ticket_id}` |
 
 ## 4. Non-schema Runtime Environment Keys
 
@@ -206,7 +160,6 @@ Equivalent nested env keys:
 ZAMMAD__BASE_URL=https://zammad.example.local
 ZAMMAD__API_TOKEN=CHANGE-ME
 STORAGE__ROOT=/mnt/archive
-HARDENING__WEBHOOK__ALLOW_UNSIGNED=false
 ```
 
 ## 6. Minimal Config Examples
@@ -225,8 +178,8 @@ storage:
 ### Minimal Env
 
 ```bash
-ZAMMAD_BASE_URL=https://zammad.example.local
-ZAMMAD_API_TOKEN=CHANGE-ME
-WEBHOOK_HMAC_SECRET=CHANGE-ME
-STORAGE_ROOT=/mnt/archive
+ZAMMAD__BASE_URL=https://zammad.example.local
+ZAMMAD__API_TOKEN=CHANGE-ME
+ZAMMAD__WEBHOOK_HMAC_SECRET=CHANGE-ME
+STORAGE__ROOT=/mnt/archive
 ```

@@ -2,30 +2,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import structlog
-
-from zammad_pdf_archiver.adapters.storage.layout_prefixes import (
-    path_matches_allowed_prefix,
-)
-from zammad_pdf_archiver.domain.archive_errors import (
-    invalid_filename_error,
-    path_not_allowed_error,
-)
 from zammad_pdf_archiver.domain.path_policy import (
     ensure_within_root,
     sanitize_segment,
     validate_segments,
 )
 
-log = structlog.get_logger(__name__)
+
+def _target_from_segments(root: Path, user_safe: str, segs_safe: list[str]) -> Path:
+    target = root / user_safe
+    for seg in segs_safe:
+        target = target / seg
+    return target
 
 
 def build_target_dir(
     root: Path,
     username: str,
     segments: list[str] | tuple[str, ...],
-    *,
-    allow_prefixes: list[str] | None = None,
 ) -> Path:
     """
     Build a deterministic directory path:
@@ -48,14 +42,38 @@ def build_target_dir(
     validate_segments([user_safe], max_depth=1)
     validate_segments(segs_safe)
 
-    _validate_allow_prefixes(raw_segments, allow_prefixes)
-
-    target = root / user_safe
-    for seg in segs_safe:
-        target = target / seg
-
+    target = _target_from_segments(root, user_safe, segs_safe)
     ensure_within_root(root, target)
     return target
+
+
+def _render_filename_pattern(pattern: str, *, ticket_safe: str, ts_safe: str) -> str:
+    try:
+        return pattern.format(
+            ticket_number=ticket_safe,
+            timestamp_utc=ts_safe,
+            date_utc=ts_safe,
+        )
+    except KeyError as exc:
+        raise ValueError(
+            f"invalid filename_pattern format: unknown placeholder {exc.args[0]!r}"
+        ) from exc
+    except ValueError:
+        raise
+    except (IndexError, TypeError) as exc:
+        raise ValueError(f"invalid filename_pattern format: {exc}") from exc
+
+
+def _validate_rendered_filename(rendered: str) -> str:
+    rendered = rendered.strip()
+    if not rendered:
+        raise ValueError("filename_pattern produced an empty filename")
+    if rendered in (".", ".."):
+        raise ValueError("filename must not be '.' or '..'")
+    if "/" in rendered or "\\" in rendered or "\x00" in rendered:
+        raise ValueError("filename_pattern must not include path separators or null bytes")
+    validate_segments([rendered], max_depth=1, max_length=255)
+    return rendered
 
 
 def build_filename_from_pattern(
@@ -70,6 +88,7 @@ def build_filename_from_pattern(
     Supported placeholders:
       - {ticket_number}
       - {timestamp_utc} (kept date-only for stability: YYYY-MM-DD)
+      - {date_utc}      (alias for {timestamp_utc})
 
     The rendered filename is validated to be a single safe path segment.
     """
@@ -79,49 +98,5 @@ def build_filename_from_pattern(
     ticket_safe = sanitize_segment(str(ticket_number))
     ts_safe = sanitize_segment(timestamp_utc)
 
-    rendered = _render_filename_pattern(pattern, ticket_number=ticket_safe, timestamp_utc=ts_safe)
-
-    rendered = rendered.strip()
-    if not rendered:
-        raise invalid_filename_error("filename_pattern produced an empty filename")
-
-    # The filename pattern must create a filename only, never a directory or dot segment.
-    if rendered in (".", ".."):
-        raise invalid_filename_error("filename must not be '.' or '..'")
-
-    # Disallow separators explicitly; patterns should not create directories.
-    if "/" in rendered or "\\" in rendered or "\x00" in rendered:
-        raise invalid_filename_error(
-            "filename_pattern must not include path separators or null bytes"
-        )
-
-    validate_segments([rendered], max_depth=1, max_length=255)
-    return rendered
-
-
-def _validate_allow_prefixes(
-    raw_segments: list[str],
-    allow_prefixes: list[str] | None,
-) -> None:
-    # Empty list is an explicit deny-all policy; None means no allowlist was configured.
-    if allow_prefixes is not None and len(allow_prefixes) == 0:
-        raise ValueError("allow_prefixes is empty; no archive path allowed")
-    if allow_prefixes and not path_matches_allowed_prefix(raw_segments, allow_prefixes):
-        raise path_not_allowed_error()
-
-
-def _render_filename_pattern(pattern: str, *, ticket_number: str, timestamp_utc: str) -> str:
-    try:
-        return pattern.format(
-            ticket_number=ticket_number,
-            timestamp_utc=timestamp_utc,
-        )
-    except KeyError as exc:
-        raise invalid_filename_error(
-            f"invalid filename_pattern format: unknown placeholder {exc.args[0]!r}"
-        ) from exc
-    except ValueError:
-        # Re-raise ValueError as-is (e.g., from format specifier errors)
-        raise
-    except (IndexError, TypeError) as exc:  # positional/type errors in format string
-        raise ValueError(f"invalid filename_pattern format: {exc}") from exc
+    rendered = _render_filename_pattern(pattern, ticket_safe=ticket_safe, ts_safe=ts_safe)
+    return _validate_rendered_filename(rendered)

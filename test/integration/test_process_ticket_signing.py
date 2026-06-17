@@ -2,18 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
 
-import test.support.integration_helpers as integration_helpers
-from test.support.checks import check
-from test.support.credentials import fake_credential
-from test.support.signing_helpers import write_test_pfx
-from test.support.time_control import freeze_process_ticket_now
+from zammad_pdf_archiver._version import VERSION
 from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
@@ -22,31 +18,50 @@ from zammad_pdf_archiver.config.settings import Settings
 pytest.importorskip("pyhanko", reason="Signing integration requires pyHanko")
 
 
-def _signing_settings_mapping(
-    storage_root: str,
-    *,
-    pfx_path: Path,
-    password: str,
-    timestamp: dict[str, object] | None = None,
-) -> dict[str, object]:
-    return {
-        "zammad": {
-            "base_url": "https://zammad.example.local",
-            "api_token": fake_credential("test-token"),
-        },
-        "storage": {"root": storage_root},
-        "signing": {
-            "enabled": True,
-            "pfx_path": str(pfx_path),
-            "pfx_password": password,
-            **({} if timestamp is None else {"timestamp": timestamp}),
-        },
-    }
+def _write_test_pfx(path: Path, password: str) -> str:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Integration Test Signer")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(private_key=key, algorithm=hashes.SHA256())
+    )
+
+    pfx = pkcs12.serialize_key_and_certificates(
+        name=b"test-signer",
+        key=key,
+        cert=cert,
+        cas=None,
+        encryption_algorithm=serialization.BestAvailableEncryption(password.encode("utf-8")),
+    )
+    path.write_bytes(pfx)
+    return cert.fingerprint(hashes.SHA256()).hex()
 
 
 def _test_settings(storage_root: str, *, pfx_path: Path, password: str) -> Settings:
     return Settings.from_mapping(
-        _signing_settings_mapping(storage_root, pfx_path=pfx_path, password=password)
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": storage_root},
+            "signing": {
+                "enabled": True,
+                "pfx_path": str(pfx_path),
+                "pfx_password": password,
+            },
+        }
     )
 
 
@@ -54,107 +69,29 @@ def _test_settings_with_unreachable_tsa(
     storage_root: str, *, pfx_path: Path, password: str, tsa_url: str
 ) -> Settings:
     return Settings.from_mapping(
-        _signing_settings_mapping(
-            storage_root,
-            pfx_path=pfx_path,
-            password=password,
-            timestamp={
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": storage_root},
+            "signing": {
                 "enabled": True,
-                "rfc3161": {"tsa_url": tsa_url, "timeout_seconds": 0.1},
+                "pfx_path": str(pfx_path),
+                "pfx_password": password,
+                "timestamp": {
+                    "enabled": True,
+                    "rfc3161": {"tsa_url": tsa_url, "timeout_seconds": 0.1},
+                },
             },
-        )
+        }
     )
 
 
-def _write_signing_pfx(
-    tmp_path: Path,
-    *,
-    password: str = fake_credential("secret"),
-    common_name: str | None = None,
-) -> tuple[Path, str]:
-    pfx_path = tmp_path / "test.pfx"
-    fingerprint = write_test_pfx(
-        pfx_path,
-        password=password,
-        common_name="Test Signer" if common_name is None else common_name,
-    )
-    return pfx_path, fingerprint
+def _fixed_now(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    fixed = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed)
+    return fixed
 
 
-def _test_tsa_settings(tmp_path: Path, *, tsa_url: str) -> Settings:
-    pfx_path, _ = _write_signing_pfx(tmp_path)
-    return _test_settings_with_unreachable_tsa(
-        str(tmp_path),
-        pfx_path=pfx_path,
-        password=fake_credential("secret"),
-        tsa_url=tsa_url,
-    )
-
-
-def _signing_ticket_payload() -> dict[str, object]:
-    return integration_helpers.zammad_ticket_payload(
-        title="Example Ticket",
-        archive_path="A > B > C",
-    )
-
-
-def _signing_article_payloads() -> list[dict[str, object]]:
-    return [integration_helpers.zammad_article_payload()]
-
-
-def _mock_signing_reads(*, articles: list[dict[str, object]] | None = None) -> None:
-    integration_helpers.mock_standard_zammad_reads(
-        ticket_payload=_signing_ticket_payload(),
-        tags=["pdf:sign"],
-        articles=_signing_article_payloads() if articles is None else articles,
-    )
-
-
-def _mock_tag_writes() -> tuple[respx.Route, respx.Route]:
-    return integration_helpers.mock_success_tag_write_routes()
-
-
-def _mock_article_note(response_json: dict[str, object] | None = None) -> respx.Route:
-    return respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-        return_value=httpx.Response(
-            200,
-            json=response_json
-            or {"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
-        )
-    )
-
-
-def _mock_signing_failure_routes(
-    *, articles: list[dict[str, object]] | None = None
-) -> tuple[respx.Route, respx.Route, respx.Route]:
-    _mock_signing_reads(articles=articles)
-    remove_tag_route, add_tag_route = _mock_tag_writes()
-    article_route = _mock_article_note({"id": 999})
-    return remove_tag_route, add_tag_route, article_route
-
-
-def _route_items(route: respx.Route) -> set[str]:
-    return {json.loads(call.request.content.decode("utf-8"))["item"] for call in route.calls}
-
-
-def _expected_signed_paths(
-    *,
-    tmp_path: Path,
-    settings: Settings,
-    fixed_now: datetime,
-) -> tuple[Path, Path]:
-    date_iso = fixed_now.date().isoformat()
-    expected_filename = build_filename_from_pattern(
-        settings.storage.path_policy.filename_pattern,
-        ticket_number="20240123",
-        timestamp_utc=date_iso,
-    )
-    expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
-    expected_sidecar_path = expected_pdf_path.parent / (expected_pdf_path.name + ".json")
-    return expected_pdf_path, expected_sidecar_path
-
-
-def _signing_payload(request_id: str) -> dict[str, object]:
+def _payload(request_id: str) -> dict[str, object]:
     return {
         "ticket": {"id": 123},
         "_request_id": request_id,
@@ -162,168 +99,242 @@ def _signing_payload(request_id: str) -> dict[str, object]:
     }
 
 
-def _freeze_signing_now(monkeypatch: pytest.MonkeyPatch) -> datetime:
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    return fixed_now
+def _ticket_json() -> dict[str, object]:
+    return {
+        "id": 123,
+        "number": "20240123",
+        "title": "Example Ticket",
+        "owner": {"login": "agent"},
+        "updated_by": {"login": "fallback-agent"},
+        "preferences": {
+            "custom_fields": {
+                "archive_user_mode": "owner",
+                "archive_path": "A > B > C",
+            }
+        },
+    }
 
 
-def _assert_permanent_signing_error(
-    *,
-    tmp_path: Path,
-    remove_tag_route: respx.Route,
-    add_tag_route: respx.Route,
-    article_route: respx.Route,
-) -> None:
-    check(not not list(tmp_path.rglob("*.pdf")) == [], "assertion failed")
-    check(not not list(tmp_path.rglob("*.pdf.json")) == [], "assertion failed")
+def _article_json() -> dict[str, object]:
+    return {
+        "id": 1,
+        "created_at": "2026-02-07T11:59:00Z",
+        "internal": False,
+        "subject": "Hello",
+        "body": "<p>Hello World</p>",
+        "content_type": "text/html",
+        "from": "customer@example.invalid",
+        "attachments": [],
+    }
 
-    removed = _route_items(remove_tag_route)
-    added = _route_items(add_tag_route)
 
-    check(not "pdf:processing" not in added, "assertion failed")
-    check(not not "pdf:done" not in added, "assertion failed")
-    check(not "pdf:error" not in added, "assertion failed")
-    check(not not "pdf:sign" not in added, "assertion failed")
-    check(not "pdf:processing" not in removed, "assertion failed")
-    check(not "pdf:sign" not in removed, "assertion failed")
-
-    integration_helpers.assert_error_article_note(
-        article_route,
-        classification="Permanent",
-        body_texts=("PKCS#12",),
+def _register_fetch_routes(*, articles: list[dict[str, object]]) -> None:
+    respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
+        return_value=httpx.Response(200, json=_ticket_json())
+    )
+    respx.get(
+        "https://zammad.example.local/api/v1/tags",
+        params={"object": "Ticket", "o_id": "123"},
+    ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
+    respx.get("https://zammad.example.local/api/v1/ticket_articles/by_ticket/123").mock(
+        return_value=httpx.Response(200, json=articles)
     )
 
 
-def _assert_transient_signing_error(
-    *,
-    remove_tag_route: respx.Route,
-    add_tag_route: respx.Route,
-    article_route: respx.Route,
-    expected_body_text: str | None = None,
-) -> None:
-    removed = _route_items(remove_tag_route)
-    added = _route_items(add_tag_route)
-
-    check(not "pdf:processing" not in removed, "assertion failed")
-    check(not "pdf:sign" not in added, "assertion failed")
-    check(not "pdf:error" not in added, "assertion failed")
-
-    integration_helpers.assert_error_article_note(
-        article_route,
-        classification="Transient",
-        body_texts=() if expected_body_text is None else (expected_body_text,),
+def _register_tag_routes() -> tuple[respx.Route, respx.Route]:
+    remove_tag_route = respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
+        return_value=httpx.Response(200, json={"success": True})
     )
+    add_tag_route = respx.post("https://zammad.example.local/api/v1/tags/add").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    return remove_tag_route, add_tag_route
+
+
+def _register_article_route(json_body: dict[str, object] | None = None) -> respx.Route:
+    return respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
+        return_value=httpx.Response(200, json=json_body or {"id": 999})
+    )
+
+
+def _called_items(route: respx.Route) -> set[str]:
+    return {
+        json.loads(call.request.content.decode("utf-8"))["item"]
+        for call in route.calls
+    }
+
+
+def _expected_pdf_path(tmp_path: Path, settings: Settings, fixed_now: datetime) -> Path:
+    expected_filename = build_filename_from_pattern(
+        settings.storage.filename_pattern,
+        ticket_number="20240123",
+        timestamp_utc=fixed_now.date().isoformat(),
+    )
+    return tmp_path / "agent" / "A" / "B" / "C" / expected_filename
 
 
 def test_process_ticket_signing_writes_signed_pdf_and_audit_fingerprint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pfx_path, expected_fingerprint = _write_signing_pfx(
-        tmp_path,
-        common_name="Integration Test Signer",
-    )
-    settings = _test_settings(str(tmp_path), pfx_path=pfx_path, password=fake_credential("secret"))
-
-    fixed_now = _freeze_signing_now(monkeypatch)
-    payload = _signing_payload("req-sign-1")
+    pfx_path = tmp_path / "test.pfx"
+    expected_fingerprint = _write_test_pfx(pfx_path, password="secret")
+    settings = _test_settings(str(tmp_path), pfx_path=pfx_path, password="secret")
+    fixed_now = _fixed_now(monkeypatch)
+    payload = _payload("req-sign-1")
 
     with respx.mock:
-        _mock_signing_reads()
-        _mock_tag_writes()
-        _mock_article_note()
+        _register_fetch_routes(articles=[_article_json()])
+        _register_tag_routes()
+        _register_article_route(
+            {
+                "id": 999,
+                "internal": True,
+                "subject": "ok",
+                "body": "<p>ok</p>",
+            }
+        )
 
         asyncio.run(process_ticket("delivery-sign-1", payload, settings))
 
-        expected_pdf_path, expected_sidecar_path = _expected_signed_paths(
-            tmp_path=tmp_path,
-            settings=settings,
-            fixed_now=fixed_now,
-        )
+        expected_pdf_path = _expected_pdf_path(tmp_path, settings, fixed_now)
+        expected_sidecar_path = expected_pdf_path.parent / (expected_pdf_path.name + ".json")
 
-        check(not not expected_pdf_path.exists(), "assertion failed")
-        check(not not expected_sidecar_path.exists(), "assertion failed")
+        assert expected_pdf_path.exists()
+        assert expected_sidecar_path.exists()
 
         pdf_bytes = expected_pdf_path.read_bytes()
-        check(not not pdf_bytes.startswith(b"%PDF"), "assertion failed")
-        check(not b"/ByteRange" not in pdf_bytes, "assertion failed")
+        assert pdf_bytes.startswith(b"%PDF")
+        assert b"/ByteRange" in pdf_bytes
 
         audit = json.loads(expected_sidecar_path.read_text("utf-8"))
-        check(not audit["signing"]["enabled"] is not True, "assertion failed")
-        check(not audit["signing"]["tsa_used"] is not False, "assertion failed")
-        check(
-            not not audit["signing"]["cert_fingerprint"] == expected_fingerprint, "assertion failed"
-        )
+        assert audit["signing"]["enabled"] is True
+        assert audit["signing"]["tsa_used"] is False
+        assert audit["signing"]["cert_fingerprint"] == expected_fingerprint
+
+
+def _register_ok_article_route() -> respx.Route:
+    return _register_article_route(
+        {
+            "id": 999,
+            "internal": True,
+            "subject": "ok",
+            "body": "<p>ok</p>",
+        }
+    )
+
+
+def _assert_error_note(
+    article_route: respx.Route,
+    *,
+    permanence: str,
+    body_contains: str = "",
+) -> None:
+    assert article_route.called
+    req = json.loads(article_route.calls[0].request.content.decode("utf-8"))
+    assert f"PDF archiver error ({VERSION})" in req["subject"]
+    assert permanence in req["body"]
+    if body_contains:
+        assert body_contains in req["body"]
+
+
+def _assert_transient_signing_error(
+    remove_tag_route: respx.Route,
+    add_tag_route: respx.Route,
+    article_route: respx.Route,
+    *,
+    body_contains: str = "",
+) -> None:
+    removed = _called_items(remove_tag_route)
+    added = _called_items(add_tag_route)
+
+    assert "pdf:processing" in removed
+    assert "pdf:sign" in added
+    assert "pdf:error" in added
+    _assert_error_note(article_route, permanence="Transient", body_contains=body_contains)
 
 
 def test_process_ticket_signing_with_unreachable_tsa_is_transient_and_keeps_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    pfx_path = tmp_path / "test.pfx"
+    _write_test_pfx(pfx_path, password="secret")
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _test_tsa_settings(tmp_path, tsa_url=tsa_url)
-
-    _freeze_signing_now(monkeypatch)
-    payload = _signing_payload("req-sign-tsa-err-1")
+    settings = _test_settings_with_unreachable_tsa(
+        str(tmp_path),
+        pfx_path=pfx_path,
+        password="secret",
+        tsa_url=tsa_url,
+    )
+    _fixed_now(monkeypatch)
+    payload = _payload("req-sign-tsa-err-1")
 
     with respx.mock:
         respx.post(tsa_url).mock(side_effect=httpx.ConnectError("boom"))
-        remove_tag_route, add_tag_route, article_route = _mock_signing_failure_routes()
+        _register_fetch_routes(articles=[_article_json()])
+        remove_tag_route, add_tag_route = _register_tag_routes()
+        article_route = _register_ok_article_route()
 
         asyncio.run(process_ticket("delivery-sign-tsa-err-1", payload, settings))
-
-        _assert_transient_signing_error(
-            remove_tag_route=remove_tag_route,
-            add_tag_route=add_tag_route,
-            article_route=article_route,
-        )
+        _assert_transient_signing_error(remove_tag_route, add_tag_route, article_route)
 
 
 def test_process_ticket_signing_with_invalid_pfx_password_is_permanent_and_drops_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pfx_path, _ = _write_signing_pfx(tmp_path)
-    settings = _test_settings(
-        str(tmp_path), pfx_path=pfx_path, password=fake_credential("wrong-password")
-    )
-
-    _freeze_signing_now(monkeypatch)
-    payload = _signing_payload("req-sign-bad-pass-1")
+    pfx_path = tmp_path / "test.pfx"
+    _write_test_pfx(pfx_path, password="secret")
+    settings = _test_settings(str(tmp_path), pfx_path=pfx_path, password="wrong-password")
+    _fixed_now(monkeypatch)
+    payload = _payload("req-sign-bad-pass-1")
 
     with respx.mock:
-        remove_tag_route, add_tag_route, article_route = _mock_signing_failure_routes(
-            articles=[]
-        )
+        _register_fetch_routes(articles=[])
+        remove_tag_route, add_tag_route = _register_tag_routes()
+        article_route = _register_article_route()
 
         asyncio.run(process_ticket("delivery-sign-bad-pass-1", payload, settings))
 
-        _assert_permanent_signing_error(
-            tmp_path=tmp_path,
-            remove_tag_route=remove_tag_route,
-            add_tag_route=add_tag_route,
-            article_route=article_route,
-        )
+        assert list(tmp_path.rglob("*.pdf")) == []
+        assert list(tmp_path.rglob("*.pdf.json")) == []
+
+        removed = _called_items(remove_tag_route)
+        added = _called_items(add_tag_route)
+
+        assert "pdf:processing" in added
+        assert "pdf:done" not in added
+        assert "pdf:error" in added
+        assert "pdf:sign" not in added
+
+        assert "pdf:processing" in removed
+        assert "pdf:sign" in removed
+        _assert_error_note(article_route, permanence="Permanent", body_contains="PKCS#12")
 
 
 def test_process_ticket_signing_with_tsa_http_503_is_transient_and_keeps_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    pfx_path = tmp_path / "test.pfx"
+    _write_test_pfx(pfx_path, password="secret")
     tsa_url = "https://tsa.test/rfc3161"
-    settings = _test_tsa_settings(tmp_path, tsa_url=tsa_url)
-
-    _freeze_signing_now(monkeypatch)
-    payload = _signing_payload("req-sign-tsa-503-1")
+    settings = _test_settings_with_unreachable_tsa(
+        str(tmp_path),
+        pfx_path=pfx_path,
+        password="secret",
+        tsa_url=tsa_url,
+    )
+    _fixed_now(monkeypatch)
+    payload = _payload("req-sign-tsa-503-1")
 
     with respx.mock:
         respx.post(tsa_url).mock(return_value=httpx.Response(503))
-        remove_tag_route, add_tag_route, article_route = _mock_signing_failure_routes(
-            articles=[]
-        )
+        _register_fetch_routes(articles=[])
+        remove_tag_route, add_tag_route = _register_tag_routes()
+        article_route = _register_article_route()
 
         asyncio.run(process_ticket("delivery-sign-tsa-503-1", payload, settings))
-
         _assert_transient_signing_error(
-            remove_tag_route=remove_tag_route,
-            add_tag_route=add_tag_route,
-            article_route=article_route,
-            expected_body_text="HTTP 503",
+            remove_tag_route,
+            add_tag_route,
+            article_route,
+            body_contains="HTTP 503",
         )

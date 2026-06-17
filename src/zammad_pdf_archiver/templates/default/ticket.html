@@ -66,7 +66,7 @@
     {% for article in articles_with_attachments %}
     {% for att in article.attachments %}
     <li class="attachment-index-item">
-      <span class="attachment-name">{{ att.filename | e if att.filename else "Unnamed file" }}</span>
+      <span class="attachment-name">{{ att.filename if att.filename else "Unnamed file" }}</span>
       <span class="attachment-meta">
         article #{{ article.id }}
         {% if article.created_at %} · {{ fmt_dt(article.created_at) }}{% endif %}

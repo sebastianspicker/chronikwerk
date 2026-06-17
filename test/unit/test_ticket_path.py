@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from test.support.checks import check
 from zammad_pdf_archiver.adapters.zammad.models import Ticket, UserRef
-from zammad_pdf_archiver.app.jobs._ticket_path import (
+from zammad_pdf_archiver.app.jobs.ticket_path import (
     determine_username,
     parse_archive_path_segments,
     require_nonempty,
@@ -16,7 +15,7 @@ from zammad_pdf_archiver.app.jobs._ticket_path import (
 
 
 def test_require_nonempty_valid() -> None:
-    check(not not require_nonempty("hello", field="x") == "hello", "assertion failed")
+    assert require_nonempty("hello", field="x") == "hello"
 
 
 def test_require_nonempty_empty() -> None:
@@ -60,7 +59,7 @@ def test_determine_username_owner_mode() -> None:
         custom_fields={},
         mode_field_name="archive_user_mode",
     )
-    check(not not result == "agent-jane", "assertion failed")
+    assert result == "agent-jane"
 
 
 def test_determine_username_owner_mode_no_owner() -> None:
@@ -87,7 +86,7 @@ def test_determine_username_current_agent_mode() -> None:
         custom_fields={"archive_user_mode": "current_agent"},
         mode_field_name="archive_user_mode",
     )
-    check(not not result == "payload-user", "assertion failed")
+    assert result == "payload-user"
 
 
 def test_determine_username_current_agent_no_user() -> None:
@@ -116,7 +115,7 @@ def test_determine_username_fixed_mode() -> None:
         },
         mode_field_name="archive_user_mode",
     )
-    check(not not result == "static-agent", "assertion failed")
+    assert result == "static-agent"
 
 
 def test_determine_username_fixed_missing_field() -> None:
@@ -150,11 +149,11 @@ def test_determine_username_unsupported_mode() -> None:
 
 
 def test_parse_string_with_separator() -> None:
-    check(not not parse_archive_path_segments("a>b>c") == ["a", "b", "c"], "assertion failed")
+    assert parse_archive_path_segments("a>b>c") == ["a", "b", "c"]
 
 
 def test_parse_valid_list() -> None:
-    check(not not parse_archive_path_segments(["a", "b"]) == ["a", "b"], "assertion failed")
+    assert parse_archive_path_segments(["a", "b"]) == ["a", "b"]
 
 
 def test_parse_none() -> None:

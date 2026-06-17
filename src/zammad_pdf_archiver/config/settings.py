@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic.networks import AnyHttpUrl
@@ -16,9 +16,12 @@ class _BaseSection(BaseModel):
 
 
 class ServerSettings(_BaseSection):
-    host: str = "127.0.0.1"
+    # 0.0.0.0 is the standard bind address for containerized services so the
+    # process is reachable from outside the container.  A reverse proxy (e.g.
+    # nginx, Traefik, cloud load balancer) should handle external access,
+    # TLS termination, and IP filtering.
+    host: str = "0.0.0.0"
     port: int = Field(default=8080, ge=1, le=65535)
-    webhook_shared_secret: SecretStr | None = None
 
 
 class ZammadSettings(_BaseSection):
@@ -30,106 +33,23 @@ class ZammadSettings(_BaseSection):
 
 
 class WorkflowSettings(_BaseSection):
-    """Processing coordination knobs.
-
-    `execution_backend` decides where accepted jobs run. `idempotency_backend`
-    decides where delivery-ID claims live. Multi-process Redis queue deployments
-    normally need both set to Redis-backed values.
-    """
-
     trigger_tag: str = "pdf:sign"
     require_tag: bool = True
     acknowledge_on_success: bool = True
     delivery_id_ttl_seconds: int = Field(default=3600, ge=0)
-    execution_backend: str = "inprocess"  # inprocess|redis_queue
-    # Delivery-ID dedupe store: "memory" (default, process-local) or "redis".
-    idempotency_backend: str = "memory"
-    redis_url: str | None = None
-    queue_stream: str = "zammad:jobs"
-    queue_group: str = "zammad:jobs:workers"
-    queue_consumer: str | None = None
-    queue_read_block_ms: int = Field(default=1000, ge=100, le=60000)
-    queue_read_count: int = Field(default=10, ge=1, le=1000)
-    queue_retry_max_attempts: int = Field(default=3, ge=0, le=50)
-    queue_retry_backoff_seconds: float = Field(default=2.0, gt=0)
-    queue_dlq_stream: str = "zammad:jobs:dlq"
-    history_stream: str = "zammad:jobs:history"
-    history_retention_maxlen: int = Field(default=5000, ge=0, le=1_000_000)
-
-    @model_validator(mode="after")
-    def _redis_required_when_backend_redis(self) -> WorkflowSettings:
-        backend = _normalized_backend(
-            self.idempotency_backend,
-            allowed={"memory", "redis"},
-            message="workflow.idempotency_backend must be 'memory' or 'redis'",
-        )
-        execution_backend = _normalized_backend(
-            self.execution_backend,
-            allowed={"inprocess", "redis_queue"},
-            message="workflow.execution_backend must be 'inprocess' or 'redis_queue'",
-        )
-        _require_redis_url_for_backend(
-            backend,
-            redis_url=self.redis_url,
-            redis_backend="redis",
-            message="workflow.idempotency_backend is 'redis' but workflow.redis_url is not set",
-        )
-        _require_redis_url_for_backend(
-            execution_backend,
-            redis_url=self.redis_url,
-            redis_backend="redis_queue",
-            message=(
-                "workflow.execution_backend is 'redis_queue' but workflow.redis_url is not set"
-            ),
-        )
-        return self
-
-
-def _normalized_backend(value: str, *, allowed: set[str], message: str) -> str:
-    backend = (value or "").strip().lower()
-    if backend not in allowed:
-        raise ValueError(message)
-    return backend
-
-
-def _require_redis_url_for_backend(
-    backend: str,
-    *,
-    redis_url: str | None,
-    redis_backend: str,
-    message: str,
-) -> None:
-    if backend == redis_backend and not (redis_url and redis_url.strip()):
-        raise ValueError(message)
 
 
 class FieldsSettings(_BaseSection):
     archive_path: str = "archive_path"
     archive_user_mode: str = "archive_user_mode"
-    # Custom field read only when archive_user_mode is "fixed".
+    # Custom field name for archive_user in fixed mode (Bug #1/#6).
     archive_user: str = "archive_user"
-
-
-class StoragePathPolicySettings(_BaseSection):
-    # None = no allowlist (all paths allowed); [] = explicit deny-all policy.
-    allow_prefixes: list[str] | None = None
-    filename_pattern: str = "Ticket-{ticket_number}_{timestamp_utc}.pdf"
-
-    @field_validator("filename_pattern")
-    @classmethod
-    def _reject_date_utc_alias(cls, value: str) -> str:
-        if "{date_utc}" in value:
-            raise ValueError(
-                "storage.path_policy.filename_pattern no longer supports "
-                "{date_utc}; use {timestamp_utc}"
-            )
-        return value
 
 
 class StorageSettings(_BaseSection):
     root: Path
     fsync: bool = True
-    path_policy: StoragePathPolicySettings = Field(default_factory=StoragePathPolicySettings)
+    filename_pattern: str = "Ticket-{ticket_number}_{timestamp_utc}.pdf"
 
     @field_validator("root")
     @classmethod
@@ -138,22 +58,22 @@ class StorageSettings(_BaseSection):
 
 
 class PdfSettings(_BaseSection):
-    # Built-ins: default|minimal|compact; custom names require pdf.templates_root.
-    template_variant: str = "default"
-    templates_root: Path | None = None
     locale: str = "de_DE"
     timezone: str = "Europe/Berlin"
     max_articles: int = Field(default=250, ge=0)
-    # fail = reject over-limit tickets; cap_and_continue = truncate article list and warn.
-    article_limit_mode: Literal["fail", "cap_and_continue"] = "fail"
-    # Optional binary attachment export. Default PDF snapshots keep attachment metadata only.
-    include_attachment_binary: bool = False
-    max_attachment_bytes_per_file: int = Field(default=10 * 1024 * 1024, ge=0)  # 10 MiB
-    max_total_attachment_bytes: int = Field(default=50 * 1024 * 1024, ge=0)  # 50 MiB
+    # fail = fail the ticket; cap_and_continue = truncate and warn.
+    article_limit_mode: str = "fail"
+
+    @field_validator("article_limit_mode")
+    @classmethod
+    def _validate_article_limit_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized in {"fail", "cap_and_continue"}:
+            return normalized
+        raise ValueError("pdf.article_limit_mode must be 'fail' or 'cap_and_continue'")
 
 
 class SigningPadesSettings(_BaseSection):
-    cert_path: Path | None = None
     reason: str = "Ticket Archivierung"
     location: str = "Datacenter"
 
@@ -198,7 +118,7 @@ class SigningSettings(_BaseSection):
 
 
 class ObservabilitySettings(_BaseSection):
-    log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
+    log_level: str = "INFO"
     log_format: str | None = None  # json|human
     metrics_enabled: bool = False
     # When set, GET /metrics requires Authorization: Bearer <this token> (constant-time compare).
@@ -215,13 +135,6 @@ class ObservabilitySettings(_BaseSection):
         if normalized in {"json", "human"}:
             return normalized
         raise ValueError("observability.log_format must be 'json' or 'human'")
-
-    @field_validator("log_level", mode="before")
-    @classmethod
-    def _normalize_log_level(cls, value: object) -> object:
-        if isinstance(value, str):
-            return value.strip().upper()
-        return value
 
 
 class RateLimitSettings(_BaseSection):
@@ -240,26 +153,14 @@ class BodySizeLimitSettings(_BaseSection):
 
 
 class WebhookHardeningSettings(_BaseSection):
-    # When true and a secret is set: requests without signature are allowed (e.g. for testing).
-    # When no secret: allow_unsigned is ignored; use allow_unsigned_when_no_secret.
-    allow_unsigned: bool = False
-    # Explicit opt-in to allow /ingest when no HMAC secret is configured (insecure; dev/local only).
-    allow_unsigned_when_no_secret: bool = False
-    # When enabled, /ingest requires X-Zammad-Delivery and the replay TTL must be > 0.
-    require_delivery_id: bool = True
-    # When True, reject SHA-1 HMAC signatures (only allow SHA-256+).
-    webhook_reject_sha1: bool = False
+    # When enabled, /ingest requires X-Zammad-Delivery replay TTL > 0.
+    require_delivery_id: bool = False
 
 
 class TransportHardeningSettings(_BaseSection):
-    # If true, allow httpx to read HTTP_PROXY/HTTPS_PROXY/NO_PROXY and other env settings.
+    # When true, allow httpx to read HTTP_PROXY/HTTPS_PROXY/NO_PROXY.
     trust_env: bool = False
-    # Allow plaintext HTTP for upstream URLs (Zammad / TSA). Strongly discouraged.
-    allow_insecure_http: bool = False
-    # Allow disabling TLS verification for upstream requests. Strongly discouraged.
-    allow_insecure_tls: bool = False
-    # Allow outbound upstreams that target loopback / link-local addresses.
-    allow_local_upstreams: bool = False
+    # Allow outbound upstreams to target loopback / link-local addresses.
 
 
 class HardeningSettings(_BaseSection):
@@ -267,12 +168,6 @@ class HardeningSettings(_BaseSection):
     body_size_limit: BodySizeLimitSettings = Field(default_factory=BodySizeLimitSettings)
     webhook: WebhookHardeningSettings = Field(default_factory=WebhookHardeningSettings)
     transport: TransportHardeningSettings = Field(default_factory=TransportHardeningSettings)
-
-
-class AdminSettings(_BaseSection):
-    enabled: bool = False
-    bearer_token: SecretStr | None = None
-    history_limit: int = Field(default=100, ge=1, le=5000)
 
 
 class Settings(BaseSettings):
@@ -293,7 +188,7 @@ class Settings(BaseSettings):
     signing: SigningSettings = Field(default_factory=SigningSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     hardening: HardeningSettings = Field(default_factory=HardeningSettings)
-    admin: AdminSettings = Field(default_factory=AdminSettings)
+    retry_bearer_token: SecretStr | None = None
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> Settings:
@@ -303,7 +198,7 @@ class Settings(BaseSettings):
         Useful in tests where we want to pass nested dicts and keep mypy happy.
         """
 
-        class _MappingOnlySettings(Settings):
+        class _InitOnlySettings(Settings):
             @classmethod
             def settings_customise_sources(
                 cls,
@@ -315,7 +210,7 @@ class Settings(BaseSettings):
             ) -> tuple[PydanticBaseSettingsSource, ...]:
                 return (init_settings,)
 
-        return _MappingOnlySettings(**dict(data))
+        return _InitOnlySettings(**dict(data))
 
     @classmethod
     def settings_customise_sources(
@@ -328,7 +223,7 @@ class Settings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource | Any, ...]:
         return (
             env_settings,
-            get_flat_env_settings_source,
+            get_flat_env_settings_source(),
             init_settings,
             dotenv_settings,
             file_secret_settings,

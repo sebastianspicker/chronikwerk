@@ -2,13 +2,7 @@
 
 ## Why did `/ingest` return `202` but no PDF exists yet?
 
-`202` means the request was accepted, not that processing completed. In default
-`inprocess` mode, processing after `202` is best-effort: there is no guaranteed
-retry, and work can be lost on process restart. With
-`workflow.execution_backend=redis_queue`, accepted work is queued in Redis with
-retry and DLQ handling. If the service restarted or the job never ran,
-re-trigger by saving the ticket, reapplying the macro, or using the retry
-endpoint after checking queue/history state.
+`202` means the request was accepted, not that processing completed. Processing after `202` is best-effort: there is no guaranteed retry, and work can be lost on process restart (no durable queue). If the service restarted or the job never ran, re-trigger by saving the ticket or reapplying the macro.
 
 Check:
 - ticket tags (`pdf:processing`, `pdf:signed`, `pdf:error`)
@@ -20,9 +14,8 @@ Check:
 HMAC validation failed while signed mode is active.
 
 Check:
-- `WEBHOOK_HMAC_SECRET`
+- `ZAMMAD__WEBHOOK_HMAC_SECRET`
 - header `X-Hub-Signature`
-- format `sha1=<hex>` or `sha256=<hex>`
 - request body not modified by proxies
 
 See [`api.md`](api.md).
@@ -32,9 +25,7 @@ See [`api.md`](api.md).
 No webhook secret is configured and unsigned mode is disabled.
 
 Fix:
-- set `WEBHOOK_HMAC_SECRET`, or
-- for internal test only: `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` plus
-  `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET=true`
+- set `ZAMMAD__WEBHOOK_HMAC_SECRET`, or
 
 ## Why do I get `400 missing_delivery_id`?
 
@@ -62,10 +53,6 @@ Recovery:
 
 Delivery dedupe is active for `workflow.delivery_id_ttl_seconds`.
 
-The default memory backend resets on process restart. With
-`workflow.idempotency_backend=redis`, dedupe state is shared across workers and
-survives service restarts for the configured TTL.
-
 To process again:
 - trigger a new Zammad event (new delivery ID), or
 - reduce TTL
@@ -73,7 +60,7 @@ To process again:
 ## Why does storage write fail with permissions errors?
 
 Check:
-- correct `STORAGE_ROOT`
+- correct `STORAGE__ROOT`
 - mount read/write mode
 - UID/GID mapping for runtime user (`10001`)
 - share ACLs and free space/quota
@@ -95,8 +82,7 @@ See [`06-signing-and-timestamp.md`](06-signing-and-timestamp.md).
 Check:
 - `TSA_URL`
 - `TSA_CA_BUNDLE_PATH` (if private CA)
-- `signing.timestamp.rfc3161.user` / `signing.timestamp.rfc3161.password`, or
-  `TSA_USER` / `TSA_PASS`, when auth is required
+- `TSA_USER` + `TSA_PASS` when auth is required
 - outbound connectivity and TLS trust
 
 ## Why do large tickets fail to render?
@@ -106,4 +92,3 @@ Check:
 Options:
 - increase `PDF_MAX_ARTICLES`
 - set `PDF_MAX_ARTICLES=0` (disable cap)
-- switch to `PDF_TEMPLATE_VARIANT=minimal`

@@ -1,5 +1,3 @@
-"""NFR1: Verify webhook payload with HMAC-SHA1; fail closed when secret configured."""
-
 from __future__ import annotations
 
 import hashlib
@@ -7,71 +5,46 @@ import hmac
 
 from fastapi.testclient import TestClient
 
-from test.support.checks import check
+from test.support.process_ticket_helpers import noop_process_ticket
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
-from zammad_pdf_archiver.config.settings import Settings
-
-
-def _settings(storage_root: str, *, secret: str | None = "test-secret") -> Settings:
-    return make_settings(
-        storage_root,
-        secret=secret,
-        allow_unsigned=False,
-        allow_unsigned_when_no_secret=False,
-    )
 
 
 def _sign(body: bytes, secret: str) -> str:
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha1).hexdigest()
-    return f"sha1={digest}"
+    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
 
 
 def test_nfr1_invalid_signature_returns_403(tmp_path) -> None:
-    """NFR1: Invalid or wrong HMAC must be rejected with 403."""
-    app = create_app(_settings(str(tmp_path)))
-    client = TestClient(app)
+    app = create_app(make_settings(str(tmp_path), secret="test-secret"))
     body = b'{"ticket_id":123}'
-    response = client.post(
+    response = TestClient(app).post(
         "/ingest",
         content=body,
         headers={"Content-Type": "application/json", "X-Hub-Signature": _sign(body, "wrong")},
     )
-    check(not not response.status_code == 403, "assertion failed")
-    check(
-        not not response.json() == {"detail": "forbidden", "code": "forbidden"}, "assertion failed"
-    )
+    assert response.status_code == 403
 
 
-def test_nfr1_no_secret_returns_503_unless_allow_unsigned(tmp_path) -> None:
-    """NFR1: Fail closed when no webhook secret and allow_unsigned is false."""
-    app = create_app(_settings(str(tmp_path), secret=None))
-    client = TestClient(app)
-    response = client.post("/ingest", json={"ticket_id": 123})
-    check(not not response.status_code == 503, "assertion failed")
-    data = response.json()
-    check(
-        not not data
-        == {"detail": "webhook_auth_not_configured", "code": "webhook_auth_not_configured"},
-        "assertion failed",
-    )
+def test_nfr1_no_secret_returns_503(tmp_path) -> None:
+    app = create_app(make_settings(str(tmp_path), secret=None))
+    response = TestClient(app).post("/ingest", json={"ticket_id": 123})
+    assert response.status_code == 503
 
 
 def test_nfr1_valid_signature_returns_202(tmp_path, monkeypatch) -> None:
-    """NFR1: Valid HMAC must allow request through (202)."""
+    app = create_app(make_settings(str(tmp_path), secret="test-secret"))
+
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
 
-    async def noop(*_args: object, **_kwargs: object) -> None:
-        pass
-
-    monkeypatch.setattr(ingest_route, "process_ticket", noop)
-    app = create_app(_settings(str(tmp_path)))
-    client = TestClient(app)
-    body = b'{"ticket":{"id":456}}'
-    response = client.post(
+    monkeypatch.setattr(ingest_route, "process_ticket", noop_process_ticket)
+    body = b'{"ticket_id":123}'
+    response = TestClient(app).post(
         "/ingest",
         content=body,
-        headers={"Content-Type": "application/json", "X-Hub-Signature": _sign(body, "test-secret")},
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature": _sign(body, "test-secret"),
+        },
     )
-    check(not not response.status_code == 202, "assertion failed")
-    check(not not response.json() == {"status": "accepted", "ticket_id": 456}, "assertion failed")
+    assert response.status_code == 202

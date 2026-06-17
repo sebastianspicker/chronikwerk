@@ -6,16 +6,10 @@ import hashlib
 import hmac
 
 from fastapi import HTTPException, Request
+from pydantic import SecretStr
 from starlette.responses import JSONResponse
 
 from zammad_pdf_archiver.config.settings import Settings
-
-
-def constant_time_token_match(expected: bytes, provided: bytes) -> bool:
-    """Compare tokens after SHA-256 length normalisation."""
-    expected_hash = hashlib.sha256(expected).digest()
-    provided_hash = hashlib.sha256(provided).digest()
-    return hmac.compare_digest(expected_hash, provided_hash)
 
 
 def settings_or_503(request: Request) -> Settings:
@@ -26,23 +20,27 @@ def settings_or_503(request: Request) -> Settings:
     return settings
 
 
-def verify_bearer_auth(request: Request, settings: Settings) -> None:
-    """Verify ``Authorization: Bearer <token>`` against the admin bearer token.
-
-    Raises :class:`~fastapi.HTTPException` (401) when the token is missing or
-    invalid, or (503) when no token has been configured.
-    """
-    token = settings.admin.bearer_token
-    expected = token.get_secret_value().encode("utf-8") if token is not None else b""
-    if not expected:
-        raise HTTPException(status_code=503, detail="admin_token_not_configured")
-
+def bearer_auth_matches(request: Request, token: SecretStr) -> bool:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer ") or len(auth) < 8:
-        raise HTTPException(status_code=401, detail="unauthorized")
+        return False
 
+    expected = token.get_secret_value().encode("utf-8")
     provided = auth[7:].strip().encode("utf-8")
-    if not constant_time_token_match(expected, provided):
+    expected_hash = hashlib.sha256(expected).digest()
+    provided_hash = hashlib.sha256(provided).digest()
+    return hmac.compare_digest(expected_hash, provided_hash)
+
+
+def verify_bearer_token(
+    request: Request,
+    token: SecretStr | None,
+    *,
+    missing_detail: str,
+) -> None:
+    if token is None or not token.get_secret_value():
+        raise HTTPException(status_code=503, detail=missing_detail)
+    if not bearer_auth_matches(request, token):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 

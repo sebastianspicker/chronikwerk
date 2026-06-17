@@ -29,11 +29,11 @@ uid="${CIFS_UID:-10001}"
 gid="${CIFS_GID:-10001}"
 
 creds_file="${CIFS_CREDENTIALS_FILE:-}"
-tmp_creds_dir=""
+tmp_creds=""
 
 cleanup() {
-  if [[ -n "${tmp_creds_dir}" ]]; then
-    rm -rf "${tmp_creds_dir}" || true
+  if [[ -n "${tmp_creds}" ]]; then
+    rm -f "${tmp_creds}" || true
   fi
 }
 trap cleanup EXIT
@@ -44,12 +44,7 @@ if [[ -z "${creds_file}" ]]; then
 
   # Avoid putting credentials on the command line (visible via process listing).
   umask 077
-  runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-  if [[ ! -d "${runtime_dir}" ]]; then
-    runtime_dir="/tmp"
-  fi
-  tmp_creds_dir="$(mktemp -d "${runtime_dir}/cifs-creds-XXXXXXXX")"
-  tmp_creds="${tmp_creds_dir}/credentials"
+  tmp_creds="$(mktemp)"
   {
     echo "username=${CIFS_USERNAME}"
     echo "password=${CIFS_PASSWORD}"

@@ -5,22 +5,21 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
-from test.support.checks import check
 from zammad_pdf_archiver.adapters.http_util import drain_stream, timeouts_for
 
 
 def test_timeouts_for_uses_capped_connect_timeout() -> None:
     t = timeouts_for(30.0)
-    check(not not t.connect == 5.0, "assertion failed")
-    check(not not t.read == 30.0, "assertion failed")
-    check(not not t.write == 30.0, "assertion failed")
-    check(not not t.pool == 5.0, "assertion failed")
+    assert t.connect == 5.0
+    assert t.read == 30.0
+    assert t.write == 30.0
+    assert t.pool == 5.0
 
 
 def test_timeouts_for_short_timeout_uses_total_as_connect() -> None:
     t = timeouts_for(2.0)
-    check(not not t.connect == 2.0, "assertion failed")
-    check(not not t.read == 2.0, "assertion failed")
+    assert t.connect == 2.0
+    assert t.read == 2.0
 
 
 def test_drain_stream_stops_on_disconnect() -> None:
@@ -45,4 +44,4 @@ def test_drain_stream_consumes_multiple_chunks() -> None:
     ]
     receive = AsyncMock(side_effect=chunks)
     asyncio.run(drain_stream(receive))
-    check(not not receive.await_count == 2, "assertion failed")
+    assert receive.await_count == 2

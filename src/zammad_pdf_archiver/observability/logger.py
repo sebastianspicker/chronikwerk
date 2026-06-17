@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import sys
 from typing import Any
 
@@ -10,26 +11,20 @@ from structlog.stdlib import ProcessorFormatter
 
 from zammad_pdf_archiver.config.redact import redact_settings_dict, scrub_secrets_in_text
 
-_SENSITIVE_EVENT_KEY_FRAGMENTS = (
-    "authorization",
-    "password",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "exception",
-    "redis_url",
-)
-
 
 def _scrub_event_dict(_: Any, __: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-    if not any(
-        fragment in str(key).lower()
-        for key in event_dict
-        for fragment in _SENSITIVE_EVENT_KEY_FRAGMENTS
-    ):
-        return event_dict
     return redact_settings_dict(event_dict)
+
+
+def _resolve_log_format() -> str:
+    return "human"
+
+
+def _resolve_log_level(log_level_default: str) -> str:
+    raw = (os.environ.get("LOG_LEVEL") or "").strip()
+    if raw:
+        return raw
+    return log_level_default
 
 
 def _coerce_log_format(value: str | None) -> str | None:
@@ -45,18 +40,8 @@ def _redacted_exception_formatter(sio: Any, exc_info: Any) -> None:
     sio.write(scrub_secrets_in_text(rendered.getvalue()))
 
 
-def configure_logging(
-    *,
-    log_level: str = "INFO",
-    log_format: str | None = None,
-) -> None:
-    """
-    Minimal structlog + stdlib logging configuration.
-    """
-    resolved_level = log_level.upper()
-    resolved_format = _coerce_log_format(log_format) or "human"
-
-    shared_processors: list[Any] = [
+def _shared_processors(resolved_format: str) -> list[Any]:
+    processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -64,21 +49,18 @@ def configure_logging(
         _scrub_event_dict,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
     ]
-
     if resolved_format == "json":
-        shared_processors.insert(4, structlog.processors.format_exc_info)
+        processors.insert(4, structlog.processors.format_exc_info)
+    return processors
 
-    renderer: Any
+
+def _renderer(resolved_format: str) -> Any:
     if resolved_format == "json":
-        renderer = structlog.processors.JSONRenderer()
-    else:
-        renderer = structlog.dev.ConsoleRenderer(exception_formatter=_redacted_exception_formatter)
+        return structlog.processors.JSONRenderer()
+    return structlog.dev.ConsoleRenderer(exception_formatter=_redacted_exception_formatter)
 
-    formatter = ProcessorFormatter(
-        processor=renderer,
-        foreign_pre_chain=shared_processors,
-    )
 
+def _configure_root_logger(*, formatter: ProcessorFormatter, resolved_level: str) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 
@@ -86,6 +68,8 @@ def configure_logging(
     root.handlers = [handler]
     root.setLevel(resolved_level)
 
+
+def _configure_noisy_loggers() -> None:
     for noisy in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(noisy)
         logger.handlers = []
@@ -94,6 +78,30 @@ def configure_logging(
     # WeasyPrint triggers verbose fontTools INFO logs during subsetting.
     # Keep app logs operationally useful by default.
     logging.getLogger("fontTools").setLevel(logging.WARNING)
+
+
+def configure_logging(
+    *,
+    log_level: str = "INFO",
+    log_format: str | None = None,
+) -> None:
+    """
+    Minimal structlog + stdlib logging configuration.
+
+    `log_format` may be "human" or "json".
+    """
+    resolved_level = _resolve_log_level(log_level).upper()
+    configured_format = _coerce_log_format(log_format)
+    resolved_format = configured_format or _resolve_log_format()
+
+    shared_processors = _shared_processors(resolved_format)
+    formatter = ProcessorFormatter(
+        processor=_renderer(resolved_format),
+        foreign_pre_chain=shared_processors,
+    )
+
+    _configure_root_logger(formatter=formatter, resolved_level=resolved_level)
+    _configure_noisy_loggers()
 
     structlog.configure(
         processors=[

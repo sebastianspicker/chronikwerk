@@ -2,34 +2,10 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import Protocol
-
-_CLEANUP_INTERVAL_MIN_S = 1.0
-_CLEANUP_INTERVAL_MAX_S = 60.0
-
-
-class DeliveryIdStore(Protocol):
-    """Protocol for delivery-ID idempotency (in-memory or durable e.g. Redis)."""
-
-    async def seen(self, key: str) -> bool:
-        """Return True if key was already seen and is still within TTL."""
-        ...
-
-    async def add(self, key: str) -> None:
-        """Record key as seen (idempotent for same key within TTL)."""
-        ...
-
-    async def try_claim(self, key: str) -> bool:
-        """Claim key if not yet seen. True if claimed, False if seen."""
-        ...
-
-    async def release(self, key: str) -> None:
-        """Release a previously claimed key."""
-        ...
 
 
 class InMemoryTTLSet:
-    """In-memory idempotency set that expires keys after a configurable TTL."""
+    """In-memory idempotency set with expiring keys."""
 
     def __init__(self, *, ttl_seconds: float, now: Callable[[], float] = time.monotonic) -> None:
         if ttl_seconds < 0:
@@ -43,15 +19,10 @@ class InMemoryTTLSet:
         return len(self._expires_at_by_key)
 
     def _maybe_evict(self, now: float) -> None:
-        # Best-effort: periodically purge expired keys so the set doesn't grow forever
-        # when keys are mostly unique.
         if now < self._next_evict_at:
             return
         self._evict_expired_at(now)
-        # Bound cleanup frequency so very short TTLs do not evict on every call,
-        # while long TTLs still purge stale entries at least once per minute.
-        interval = min(_CLEANUP_INTERVAL_MAX_S, max(_CLEANUP_INTERVAL_MIN_S, self._ttl_seconds))
-        self._next_evict_at = now + interval
+        self._next_evict_at = now + min(60.0, max(1.0, self._ttl_seconds))
 
     def _seen_sync(self, key: str) -> bool:
         now = self._now()
@@ -69,41 +40,22 @@ class InMemoryTTLSet:
         self._maybe_evict(now)
         self._expires_at_by_key[key] = now + self._ttl_seconds
 
-    # Async methods intentionally shim the Redis-compatible DeliveryIdStore
-    # protocol while keeping the in-memory check/update bodies await-free.
     async def seen(self, key: str) -> bool:
-        """Return True if key was already seen and is still within TTL."""
         return self._seen_sync(key)
 
     async def add(self, key: str) -> None:
-        """Record key as seen (idempotent for same key within TTL)."""
         self._add_sync(key)
 
     async def try_claim(self, key: str) -> bool:
-        """Check and claim key in one event-loop-safe step.
-
-        Safe for concurrent asyncio coroutines in a single process because no
-        ``await`` separates the seen-check and add. Not thread-safe and not
-        multi-process-safe; use RedisDeliveryIdStore for multi-worker deployments.
-        """
         if self._seen_sync(key):
             return False
         self._add_sync(key)
         return True
 
-    async def release(self, key: str) -> None:
-        """Release a previously claimed key."""
-        self._expires_at_by_key.pop(key, None)
-
     def evict_expired(self) -> None:
-        """Remove all expired keys from the set."""
         self._evict_expired_at(self._now())
 
     def _evict_expired_at(self, now: float) -> None:
-        # Directly remove expired keys during iteration using list() to avoid
-        # "dictionary changed size during iteration" error.
-        expired_keys = [
-            key for key, expires_at in self._expires_at_by_key.items() if now >= expires_at
-        ]
-        for key in expired_keys:
-            self._expires_at_by_key.pop(key, None)
+        for key, expires_at in list(self._expires_at_by_key.items()):
+            if now >= expires_at:
+                self._expires_at_by_key.pop(key, None)

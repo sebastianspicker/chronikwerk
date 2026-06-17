@@ -34,7 +34,7 @@ def _validate_and_prepare(target_path: Path, storage_root: Path) -> tuple[Path, 
     """Validate path safety and ensure parent directory exists. Returns (target, parent)."""
     target = Path(target_path)
     parent = target.parent
-    # Validate containment and symlink traversal before any directory creation.
+    # Bug #13/#20: validate path and symlinks before any directory creation.
     ensure_within_root(storage_root, target)
     _reject_symlinks_under_root(storage_root, parent)
     ensure_dir(parent)
@@ -51,7 +51,7 @@ def write_bytes(target_path: Path, data: bytes, *, storage_root: Path, fsync: bo
     with os.fdopen(fd, "wb") as f:
         f.write(data)
         f.flush()
-        # Always set permissions, including when overwriting an existing file.
+        # Bug #40: always set permissions (e.g. when overwriting existing file).
         os.fchmod(f.fileno(), 0o640)
         if fsync:
             os.fsync(f.fileno())
@@ -83,6 +83,46 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
         except OSError as exc:
             # If the path is unreadable, treat it as unsafe.
             raise ValueError("target path validation failed (unreadable component)") from exc
+
+
+def _write_tmp_file(fd: int, data: bytes, *, fsync: bool) -> None:
+    """Write data to the temp fd with correct permissions, optionally fsyncing."""
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+        f.flush()
+        # Bug #21: set mode on fd before replace so target gets correct permissions.
+        os.fchmod(f.fileno(), 0o640)
+        if fsync:
+            os.fsync(f.fileno())
+
+
+def _replace_tmp_with_target(tmp_path: Path, target: Path) -> None:
+    """Atomically replace target with the temp file; cleans up the temp on failure."""
+    try:
+        os.replace(tmp_path, target)
+    except Exception:
+        _safe_unlink(tmp_path)
+        raise
+
+
+def _safe_close(fd: int | None) -> None:
+    """Close a file descriptor if non-None, swallowing OSError."""
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _safe_unlink(path: Path | None) -> None:
+    """Remove a file if non-None, swallowing FileNotFoundError and OSError."""
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except (FileNotFoundError, OSError):
+        pass
 
 
 def move_file_within_root(

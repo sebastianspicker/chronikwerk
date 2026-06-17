@@ -1,5 +1,4 @@
 """NFR3: Validate and confine all storage paths under storage.root; reject path traversal."""
-
 from __future__ import annotations
 
 from pathlib import Path

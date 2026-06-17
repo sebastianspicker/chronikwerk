@@ -4,8 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from test.support.checks import check
-from zammad_pdf_archiver.adapters.storage import move_file_within_root, write_bytes
+from zammad_pdf_archiver.adapters.storage.fs_storage import write_bytes
+
+
+def _tmp_files(dir_path: Path) -> list[Path]:
+    return [p for p in dir_path.iterdir() if p.is_file() and p.name.startswith(".tmp-")]
 
 
 def test_write_bytes_creates_dirs_and_writes_contents(tmp_path: Path) -> None:
@@ -14,16 +17,21 @@ def test_write_bytes_creates_dirs_and_writes_contents(tmp_path: Path) -> None:
 
     write_bytes(target, data, storage_root=tmp_path)
 
-    check(not not target.exists(), "assertion failed")
-    check(not not target.read_bytes() == data, "assertion failed")
+    assert target.exists()
+    assert target.read_bytes() == data
+    assert _tmp_files(target.parent) == []
 
 
 def test_storage_writes_use_restrictive_file_mode(tmp_path: Path) -> None:
     """Written files use 0o640 (no world read/write)."""
     target = tmp_path / "f.bin"
+    write_bytes(target, b"x", storage_root=tmp_path, fsync=False)
+    mode = target.stat().st_mode & 0o777
+    assert mode == 0o640, f"expected 0o640, got {oct(mode)}"
+    target.unlink()
     write_bytes(target, b"y", storage_root=tmp_path, fsync=False)
     mode = target.stat().st_mode & 0o777
-    check(not not mode == 416, f"expected 0o640, got {oct(mode)}")
+    assert mode == 0o640, f"expected 0o640, got {oct(mode)}"
 
 
 def test_write_bytes_overwrites_existing_file(tmp_path: Path) -> None:
@@ -33,19 +41,18 @@ def test_write_bytes_overwrites_existing_file(tmp_path: Path) -> None:
     data = b"new-data"
     write_bytes(target, data, storage_root=tmp_path)
 
-    check(not not target.read_bytes() == data, "assertion failed")
+    assert target.read_bytes() == data
+    assert _tmp_files(tmp_path) == []
 
 
-def test_move_file_within_root_replaces_existing_file(tmp_path: Path) -> None:
-    target = tmp_path / "payload.bin"
-    source = tmp_path / ".tmp-source"
-    target.write_bytes(b"old")
-    source.write_bytes(b"new-data")
+def test_write_bytes_cleans_up_temp_on_exception(tmp_path: Path) -> None:
+    target_dir = tmp_path / "target-dir"
+    target_dir.mkdir()
 
-    move_file_within_root(source, target, storage_root=tmp_path)
+    with pytest.raises(OSError):
+        write_bytes(target_dir, b"data", storage_root=tmp_path)
 
-    check(not not target.read_bytes() == b"new-data", "assertion failed")
-    check(not not not source.exists(), "assertion failed")
+    assert _tmp_files(tmp_path) == []
 
 
 def test_storage_writes_reject_paths_outside_storage_root(tmp_path: Path) -> None:
@@ -55,6 +62,8 @@ def test_storage_writes_reject_paths_outside_storage_root(tmp_path: Path) -> Non
     outside.mkdir()
 
     target = outside / "payload.bin"
+    with pytest.raises(ValueError, match="escapes root"):
+        write_bytes(target, b"x", storage_root=root)
     with pytest.raises(ValueError, match="escapes root"):
         write_bytes(target, b"x", storage_root=root)
 

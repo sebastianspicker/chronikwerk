@@ -1,39 +1,22 @@
-# Example configuration for zammad-pdf-archiver.
-# Copy to config/config.yaml and adjust values.
+# Example zammad-pdf-archiver configuration. Copy to config/config.yaml and adjust values.
 # Do not commit secrets.
-#
-# Precedence: ENV > YAML > defaults.
 
 server:
-  host: "0.0.0.0"              # SERVER_HOST
-  port: 8080                     # SERVER_PORT
-  webhook_shared_secret: null    # WEBHOOK_SHARED_SECRET (legacy fallback)
+  host: "0.0.0.0"
+  port: 8080
 
 zammad:
-  base_url: "https://zammad.example.local"  # ZAMMAD_BASE_URL
-  api_token: "CHANGE-ME"                    # ZAMMAD_API_TOKEN
-  webhook_hmac_secret: "CHANGE-ME"          # WEBHOOK_HMAC_SECRET
-  timeout_seconds: 10.0                       # ZAMMAD_TIMEOUT_SECONDS
-  verify_tls: true                            # ZAMMAD_VERIFY_TLS
+  base_url: "https://zammad.example.local"
+  api_token: "CHANGE-ME"
+  webhook_hmac_secret: "CHANGE-ME"
+  timeout_seconds: 10.0
+  verify_tls: true
 
 workflow:
   trigger_tag: "pdf:sign"
   require_tag: true
   acknowledge_on_success: true
   delivery_id_ttl_seconds: 3600
-  execution_backend: "inprocess" # WORKFLOW_EXECUTION_BACKEND: inprocess|redis_queue
-  idempotency_backend: "memory" # IDEMPOTENCY_BACKEND: memory|redis
-  redis_url: null               # REDIS_URL (required for redis_queue or idempotency_backend=redis)
-  queue_stream: "zammad:jobs"   # WORKFLOW_QUEUE_STREAM
-  queue_group: "zammad:jobs:workers" # WORKFLOW_QUEUE_GROUP
-  queue_consumer: null          # WORKFLOW_QUEUE_CONSUMER
-  queue_read_block_ms: 1000     # WORKFLOW_QUEUE_READ_BLOCK_MS
-  queue_read_count: 10          # WORKFLOW_QUEUE_READ_COUNT
-  queue_retry_max_attempts: 3   # WORKFLOW_QUEUE_RETRY_MAX_ATTEMPTS
-  queue_retry_backoff_seconds: 2.0 # WORKFLOW_QUEUE_RETRY_BACKOFF_SECONDS
-  queue_dlq_stream: "zammad:jobs:dlq" # WORKFLOW_QUEUE_DLQ_STREAM
-  history_stream: "zammad:jobs:history" # WORKFLOW_HISTORY_STREAM
-  history_retention_maxlen: 5000 # WORKFLOW_HISTORY_RETENTION_MAXLEN
 
 fields:
   archive_path: "archive_path"
@@ -41,70 +24,51 @@ fields:
   archive_user: "archive_user"
 
 storage:
-  root: "/mnt/archive"   # STORAGE_ROOT
-  fsync: true              # STORAGE_FSYNC
-  path_policy:
-    allow_prefixes:
-      - "Customers/"
-      - "Internal/"
-    filename_pattern: "Ticket-{ticket_number}_{timestamp_utc}.pdf"
+  root: "/srv/zammad-archive"
+  fsync: true
+  filename_pattern: "Ticket-{ticket_number}_{timestamp_utc}.pdf"
 
 pdf:
-  template_variant: "default"   # built-ins: default|minimal|compact; custom requires templates_root
-  templates_root: null          # TEMPLATES_ROOT
   locale: "de_DE"
   timezone: "Europe/Berlin"
   max_articles: 250
-  article_limit_mode: "fail"    # fail|cap_and_continue
-  include_attachment_binary: false        # PDF_INCLUDE_ATTACHMENT_BINARY
-  max_attachment_bytes_per_file: 10485760 # PDF_MAX_ATTACHMENT_BYTES_PER_FILE
-  max_total_attachment_bytes: 52428800    # PDF_MAX_TOTAL_ATTACHMENT_BYTES
+  article_limit_mode: "fail" # fail|cap_and_continue
 
 signing:
-  enabled: false                  # SIGNING_ENABLED
-  pfx_path: "/run/secrets/signing.pfx"    # SIGNING_PFX_PATH
-  pfx_password: null              # SIGNING_PFX_PASSWORD
+  enabled: false
+  pfx_path: null
+  pfx_password: null
   pades:
-    cert_path: null               # SIGNING_CERT_PATH (audit fingerprint fallback only)
-    reason: "Ticket Archivierung" # SIGNING_REASON
-    location: "Datacenter"        # SIGNING_LOCATION
+    reason: "Ticket Archivierung"
+    location: "Datacenter"
   timestamp:
-    enabled: false                # TSA_ENABLED
+    enabled: false
     rfc3161:
-      tsa_url: "https://tsa.example.local/rfc3161"  # TSA_URL
-      timeout_seconds: 10.0       # TSA_TIMEOUT_SECONDS
-      ca_bundle_path: null        # TSA_CA_BUNDLE_PATH
-      user: null                  # TSA_USER
-      password: null              # TSA_PASS
+      tsa_url: null
+      timeout_seconds: 10.0
+      ca_bundle_path: null
+      user: null
+      password: null
 
 observability:
-  log_level: "INFO"             # LOG_LEVEL
-  log_format: null               # LOG_FORMAT (json|human)
-  metrics_enabled: false         # METRICS_ENABLED; requires metrics_bearer_token when true
-  metrics_bearer_token: null     # METRICS_BEARER_TOKEN
-  healthz_omit_version: false    # HEALTHZ_OMIT_VERSION
+  log_level: "INFO"
+  log_format: "json"
+  metrics_enabled: false
+  metrics_bearer_token: null
+  healthz_omit_version: false
+
+retry_bearer_token: null
 
 hardening:
   rate_limit:
-    enabled: true                # RATE_LIMIT_ENABLED
-    rps: 5.0                     # RATE_LIMIT_RPS
-    burst: 10                    # RATE_LIMIT_BURST
-    include_metrics: false       # RATE_LIMIT_INCLUDE_METRICS
-    client_key_header: null      # RATE_LIMIT_CLIENT_KEY_HEADER
+    enabled: true
+    rps: 5.0
+    burst: 10
+    include_metrics: false
+    client_key_header: null
   body_size_limit:
-    max_bytes: 1048576           # MAX_BODY_BYTES
+    max_bytes: 1048576
   webhook:
-    allow_unsigned: false        # HARDENING_WEBHOOK_ALLOW_UNSIGNED
-    allow_unsigned_when_no_secret: false # HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET
-    require_delivery_id: true    # HARDENING_WEBHOOK_REQUIRE_DELIVERY_ID
-    webhook_reject_sha1: false   # nested env: HARDENING__WEBHOOK__WEBHOOK_REJECT_SHA1
+    require_delivery_id: false
   transport:
-    trust_env: false             # HARDENING_TRANSPORT_TRUST_ENV
-    allow_insecure_http: false   # HARDENING_TRANSPORT_ALLOW_INSECURE_HTTP
-    allow_insecure_tls: false    # HARDENING_TRANSPORT_ALLOW_INSECURE_TLS
-    allow_local_upstreams: false # HARDENING_TRANSPORT_ALLOW_LOCAL_UPSTREAMS
-
-admin:
-  enabled: false                 # ADMIN_ENABLED
-  bearer_token: null             # ADMIN_BEARER_TOKEN
-  history_limit: 100             # ADMIN_HISTORY_LIMIT
+    trust_env: false

@@ -7,8 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from test.support.checks import check
-
 # We test the logic of _SafeURLFetcher without requiring weasyprint at import time.
 # The weasyprint.urls imports are lazy (inside fetch()), so we mock them.
 
@@ -59,7 +57,7 @@ def test_data_url_passes_through(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher.fetch("data:text/plain;base64,SGVsbG8=")
-    check(not not result.body == b"data-content", "assertion failed")
+    assert result.body == b"data-content"
 
 
 # -- file:// URLs within template root are allowed ----------------------------------
@@ -73,8 +71,8 @@ def test_file_url_within_template_root_allowed(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher.fetch(f"file://{asset}")
-    check(not not result.body == b"body { color: red; }", "assertion failed")
-    check(not not result.extra["headers"]["Content-Type"] == "text/css", "assertion failed")
+    assert result.body == b"body { color: red; }"
+    assert result.extra["headers"]["Content-Type"] == "text/css"
 
 
 def test_file_url_in_subdirectory_allowed(tmp_path: Path) -> None:
@@ -87,25 +85,36 @@ def test_file_url_in_subdirectory_allowed(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher.fetch(f"file://{asset}")
-    check(not not result.body == b"\x89PNG", "assertion failed")
+    assert result.body == b"\x89PNG"
 
 
 # -- file:// URLs outside template root are blocked ---------------------------------
 
 
-@pytest.mark.parametrize("url_kind", ["outside-root", "traversal"])
-def test_file_url_outside_template_root_blocked(tmp_path: Path, url_kind: str) -> None:
+def test_file_url_outside_template_root_blocked(tmp_path: Path) -> None:
     template_root = tmp_path / "templates"
     template_root.mkdir()
     secret = tmp_path / "secret.txt"
     secret.write_text("sensitive")
-    url = f"file://{secret}" if url_kind == "outside-root" else f"file://{template_root}/../secret.txt"
 
     ctx, FatalError = _patch_weasyprint_urls()
     with ctx:
         fetcher = _make_fetcher(template_root)
         with pytest.raises(FatalError, match="outside template root"):
-            fetcher.fetch(url)
+            fetcher.fetch(f"file://{secret}")
+
+
+def test_file_url_traversal_blocked(tmp_path: Path) -> None:
+    template_root = tmp_path / "templates"
+    template_root.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("sensitive")
+
+    ctx, FatalError = _patch_weasyprint_urls()
+    with ctx:
+        fetcher = _make_fetcher(template_root)
+        with pytest.raises(FatalError, match="outside template root"):
+            fetcher.fetch(f"file://{template_root}/../secret.txt")
 
 
 # -- http/https URLs are blocked ----------------------------------------------------
@@ -149,4 +158,4 @@ def test_callable_delegates_to_fetch(tmp_path: Path) -> None:
     with ctx:
         fetcher = _make_fetcher(tmp_path)
         result = fetcher(f"file://{asset}")
-    check(not not result.body == b"p{}", "assertion failed")
+    assert result.body == b"p{}"

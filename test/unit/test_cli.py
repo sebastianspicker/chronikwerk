@@ -1,110 +1,47 @@
 from __future__ import annotations
 
-import pytest
+import json
 
-from test.support.checks import check
-from test.support.cli_helpers import args as _args
-from test.support.cli_helpers import captured_json as _captured_json
-from test.support.cli_helpers import patch_load_error as _patch_load_error
-from test.support.cli_helpers import patch_load_settings as _patch_load_settings
-from test.support.cli_helpers import settings as _settings
 from zammad_pdf_archiver import cli
-from zammad_pdf_archiver.config.validate import ConfigValidationError, ConfigValidationIssue
-
-# ---------------------------------------------------------------------------
-# cmd_validate_config
-# ---------------------------------------------------------------------------
 
 
-def test_cmd_validate_config_success(monkeypatch, capsys, tmp_path) -> None:
-    """validate-config exits 0 and prints summary when config is valid."""
-    _patch_load_settings(monkeypatch, _settings(tmp_path))
-
-    rc = cli.cmd_validate_config(_args())
-    check(not not rc == 0, "assertion failed")
-
-    out = capsys.readouterr().out
-    check(not "Configuration is valid" not in out, "assertion failed")
-    check(not "Zammad URL" not in out, "assertion failed")
+def test_main_without_command_prints_help(capsys, monkeypatch) -> None:
+    monkeypatch.setattr("sys.argv", ["zammad-pdf-archiver"])
+    assert cli.main() == 0
+    assert "validate-config" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize(
-    ("error", "expected_rc", "expected_err"),
-    [
-        (
-            ConfigValidationError(
-                [
-                    ConfigValidationIssue(
-                        path="CONFIG_PATH",
-                        message="Config file not found: config/missing.yaml",
-                    )
-                ]
-            ),
-            2,
-            ("Configuration file not found", "missing.yaml"),
+def test_validate_config_missing_file_returns_1(capsys, monkeypatch, tmp_path) -> None:
+    missing = tmp_path / "missing.yaml"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["zammad-pdf-archiver", "validate-config", "--config", str(missing)],
+    )
+    assert cli.main() == 1
+    assert "Config not found" in capsys.readouterr().err
+
+
+def test_dump_config_redacts_secret(capsys, monkeypatch, tmp_path) -> None:
+    for key in ("ZAMMAD__BASE_URL", "ZAMMAD__API_TOKEN", "STORAGE__ROOT"):
+        monkeypatch.delenv(key, raising=False)
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "zammad:",
+                "  base_url: https://zammad.example.local",
+                "  api_token: test-token",
+                "  webhook_hmac_secret: test-secret",
+                "storage:",
+                f"  root: {tmp_path}",
+                "",
+            ]
         ),
-        (
-            ConfigValidationError(
-                [ConfigValidationIssue(path="zammad.base_url", message="Field required")]
-            ),
-            1,
-            ("Configuration is invalid",),
-        ),
-        (ValueError("bad value"), 1, ("Configuration is invalid", "bad value")),
-        (OSError("permission denied"), 1, ("Configuration is invalid",)),
-    ],
-)
-def test_cmd_validate_config_errors(monkeypatch, capsys, error, expected_rc, expected_err) -> None:
-    """validate-config returns the documented exit code for config load errors."""
-    _patch_load_error(monkeypatch, error)
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config))
+    monkeypatch.setattr("sys.argv", ["zammad-pdf-archiver", "dump-config"])
 
-    rc = cli.cmd_validate_config(_args())
-    check(not not rc == expected_rc, "assertion failed")
-
-    err = capsys.readouterr().err
-    for expected in expected_err:
-        check(not expected not in err, "assertion failed")
-
-
-# ---------------------------------------------------------------------------
-# cmd_dump_config
-# ---------------------------------------------------------------------------
-
-
-def test_cmd_dump_config_success(monkeypatch, capsys, tmp_path) -> None:
-    """dump-config exits 0 and prints valid redacted JSON."""
-    settings = _settings(tmp_path)
-    _patch_load_settings(monkeypatch, settings)
-
-    rc = cli.cmd_dump_config(_args())
-    check(not not rc == 0, "assertion failed")
-
-    parsed = _captured_json(capsys)
-    # Secrets should be redacted
-    check(not not parsed["zammad"]["api_token"] == "[redacted]", "assertion failed")
-    # Non-secret values preserved
-    check(not not parsed["storage"]["root"] == str(tmp_path), "assertion failed")
-
-
-@pytest.mark.parametrize(
-    ("error", "expected_err"),
-    [
-        (ValueError("invalid config"), ("Failed to load configuration", "invalid config")),
-        (
-            ConfigValidationError(
-                [ConfigValidationIssue(path="zammad.base_url", message="Field required")]
-            ),
-            ("Failed to load configuration",),
-        ),
-    ],
-)
-def test_cmd_dump_config_errors(monkeypatch, capsys, error, expected_err) -> None:
-    """dump-config exits 1 when load_settings raises a caught exception."""
-    _patch_load_error(monkeypatch, error)
-
-    rc = cli.cmd_dump_config(_args())
-    check(not not rc == 1, "assertion failed")
-
-    err = capsys.readouterr().err
-    for expected in expected_err:
-        check(not expected not in err, "assertion failed")
+    assert cli.main() == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["zammad"]["api_token"] == "[redacted]"

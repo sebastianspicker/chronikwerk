@@ -7,8 +7,6 @@
 .vscode
 .idea
 .cursor
-.kilo
-.DS_Store
 
 # Environment and secrets
 .env
@@ -28,8 +26,6 @@ build
 .pytest_cache
 htmlcov
 .coverage
-coverage.xml
-coverage.json
 
 # Virtual environments
 .venv
@@ -45,7 +41,6 @@ tests
 # Development files
 Dockerfile.dev
 docker-compose.dev.yml
-docker-compose.demo.yml
 Makefile
 *.md
 !README.md
@@ -55,22 +50,9 @@ Makefile
 # Pre-commit
 .pre-commit-config.yaml
 
-# Local automation and audit artifacts
-.agents
+# Local audit / codex
 .claude
-.codacy
 .codex
-audit
-plans
-reports
-scratch
-tmp
-deprecated/local-agent-harness
-docs/agent
-docs/archive
-docs/audit
-docs/internal
-docs/plans
-docs/source-audit
-archive
-scripts/topology_inventory.sh
+.agents
+.codacy
+.github/codex

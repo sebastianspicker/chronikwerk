@@ -2,11 +2,8 @@
 
 [![CI](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml)
 [![Docker](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/docker.yml)
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/c8e80b68fa004dca84457fb85ca40032)](https://app.codacy.com/gh/sebastianspicker/zammad-ticket-archiver/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-
-Current package version: `0.2.0rc2`.
 
 `zammad-ticket-archiver` is a FastAPI webhook service that archives Zammad tickets as PDF files on a filesystem target (local path or mounted CIFS/SMB).
 
@@ -39,14 +36,9 @@ This repository provides:
   - `POST /ingest`
   - `POST /ingest/batch`
   - `POST /retry/{ticket_id}`
-  - `GET /jobs/{ticket_id}` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
-  - `GET /jobs/queue/stats` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
-  - `GET /jobs/history` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
-  - `POST /jobs/queue/dlq/drain` (requires Bearer token via `ADMIN_BEARER_TOKEN`)
-  - `GET /admin` (requires Bearer or HTTP Basic auth via `ADMIN_BEARER_TOKEN`)
-  - `/admin/api/*` queue, history, retry, DLQ, and config-check endpoints (requires Bearer token via `ADMIN_BEARER_TOKEN`)
+  - `GET /jobs/history`
   - `GET /healthz`
-  - `GET /metrics` (requires Bearer token via `METRICS_BEARER_TOKEN` when enabled)
+  - `GET /metrics` (when enabled)
 - End-to-end ticket processing:
   1. receive webhook
   2. fetch ticket + tags + articles from Zammad
@@ -66,10 +58,7 @@ This repository provides:
 
 Out of scope by design:
 
-- exporting attachment binary payloads by default (attachments are metadata-only in snapshot/PDF; optional `pdf.include_attachment_binary` can write binaries to disk and the sidecar)
 - archive browsing/search UI
-- distributed durable queue by default (optional Redis queue backend is available)
-- durable distributed idempotency store (default; optional Redis backend available)
 - built-in retention/WORM policy engine
 - built-in encryption-at-rest management
 - multi-tenant isolation beyond path policy and external ACLs
@@ -83,7 +72,7 @@ Default trigger tag is `pdf:sign` (`workflow.trigger_tag`).
 Processing behavior:
 - `workflow.require_tag=true` (default): ticket is processed only when trigger tag is present.
 - If ticket already has `pdf:signed`, processing is skipped.
-- `POST /retry/{ticket_id}` and `POST /admin/api/retry/{ticket_id}` force one reprocessing run even when the trigger tag is absent or `pdf:signed` is already present.
+- `POST /retry/{ticket_id}` forces one reprocessing run even when the trigger tag is absent or `pdf:signed` is already present.
 
 ### Required Ticket Fields
 
@@ -118,9 +107,7 @@ The field names for `archive_path`, `archive_user_mode`, and `archive_user` are 
 ```mermaid
 flowchart LR
   Z["Zammad"] -->|"Webhook: POST /ingest"| I["FastAPI ingress"]
-  I --> D{"workflow.execution_backend"}
   D -->|"inprocess"| J["process_ticket worker"]
-  D -->|"redis_queue"| Q["Redis stream: zammad:jobs"]
   Q --> W["Queue worker"]
   W --> J
   J --> ZA["Zammad API adapter"]
@@ -130,23 +117,11 @@ flowchart LR
   SG --> TSA["RFC3161 TSA (optional)"]
   PDF --> ST["Storage adapter"]
   SG --> ST
-  J --> H["Redis history stream (optional)"]
   J --> ZA
 ```
 
 Detailed architecture and state diagrams:
 - [`docs/01-architecture.md`](docs/01-architecture.md)
-
-## Repository Map
-
-- `src/zammad_pdf_archiver/runtime.py` and `asgi.py` load settings and create the FastAPI app.
-- `src/zammad_pdf_archiver/app/routes/` contains the HTTP surfaces: ingest, retry/jobs, admin, health, and metrics.
-- `src/zammad_pdf_archiver/app/jobs/` contains the asynchronous ticket-processing flow, Redis queue backend, history stream, and shutdown tracking.
-- `src/zammad_pdf_archiver/adapters/` contains external IO: Zammad REST, snapshot building, PDF rendering, signing/TSA, Redis, and filesystem storage.
-- `src/zammad_pdf_archiver/domain/` contains pure policy and data-model code: tag state, ticket IDs, path safety, audit records, and idempotency.
-- `src/zammad_pdf_archiver/config/` contains settings, env/YAML loading, legacy env aliases, and cross-field validation.
-- `scripts/` contains CI, ops, demo, and manual Docker E2E helpers.
-- `test/static`, `test/unit`, `test/integration`, and `test/nfr` mirror the verification layers used by CI.
 
 ## High-Level Behavior
 
@@ -156,7 +131,6 @@ flowchart TD
   B --> C["POST /ingest returns 202"]
   C --> D{"Execution backend"}
   D --> E["In-process worker"]
-  D --> F["Redis queue + queue worker"]
   E --> G["Ticket processing pipeline"]
   F --> G
   G --> H["PDF + sidecar written"]
@@ -180,13 +154,12 @@ cp .env.example .env
 **2. Edit `.env` with your values** (minimum required):
 
 ```bash
-ZAMMAD_BASE_URL=https://your-zammad.example.com
-ZAMMAD_API_TOKEN=your-api-token
-STORAGE_ROOT=/mnt/archive
-WEBHOOK_HMAC_SECRET=your-webhook-secret
+ZAMMAD__BASE_URL=https://your-zammad.example.com
+ZAMMAD__API_TOKEN=your-api-token
+STORAGE__ROOT=/mnt/archive
+ZAMMAD__WEBHOOK_HMAC_SECRET=your-webhook-secret
 ```
 
-> For internal test/dev without HMAC, set both `HARDENING_WEBHOOK_ALLOW_UNSIGNED=true` and `HARDENING_WEBHOOK_ALLOW_UNSIGNED_WHEN_NO_SECRET=true` instead of `WEBHOOK_HMAC_SECRET`.
 
 **3. Start the service:**
 
@@ -226,23 +199,9 @@ make verify        # QA + build
 Run a fully self-contained demo with a mock Zammad API:
 
 ```bash
-make demo-up       # start demo stack (mock Zammad + Redis + archiver)
 make demo-seed     # seed demo ticket data
-make demo-shots    # capture admin UI screenshots (requires Playwright)
 make demo-down     # tear down
 ```
-
-### Screenshots (Admin Dashboard)
-
-<details>
-<summary>Click to expand admin dashboard screenshots</summary>
-
-![Admin queue stats](docs/assets/demo/02-admin-queue-stats.png)
-![Admin history view](docs/assets/demo/03-admin-history-all.png)
-![Admin backend unavailable (503)](docs/assets/demo/09-api-503-backend-unavailable.png)
-![Admin mobile viewport](docs/assets/demo/10-admin-mobile-viewport.png)
-
-</details>
 
 ### Endpoints
 
@@ -251,14 +210,9 @@ make demo-down     # tear down
 | `POST` | `/ingest` | HMAC | Webhook ingestion |
 | `POST` | `/ingest/batch` | HMAC | Batch webhook ingestion (max 100) |
 | `POST` | `/retry/{ticket_id}` | Bearer | Re-process a ticket |
-| `GET` | `/jobs/{ticket_id}` | Bearer | Job status for a ticket |
-| `GET` | `/jobs/queue/stats` | Bearer | Queue statistics |
-| `GET` | `/jobs/history` | Bearer | Processing history |
-| `POST` | `/jobs/queue/dlq/drain` | Bearer | Delete dead-letter queue entries |
-| `GET` | `/admin` | Bearer or Basic | Admin dashboard (optional) |
-| `GET/POST` | `/admin/api/*` | Bearer | Admin API (optional) |
+| `GET` | `/jobs/history` | -- | Process-local processing history |
 | `GET` | `/healthz` | -- | Health check (supports `?deep=true`) |
-| `GET` | `/metrics` | Bearer | Prometheus metrics (optional) |
+| `GET` | `/metrics` | Optional Bearer | Prometheus metrics (optional) |
 
 See [`docs/api.md`](docs/api.md) for full request/response details.
 
@@ -266,9 +220,8 @@ See [`docs/api.md`](docs/api.md) for full request/response details.
 
 Precedence (highest first):
 1. Environment variables (including values loaded from `.env`)
-2. Flat env aliases (operator-friendly env keys)
-3. YAML config (`CONFIG_PATH`, or `config/config.yaml` when present)
-4. Defaults in settings model
+2. YAML config (`CONFIG_PATH`, or `config/config.yaml` when present)
+3. Defaults in settings model
 
 ### Configuration Reference
 
@@ -276,23 +229,20 @@ Precedence (highest first):
 |----------|-------------|
 | [`.env.example`](.env.example) | Annotated environment variable template |
 | [`config/config.example.yaml`](config/config.example.yaml) | Full YAML configuration example |
-| [`docs/config-reference.md`](docs/config-reference.md) | Complete key reference with defaults and env aliases |
-| [`config/config.schema.json`](config/config.schema.json) | JSON Schema for editor autocompletion |
+| [`docs/config-reference.md`](docs/config-reference.md) | Complete key reference with defaults and env keys |
 
 ## Operational Notes
 
 - All output paths are validated and confined under `storage.root`.
-- Archive commits use a temp-directory, sidecar-last storage path and are fsynced by default (`storage.fsync=true`).
+- Default storage writes are atomic and fsynced (`storage.fsync=true`).
 - Signing requires `signing.enabled=true` and `signing.pfx_path`.
 - Timestamping requires signing plus:
   - `signing.timestamp.enabled=true`
   - `signing.timestamp.rfc3161.tsa_url`
-- TSA basic auth (if needed) can be configured with
-  `signing.timestamp.rfc3161.user` / `signing.timestamp.rfc3161.password` or
-  the flat env aliases `TSA_USER` / `TSA_PASS`.
-- Delivery ID dedupe is memory-backed by default and resets on process restart. For consistent deduplication across restarts or multiple instances, use Redis (`workflow.idempotency_backend=redis`, `workflow.redis_url`); see [Operations](docs/08-operations.md).
+- TSA basic auth (if needed) uses env-only keys:
+  - `TSA_USER`
+  - `TSA_PASS`
 - For `POST /ingest/batch`, a batch-level `X-Zammad-Delivery` header is expanded to per-item IDs of the form `<delivery-id>:<index>` before dedupe is applied.
-- Processing after `202` is **best-effort** in default `inprocess` mode. For durable retries and dead-letter handling, enable `workflow.execution_backend=redis_queue` with `workflow.redis_url`; see [Processing and Idempotency](docs/08-operations.md#4-processing-and-idempotency-behavior).
 - If a ticket is stuck in `pdf:processing` after a crash, see [Stuck in pdf:processing](docs/faq.md#why-is-a-ticket-stuck-with-pdfprocessing) in the FAQ.
 
 Operational docs:
@@ -310,36 +260,33 @@ make test          # pytest (all tests)
 make test-fast     # static + unit tests only
 make qa            # full QA: lint + mypy + all test suites
 make verify        # QA + sdist/wheel build
-make smoke         # repo structure smoke check
-make test-e2e      # manual Docker Compose API E2E lane
+make smoke         # smoke test (requires running service)
 make dev           # Docker Compose dev stack (hot-reload)
 ```
 
-## Documentation
+## Documentation (index)
 
-Start with the [documentation index](docs/README.md) for the current operator
-and maintainer docs. The main public surfaces are:
-
-- [`docs/02-zammad-setup.md`](docs/02-zammad-setup.md) - Zammad-side setup
-- [`docs/config-reference.md`](docs/config-reference.md) - complete settings reference
-- [`docs/deploy.md`](docs/deploy.md) - production deployment
-- [`docs/08-operations.md`](docs/08-operations.md) - operations runbook
-- [`docs/api.md`](docs/api.md) - HTTP API contract
-- [`docs/09-security.md`](docs/09-security.md) - security model and hardening notes
-- [`CONTRIBUTING.md`](CONTRIBUTING.md#releases) - release workflow
-- [`docs/demo-mock-university.md`](docs/demo-mock-university.md) - local mock university demo
-
-Historical audit, plan, ledger, status, and archive packets are not part of the
-active public docs unless they are intentionally promoted and linked from
-`docs/README.md`.
+- [`docs/01-architecture.md`](docs/01-architecture.md)
+- [`docs/02-zammad-setup.md`](docs/02-zammad-setup.md)
+- [`docs/03-data-model.md`](docs/03-data-model.md)
+- [`docs/04-path-policy.md`](docs/04-path-policy.md)
+- [`docs/05-pdf-rendering.md`](docs/05-pdf-rendering.md)
+- [`docs/06-signing-and-timestamp.md`](docs/06-signing-and-timestamp.md)
+- [`docs/07-storage.md`](docs/07-storage.md)
+- [`docs/08-operations.md`](docs/08-operations.md)
+- [`docs/09-security.md`](docs/09-security.md)
+- [`docs/api.md`](docs/api.md)
+- [`docs/config-reference.md`](docs/config-reference.md)
+- [`docs/faq.md`](docs/faq.md)
+- [`docs/release-checklist.md`](docs/release-checklist.md) – Release and deployment checklist
+- [`docs/deploy.md`](docs/deploy.md) – Production deployment
 
 ## Glossary
 
 - **Audit sidecar**: JSON file written next to each PDF containing checksum and processing metadata.
 - **Archive path**: ticket custom field defining path segments under storage root.
 - **Archive user mode**: strategy that selects the first directory component (`owner`, `current_agent`, `fixed`).
-- **Delivery ID**: `X-Zammad-Delivery` header used for deduplication; memory-backed by default, Redis-backed when configured.
-- **HMAC**: webhook signature validation via `X-Hub-Signature: sha1=<hex>` or `sha256=<hex>`.
+- **Delivery ID**: `X-Zammad-Delivery` header used for best-effort in-memory deduplication.
 - **PAdES**: PDF Advanced Electronic Signatures profile.
 - **RFC3161**: timestamp protocol used by Time Stamping Authorities.
 - **TSA**: Time Stamping Authority endpoint used for timestamp tokens.

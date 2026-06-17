@@ -1,28 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import Any
 
 import httpx
 import respx
 
-from test.support.checks import check
-from test.support.credentials import fake_credential
-from test.support.integration_helpers import (
-    assert_error_article_note,
-    called_tag_items,
-    expected_agent_archive_pdf_path,
-    mock_success_tag_write_routes,
-    posted_article,
-    zammad_storage_settings,
-)
-from test.support.integration_helpers import (
-    assert_success_tag_transitions as _assert_shared_success_tag_transitions,
-)
-from test.support.time_control import freeze_process_ticket_now
+from test.support.settings_factory import make_settings
 from zammad_pdf_archiver._version import VERSION
+from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
@@ -35,367 +25,364 @@ from zammad_pdf_archiver.domain.state_machine import (
 
 
 def _test_settings(storage_root: str) -> Settings:
-    return zammad_storage_settings(storage_root)
+    return make_settings(storage_root)
 
 
 def _called_tag_items(route: respx.Route) -> list[str]:
-    return called_tag_items(route)
+    items: list[str] = []
+    for call in route.calls:
+        body = json.loads(call.request.content.decode("utf-8"))
+        items.append(body.get("item"))
+    return items
 
 
-def _ticket_json(custom_fields: dict[str, object]) -> dict[str, object]:
+def _payload(request_id: str, *, force_reprocess: bool = False) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "_request_id": request_id,
+        "user": {"login": "agent-from-webhook"},
+    }
+    if force_reprocess:
+        payload["ticket_id"] = 123
+        payload["_force_reprocess"] = True
+    else:
+        payload["ticket"] = {"id": 123}
+    return payload
+
+
+def _patch_fixed_now(monkeypatch) -> datetime:  # noqa: ANN001
+    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
+    return fixed_now
+
+
+def _ticket_json(archive_path: Any) -> dict[str, Any]:
     return {
         "id": 123,
         "number": "20240123",
         "owner": {"login": "agent"},
         "updated_by": {"login": "fallback-agent"},
-        "preferences": {"custom_fields": custom_fields},
+        "preferences": {
+            "custom_fields": {
+                "archive_user_mode": "owner",
+                "archive_path": archive_path,
+            }
+        },
     }
 
 
-def _default_custom_fields() -> dict[str, object]:
+def _article_json(
+    article_id: int,
+    *,
+    subject: str = "Hello",
+    body: str = "<p>Hello World</p>",
+) -> dict[str, Any]:
     return {
-        "archive_user_mode": "owner",
-        "archive_path": ["A", "B", "C"],
-    }
-
-
-def _article_json() -> dict[str, object]:
-    return {
-        "id": 1,
-        "created_at": "2026-02-07T11:59:00Z",
+        "id": article_id,
+        "created_at": f"2026-02-07T11:59:{(article_id - 1) * 30:02d}Z",
         "internal": False,
-        "subject": "Hello",
-        "body": "<p>Hello World</p>",
+        "subject": subject,
+        "body": body,
         "content_type": "text/html",
         "from": "customer@example.invalid",
         "attachments": [],
     }
 
 
-def _second_article_json() -> dict[str, object]:
-    return {
-        "id": 2,
-        "created_at": "2026-02-07T11:59:30Z",
-        "internal": False,
-        "subject": "World",
-        "body": "<p>World Hello</p>",
-        "content_type": "text/html",
-        "from": "customer@example.invalid",
-        "attachments": [],
-    }
+def _single_article() -> list[dict[str, Any]]:
+    return [_article_json(1)]
 
 
-def _article_with_attachment_json() -> dict[str, object]:
-    article = _article_json()
-    article["attachments"] = [
-        {
-            "id": 10,
-            "filename": "a.txt",
-            "size": 5,
-            "content_type": "text/plain",
-        }
+def _two_articles() -> list[dict[str, Any]]:
+    return [
+        _article_json(1),
+        _article_json(2, subject="World", body="<p>World Hello</p>"),
     ]
-    return article
 
 
-def _mock_ticket_and_tags(custom_fields: dict[str, object]) -> tuple[respx.Route, respx.Route]:
+@dataclass
+class _ProcessRoutes:
+    ticket: respx.Route
+    tags: respx.Route
+    articles: respx.Route | None
+    remove_tag: respx.Route
+    add_tag: respx.Route
+    note: respx.Route
+
+
+def _register_process_routes(
+    *,
+    archive_path: Any = ("A", "B", "C"),
+    tags: list[str] | None = None,
+    articles: list[dict[str, Any]] | None = None,
+    include_articles_route: bool = True,
+) -> _ProcessRoutes:
     ticket_route = respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
-        return_value=httpx.Response(200, json=_ticket_json(custom_fields))
+        return_value=httpx.Response(200, json=_ticket_json(archive_path))
     )
     tags_route = respx.get(
         "https://zammad.example.local/api/v1/tags",
         params={"object": "Ticket", "o_id": "123"},
-    ).mock(return_value=httpx.Response(200, json=[TRIGGER_TAG]))
-    return ticket_route, tags_route
-
-
-def _mock_ticket_articles(articles: list[dict[str, object]] | None = None) -> respx.Route:
-    return respx.get("https://zammad.example.local/api/v1/ticket_articles/by_ticket/123").mock(
-        return_value=httpx.Response(200, json=[_article_json()] if articles is None else articles)
+    ).mock(return_value=httpx.Response(200, json=tags or [TRIGGER_TAG]))
+    articles_route = None
+    if include_articles_route:
+        articles_route = respx.get(
+            "https://zammad.example.local/api/v1/ticket_articles/by_ticket/123"
+        ).mock(return_value=httpx.Response(200, json=articles if articles is not None else []))
+    remove_tag_route = respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    add_tag_route = respx.post("https://zammad.example.local/api/v1/tags/add").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    note_route = respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
+        return_value=httpx.Response(
+            200,
+            json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
+        )
+    )
+    return _ProcessRoutes(
+        ticket=ticket_route,
+        tags=tags_route,
+        articles=articles_route,
+        remove_tag=remove_tag_route,
+        add_tag=add_tag_route,
+        note=note_route,
     )
 
 
-def _mock_standard_ticket_reads(
-    custom_fields: dict[str, object] | None = None,
-    articles: list[dict[str, object]] | None = None,
-) -> tuple[respx.Route, respx.Route, respx.Route]:
-    ticket_route, tags_route = _mock_ticket_and_tags(custom_fields or _default_custom_fields())
-    articles_route = _mock_ticket_articles(articles)
-    return ticket_route, tags_route, articles_route
-
-
-def _settings_with_pdf(tmp_path: Path, pdf_settings: dict[str, object]) -> Settings:
-    return Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.local",
-                "api_token": fake_credential("test-token"),
-            },
-            "storage": {"root": str(tmp_path)},
-            "pdf": pdf_settings,
-        }
+def _expected_pdf_path(tmp_path, settings: Settings, fixed_now: datetime):  # noqa: ANN001
+    date_iso = fixed_now.date().isoformat()
+    expected_filename = build_filename_from_pattern(
+        settings.storage.filename_pattern,
+        ticket_number="20240123",
+        timestamp_utc=date_iso,
     )
-
-
-def _mock_ticket_reads_with_tags(
-    *,
-    tags: list[str],
-    articles: list[dict[str, object]] | None = None,
-) -> tuple[respx.Route, respx.Route, respx.Route]:
-    ticket_route = respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
-        return_value=httpx.Response(200, json=_ticket_json(_default_custom_fields()))
-    )
-    tags_route = respx.get(
-        "https://zammad.example.local/api/v1/tags",
-        params={"object": "Ticket", "o_id": "123"},
-    ).mock(return_value=httpx.Response(200, json=tags))
-    articles_route = _mock_ticket_articles([] if articles is None else articles)
-    return ticket_route, tags_route, articles_route
-
-
-def _mock_error_side_effect_routes() -> tuple[respx.Route, respx.Route, respx.Route]:
-    remove_tag_route, add_tag_route = mock_success_tag_write_routes()
-    article_route = respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-        return_value=httpx.Response(200, json={"id": 999})
-    )
-    return remove_tag_route, add_tag_route, article_route
-
-
-def _expected_pdf_path(tmp_path: Path, settings: Settings, fixed_now: datetime) -> Path:
-    return expected_agent_archive_pdf_path(tmp_path, settings=settings, fixed_now=fixed_now)
-
-
-def _assert_success_tag_transitions(
-    *,
-    add_tag_route: respx.Route,
-    remove_tag_route: respx.Route,
-) -> None:
-    _assert_shared_success_tag_transitions(
-        add_tag_route=add_tag_route,
-        remove_tag_route=remove_tag_route,
-    )
-
-
-def _assert_error_tag_transitions(
-    *,
-    add_tag_route: respx.Route,
-    remove_tag_route: respx.Route,
-    transient: bool,
-) -> None:
-    added = _called_tag_items(add_tag_route)
-    removed = _called_tag_items(remove_tag_route)
-
-    check(not PROCESSING_TAG not in added, "assertion failed")
-    check(not not DONE_TAG not in added, "assertion failed")
-    if transient:
-        check(not TRIGGER_TAG not in added, "assertion failed")
-    else:
-        check(not not TRIGGER_TAG not in added, "assertion failed")
-    check(not ERROR_TAG not in added, "assertion failed")
-    check(not PROCESSING_TAG not in removed, "assertion failed")
-
-
-def _assert_permanent_field_failure_tags(
-    *,
-    add_tag_route: respx.Route,
-    remove_tag_route: respx.Route,
-) -> None:
-    _assert_error_tag_transitions(
-        add_tag_route=add_tag_route,
-        remove_tag_route=remove_tag_route,
-        transient=False,
-    )
-    removed = _called_tag_items(remove_tag_route)
-    check(not TRIGGER_TAG not in removed, "assertion failed")
-
-
-def _assert_permanent_drop_trigger_tags(
-    *,
-    add_tag_route: respx.Route,
-    remove_tag_route: respx.Route,
-) -> None:
-    _assert_permanent_field_failure_tags(
-        add_tag_route=add_tag_route,
-        remove_tag_route=remove_tag_route,
-    )
-
-
-def _assert_failed_result_no_files(
-    result,
-    tmp_path: Path,
-    *,
-    status: str,
-    classification: str,
-) -> None:
-    check(not not result.status == status, "assertion failed")
-    check(not not result.classification == classification, "assertion failed")
-    check(not result.error_note_posted is not True, "assertion failed")
-    check(not result.error_tag_applied is not True, "assertion failed")
-    check(not not list(tmp_path.rglob("*.pdf")) == [], "assertion failed")
-    check(not not list(tmp_path.rglob("*.pdf.json")) == [], "assertion failed")
-
-
-def _assert_permanent_result_no_files(result, tmp_path: Path) -> None:
-    _assert_failed_result_no_files(
-        result,
-        tmp_path,
-        status="failed_permanent",
-        classification="Permanent",
-    )
-
-
-def _assert_transient_result_no_files(result, tmp_path: Path) -> None:
-    _assert_failed_result_no_files(
-        result,
-        tmp_path,
-        status="failed_transient",
-        classification="Transient",
-    )
-
-
-def _assert_success_note(
-    *,
-    article_route: respx.Route,
-    expected_path: Path,
-    written: bytes,
-) -> None:
-    check(not not article_route.called, "assertion failed")
-    req = json.loads(article_route.calls[0].request.content.decode("utf-8"))
-    check(not not req["ticket_id"] == 123, "assertion failed")
-    check(not f"PDF archived ({VERSION})" not in req["subject"], "assertion failed")
-    check(not str(expected_path.parent) not in req["body"], "assertion failed")
-    check(not expected_path.name not in req["body"], "assertion failed")
-    check(not str(len(written)) not in req["body"], "assertion failed")
-    check(not "req-123" not in req["body"], "assertion failed")
-
-
-def _posted_article(route: respx.Route) -> dict[str, object]:
-    return posted_article(route)
-
-
-def _assert_error_note_basics(
-    article: dict[str, object],
-    *,
-    classification: str,
-    request_id: str,
-    delivery_id: str,
-) -> str:
-    check(not not article["ticket_id"] == 123, "assertion failed")
-    check(not f"PDF archiver error ({VERSION})" not in str(article["subject"]), "assertion failed")
-    body = str(article["body"])
-    check(not classification not in body, "assertion failed")
-    check(not request_id not in body, "assertion failed")
-    check(not delivery_id not in body, "assertion failed")
-    return body
-
-
-def _assert_field_failure_note(
-    *,
-    article_route: respx.Route,
-    case_id: str,
-    expected_code: str,
-    expected_fragments: list[str],
-) -> None:
-    body = _assert_error_note_basics(
-        _posted_article(article_route),
-        classification="Permanent",
-        request_id=f"req-{case_id}",
-        delivery_id=f"delivery-{case_id}",
-    )
-    check(not expected_code not in body, "assertion failed")
-    for fragment in expected_fragments:
-        check(not fragment not in body, "assertion failed")
-
-
-def _assert_max_article_failure(
-    *,
-    add_tag_route: respx.Route,
-    remove_tag_route: respx.Route,
-    article_route: respx.Route,
-) -> None:
-    _assert_permanent_drop_trigger_tags(
-        add_tag_route=add_tag_route,
-        remove_tag_route=remove_tag_route,
-    )
-    assert_error_article_note(
-        article_route,
-        classification="Permanent",
-        body_texts=("too many articles",),
-    )
-
-
-def _assert_attachment_fetch_failure(
-    *,
-    result,
-    tmp_path: Path,
-    add_tag_route: respx.Route,
-    remove_tag_route: respx.Route,
-    article_route: respx.Route,
-) -> None:
-    _assert_transient_result_no_files(result, tmp_path)
-    _assert_error_tag_transitions(
-        add_tag_route=add_tag_route,
-        remove_tag_route=remove_tag_route,
-        transient=True,
-    )
-    assert_error_article_note(
-        article_route,
-        classification="Transient",
-        body_texts=("Zammad server error",),
-    )
-
-
-def _assert_success_tags_and_note_posted(
-    *,
-    add_tag_route: respx.Route,
-    remove_tag_route: respx.Route,
-    article_route: respx.Route,
-) -> None:
-    _assert_success_tag_transitions(
-        add_tag_route=add_tag_route,
-        remove_tag_route=remove_tag_route,
-    )
-    check(not not article_route.called, "assertion failed")
+    return tmp_path / "agent" / "A" / "B" / "C" / expected_filename
 
 
 def test_process_ticket_v01_happy_path_writes_pdf_and_updates_tags(tmp_path, monkeypatch) -> None:
     settings = _test_settings(str(tmp_path))
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    freeze_process_ticket_now(monkeypatch, process_ticket_module, fixed_now)
-    payload = {
-        "ticket": {"id": 123},
-        "_request_id": "req-123",
-        "user": {"login": "agent-from-webhook"},
-    }
+    fixed_now = _patch_fixed_now(monkeypatch)
+    payload = _payload("req-123")
 
     with respx.mock:
-        ticket_route, tags_route, articles_route = _mock_standard_ticket_reads(
-            {"archive_user_mode": "owner", "archive_path": "A > B > C"}
+        routes = _register_process_routes(
+            archive_path="A > B > C",
+            articles=_single_article(),
         )
-        remove_tag_route, add_tag_route, article_route = _mock_error_side_effect_routes()
 
         asyncio.run(process_ticket("delivery-happy-1", payload, settings))
 
         # Idempotency: same delivery id should be skipped entirely.
         asyncio.run(process_ticket("delivery-happy-1", payload, settings))
 
-        check(not not ticket_route.call_count == 1, "assertion failed")
-        check(not not tags_route.call_count == 1, "assertion failed")
+        assert routes.ticket.call_count == 1
+        assert routes.tags.call_count == 1
 
         # File written in the expected directory.
         expected_path = _expected_pdf_path(tmp_path, settings, fixed_now)
-        check(not not expected_path.exists(), "assertion failed")
+        assert expected_path.exists()
         written = expected_path.read_bytes()
-        check(not not written.startswith(b"%PDF"), "assertion failed")
-        check(not not b"archived at" not in written, "assertion failed")
+        assert written.startswith(b"%PDF")
+        assert b"archived at" not in written
 
-        check(not not articles_route.called, "assertion failed")
-        _assert_success_tag_transitions(
-            add_tag_route=add_tag_route,
-            remove_tag_route=remove_tag_route,
+        assert routes.articles is not None and routes.articles.called
+        added = _called_tag_items(routes.add_tag)
+        removed = _called_tag_items(routes.remove_tag)
+
+        assert PROCESSING_TAG in added
+        assert DONE_TAG in added
+        assert ERROR_TAG not in added
+
+        assert TRIGGER_TAG in removed
+        assert ERROR_TAG in removed
+        assert PROCESSING_TAG in removed
+
+        assert routes.note.called
+        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
+        assert req["ticket_id"] == 123
+        assert f"PDF archived ({VERSION})" in req["subject"]
+        assert str(expected_path.parent) in req["body"]
+        assert expected_path.name in req["body"]
+        assert str(len(written)) in req["body"]
+        assert "req-123" in req["body"]
+
+
+def test_process_ticket_v01_failure_sets_error_tag_and_posts_note(tmp_path, monkeypatch) -> None:
+    settings = _test_settings(str(tmp_path))
+    fixed_now = _patch_fixed_now(monkeypatch)
+    payload = _payload("req-err-1")
+
+    def _boom(*_args, **_kwargs) -> None:
+        raise PermissionError("no-write")
+
+    monkeypatch.setattr(process_ticket_module, "store_ticket_files", _boom)
+
+    with respx.mock:
+        routes = _register_process_routes(articles=_single_article())
+
+        asyncio.run(process_ticket("delivery-err-1", payload, settings))
+
+        expected_path = _expected_pdf_path(tmp_path, settings, fixed_now)
+        assert not expected_path.exists()
+
+        added = _called_tag_items(routes.add_tag)
+        removed = _called_tag_items(routes.remove_tag)
+
+        assert PROCESSING_TAG in added
+        assert DONE_TAG not in added
+        assert TRIGGER_TAG not in added  # permanent: drop trigger to prevent loops
+        assert ERROR_TAG in added
+
+        assert PROCESSING_TAG in removed  # removed during apply_error/best-effort cleanup
+
+        assert routes.note.called
+        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
+        assert f"PDF archiver error ({VERSION})" in req["subject"]
+        assert "Permanent" in req["body"]
+        assert "PermissionError" in req["body"]
+
+
+def test_process_ticket_v01_transient_failure_keeps_trigger_and_posts_note(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _test_settings(str(tmp_path))
+    _patch_fixed_now(monkeypatch)
+    payload = _payload("req-err-transient-1")
+
+    def _boom(*_args, **_kwargs) -> None:
+        raise OSError(errno.EAGAIN, "try again")
+
+    monkeypatch.setattr(process_ticket_module, "store_ticket_files", _boom)
+
+    with respx.mock:
+        routes = _register_process_routes(articles=_single_article())
+
+        asyncio.run(process_ticket("delivery-err-transient-1", payload, settings))
+
+        added = _called_tag_items(routes.add_tag)
+        removed = _called_tag_items(routes.remove_tag)
+
+        assert PROCESSING_TAG in added
+        assert DONE_TAG not in added
+        assert TRIGGER_TAG in added  # transient: keep trigger for retries
+        assert ERROR_TAG in added
+
+        assert PROCESSING_TAG in removed
+
+        assert routes.note.called
+        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
+        assert f"PDF archiver error ({VERSION})" in req["subject"]
+        assert "Transient" in req["body"]
+
+
+def test_process_ticket_v01_force_reprocess_overrides_done_tag(tmp_path, monkeypatch) -> None:
+    settings = _test_settings(str(tmp_path))
+    _patch_fixed_now(monkeypatch)
+    payload = _payload("req-force-1", force_reprocess=True)
+
+    with respx.mock:
+        routes = _register_process_routes(tags=[DONE_TAG])
+
+        asyncio.run(process_ticket("delivery-force-1", payload, settings))
+
+        added = _called_tag_items(routes.add_tag)
+        removed = _called_tag_items(routes.remove_tag)
+
+        assert PROCESSING_TAG in added
+        assert DONE_TAG in added
+        assert DONE_TAG in removed
+        assert routes.note.called
+
+
+def test_process_ticket_v01_invalid_archive_path_is_permanent_and_writes_no_files(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _test_settings(str(tmp_path))
+    _patch_fixed_now(monkeypatch)
+    payload = _payload("req-path-invalid-1")
+
+    with respx.mock:
+        routes = _register_process_routes(
+            archive_path=["A", "..", "C"],
+            include_articles_route=False,
         )
-        _assert_success_note(
-            article_route=article_route,
-            expected_path=expected_path,
-            written=written,
-        )
+
+        asyncio.run(process_ticket("delivery-path-invalid-1", payload, settings))
+
+        assert list(tmp_path.rglob("*.pdf")) == []
+        assert list(tmp_path.rglob("*.pdf.json")) == []
+
+        added = _called_tag_items(routes.add_tag)
+        removed = _called_tag_items(routes.remove_tag)
+
+        assert PROCESSING_TAG in added
+        assert DONE_TAG not in added
+        assert TRIGGER_TAG not in added
+        assert ERROR_TAG in added
+
+        assert PROCESSING_TAG in removed
+        assert TRIGGER_TAG in removed
+
+        assert routes.note.called
+        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
+        assert f"PDF archiver error ({VERSION})" in req["subject"]
+        assert "Permanent" in req["body"]
+        assert "ValueError" in req["body"]
+
+
+def test_process_ticket_v01_enforces_pdf_max_articles_setting(tmp_path, monkeypatch) -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": str(tmp_path)},
+            "pdf": {"max_articles": 1},
+        }
+    )
+    _patch_fixed_now(monkeypatch)
+    payload = _payload("req-max-articles-1")
+
+    with respx.mock:
+        routes = _register_process_routes(articles=_two_articles())
+
+        asyncio.run(process_ticket("delivery-max-articles-1", payload, settings))
+
+        removed = _called_tag_items(routes.remove_tag)
+        added = _called_tag_items(routes.add_tag)
+
+        assert TRIGGER_TAG in removed
+        assert PROCESSING_TAG in added
+        assert ERROR_TAG in added
+        assert DONE_TAG not in added
+
+        assert routes.note.called
+        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
+        assert "Permanent" in req["body"]
+        assert "too many articles" in req["body"]
+
+
+def test_process_ticket_v01_pdf_max_articles_zero_disables_limit(tmp_path, monkeypatch) -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": str(tmp_path)},
+            "pdf": {"max_articles": 0},
+        }
+    )
+    _patch_fixed_now(monkeypatch)
+    payload = _payload("req-max-articles-disabled")
+
+    with respx.mock:
+        routes = _register_process_routes(articles=_two_articles())
+
+        asyncio.run(process_ticket("delivery-max-articles-disabled", payload, settings))
+
+        removed = _called_tag_items(routes.remove_tag)
+        added = _called_tag_items(routes.add_tag)
+
+        assert TRIGGER_TAG in removed
+        assert PROCESSING_TAG in added
+        assert DONE_TAG in added
+        assert ERROR_TAG not in added
+
+        assert routes.note.called

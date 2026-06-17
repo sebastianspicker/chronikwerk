@@ -1,17 +1,6 @@
 # 01 - Architecture
 
 `zammad-pdf-archiver` is a single API service with two execution modes:
-- in-process background worker (`workflow.execution_backend=inprocess`)
-- Redis queue worker (`workflow.execution_backend=redis_queue`)
-
-## Entry Points
-
-- `zammad_pdf_archiver.runtime:main` is the packaged service entry point. It loads settings, configures logging, creates the app, and runs Uvicorn.
-- `zammad_pdf_archiver.asgi:app` is the ASGI import path for process managers that run Uvicorn/Gunicorn themselves.
-- `zammad_pdf_archiver.cli:main` provides operator diagnostics: config validation, redacted config dump, queue stats, DLQ drain, and queue history.
-- `src/zammad_pdf_archiver/app/routes/ingest.py` accepts webhook payloads, strips public-only fields, and dispatches work to the configured backend.
-- `src/zammad_pdf_archiver/app/jobs/process_ticket.py` owns one ticket archival job from Zammad fetch through PDF/storage/tag updates.
-- `src/zammad_pdf_archiver/app/jobs/redis_queue.py` owns Redis stream enqueueing, worker lifecycle, retry/DLQ handling, and queue diagnostics.
 
 ## Runtime Flow
 
@@ -21,7 +10,6 @@ sequenceDiagram
   participant Z as Zammad
   participant I as POST /ingest
   participant D as Dispatcher
-  participant R as Redis Queue
   participant W as Queue Worker
   participant J as process_ticket
   participant ZA as Zammad Adapter
@@ -36,9 +24,7 @@ sequenceDiagram
   I-->>Z: 202 Accepted
   I->>D: dispatch job
 
-  alt workflow.execution_backend == inprocess
     D->>J: schedule background task
-  else workflow.execution_backend == redis_queue
     D->>R: enqueue (XADD)
     W->>R: consume (XREADGROUP)
     W->>J: process queued ticket
@@ -58,7 +44,8 @@ sequenceDiagram
     end
   end
 
-  J->>ST: commit PDF/attachments + sidecar-last audit JSON
+  J->>ST: write PDF
+  J->>ST: write audit sidecar JSON
   J->>ZA: create internal note
   J->>ZA: apply_done/apply_error tags
   opt history enabled
@@ -92,15 +79,15 @@ State details:
 Code:
 - `src/zammad_pdf_archiver/app/server.py`
 - `src/zammad_pdf_archiver/app/routes/ingest.py`
-- `src/zammad_pdf_archiver/app/routes/jobs.py`
-- `src/zammad_pdf_archiver/app/routes/admin.py`
 - `src/zammad_pdf_archiver/app/middleware/`
+- `src/zammad_pdf_archiver/app/jobs/process_ticket.py`
+- `src/zammad_pdf_archiver/app/jobs/async_retry.py`
 
 Responsibilities:
 - expose HTTP endpoints
 - enforce ingress hardening (HMAC, body size, rate limit, request ID)
-- schedule asynchronous background processing through either `inprocess` tasks or Redis stream jobs
-- expose operator status/history/DLQ surfaces behind Bearer auth
+- schedule asynchronous background processing
+- provide exponential-backoff retry helper for transient failures
 
 ### Zammad adapter
 
@@ -157,7 +144,7 @@ Code:
 Responsibilities:
 - build deterministic target paths/filenames
 - enforce path policy and root containment
-- write PDFs, optional attachments, and audit sidecars through the ticket-storage temp-directory commit path
+- write files atomically or direct (configurable)
 
 ### Domain layer
 
@@ -170,13 +157,5 @@ Code:
 Responsibilities:
 - tag transition policy
 - transient vs permanent error semantics
-- memory or Redis-backed TTL dedupe by delivery ID
+- in-memory TTL dedupe by delivery ID
 - audit sidecar checksum and metadata model
-
-### Verification layout
-
-Tests are split by intent:
-- `test/static/` checks repository invariants such as mypy-clean source selection.
-- `test/unit/` covers pure logic and adapter helpers without a running service.
-- `test/integration/` exercises FastAPI routes and end-to-end ticket-processing paths with fakes.
-- `test/nfr/` protects non-functional requirements such as docs, hardening, deployment, and operational constraints.

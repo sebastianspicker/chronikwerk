@@ -7,15 +7,14 @@ from time import monotonic
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from zammad_pdf_archiver.app.constants import INGEST_PROTECTED_PATHS
-from zammad_pdf_archiver.app.middleware import rate_limit_keys
-from zammad_pdf_archiver.app.protected_paths import normalized_protected_path
 from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.config.settings import Settings
 
 _METRICS_PATH = "/metrics"
-_client_key = rate_limit_keys.client_key
-_client_key_from_header = rate_limit_keys.client_key_from_header
-_client_key_from_scope = rate_limit_keys.client_key_from_scope
+
+# Eviction tuning for the in-memory token-bucket store (Bug #P2-1).
+_EVICTION_HEADROOM = 200  # extra entries to evict below max_entries
+_EVICTION_BATCH_CAP = 2000  # max entries to evict in one pass
 
 
 @dataclass
@@ -44,12 +43,26 @@ class _InMemoryTokenBucketLimiter:
         """Return True if the request for key is within the rate limit, False otherwise."""
         now = float(self._now())
         async with self._lock:
+            if len(self._buckets) > self._max_entries:
+                # Bug #P2-1: Optimized eviction: avoid sorted() which is O(N log N).
+                # Pop the first few entries (oldest inserted) until we are slightly below limit.
+                to_evict_count = len(self._buckets) - self._max_entries + _EVICTION_HEADROOM
+                to_evict_count = min(to_evict_count, _EVICTION_BATCH_CAP)
+
+                # Collect keys first to avoid "dictionary changed size during iteration"
+                it = iter(self._buckets)
+                keys_to_remove = []
+                for _ in range(to_evict_count):
+                    try:
+                        keys_to_remove.append(next(it))
+                    except StopIteration:
+                        break
+
+                for k in keys_to_remove:
+                    self._buckets.pop(k, None)
+
             bucket = self._buckets.get(key)
             if bucket is None:
-                if len(self._buckets) >= self._max_entries:
-                    to_evict_count = len(self._buckets) - self._max_entries + 1
-                    for evicted_key in list(self._buckets)[:to_evict_count]:
-                        self._buckets.pop(evicted_key, None)
                 bucket = _Bucket(tokens=self._burst, updated_at=now)
                 self._buckets[key] = bucket
 
@@ -63,6 +76,46 @@ class _InMemoryTokenBucketLimiter:
                 return True
 
             return False
+
+
+def _client_key_from_scope(scope: Scope) -> str:
+    client = scope.get("client")
+    if isinstance(client, (list, tuple)) and client:
+        host = client[0]
+        if isinstance(host, str) and host:
+            return host
+    return "unknown"
+
+
+def _client_key_from_header(scope: Scope, header_name: str) -> str:
+    """Extract rate-limit key from a request header (e.g. X-Forwarded-For).
+
+    Security note: this header is trivially spoofable by clients unless a
+    trusted reverse proxy (nginx, Caddy, cloud LB) strips/overwrites it
+    before forwarding.  Only enable ``client_key_header`` when deployed
+    behind such a proxy.  When the header is missing or empty we fall back
+    to the ASGI-level client address so an attacker cannot bypass rate
+    limiting by omitting the header.
+    """
+    headers = scope.get("headers") or []
+    header_lower = header_name.lower().encode("utf-8")
+    for name, value in headers:
+        if name == header_lower and value:
+            first = value.decode("utf-8", errors="replace").strip()
+            if "," in first:
+                first = first.split(",")[0].strip()
+            if first:
+                return first
+            break
+    # Security: fall back to connection-level client address when header is
+    # absent or empty, so attackers cannot bypass rate limiting by omitting it.
+    return _client_key_from_scope(scope)
+
+
+def _client_key(scope: Scope, header_name: str | None) -> str:
+    if header_name and header_name.strip():
+        return _client_key_from_header(scope, header_name.strip())
+    return _client_key_from_scope(scope)
 
 
 def _rate_limited():
@@ -92,7 +145,7 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if not self._enabled or normalized_protected_path(scope.get("path")) not in self._paths:
+        if not self._enabled or scope.get("path") not in self._paths:
             await self.app(scope, receive, send)
             return
 

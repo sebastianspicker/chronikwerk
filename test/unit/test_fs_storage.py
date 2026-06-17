@@ -4,24 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from test.support.checks import check
 from zammad_pdf_archiver.adapters.storage.fs_storage import (
     _reject_symlinks_under_root,
     move_file_within_root,
     write_bytes,
 )
-
-
-def _symlink_to_outside(tmp_path: Path, root: Path, *, name: str = "sym") -> Path:
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    link = root / name
-    try:
-        link.symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks not supported in this environment")
-    return link
-
 
 # -- _reject_symlinks_under_root ------------------------------------------------
 
@@ -37,7 +24,14 @@ def test_reject_symlinks_under_root_allows_normal_dirs(tmp_path: Path) -> None:
 def test_reject_symlinks_under_root_blocks_symlink_component(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
-    link = _symlink_to_outside(tmp_path, root, name="link")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    link = root / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported in this environment")
 
     with pytest.raises(ValueError, match="escapes root"):
         _reject_symlinks_under_root(root, link / "child")
@@ -46,7 +40,14 @@ def test_reject_symlinks_under_root_blocks_symlink_component(tmp_path: Path) -> 
 def test_reject_symlinks_under_root_blocks_symlink_leaf(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
-    link = _symlink_to_outside(tmp_path, root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    link = root / "sym"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported in this environment")
 
     with pytest.raises(ValueError, match="escapes root"):
         _reject_symlinks_under_root(root, link)
@@ -69,6 +70,20 @@ def test_reject_symlinks_under_root_blocks_deep_symlink(tmp_path: Path) -> None:
         _reject_symlinks_under_root(root, link / "child")
 
 
+# -- write_bytes cleanup on failure ----------------------------------------
+
+
+def test_write_bytes_creates_file_on_success(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "sub" / "output.bin"
+
+    write_bytes(target, b"hello", storage_root=root, fsync=False)
+
+    assert target.read_bytes() == b"hello"
+    assert oct(target.stat().st_mode & 0o777) == oct(0o640)
+
+
 # -- write_bytes -------------------------------------------------------------------
 
 
@@ -79,8 +94,8 @@ def test_write_bytes_creates_file_with_correct_perms(tmp_path: Path) -> None:
 
     write_bytes(target, b"content", storage_root=root, fsync=False)
 
-    check(not not target.read_bytes() == b"content", "assertion failed")
-    check(not not oct(target.stat().st_mode & 511) == oct(416), "assertion failed")
+    assert target.read_bytes() == b"content"
+    assert oct(target.stat().st_mode & 0o777) == oct(0o640)
 
 
 def test_write_bytes_rejects_path_outside_root(tmp_path: Path) -> None:
@@ -104,8 +119,8 @@ def test_move_file_within_root_success(tmp_path: Path) -> None:
 
     move_file_within_root(src, dst, storage_root=root, fsync=False)
 
-    check(not not not src.exists(), "assertion failed")
-    check(not not dst.read_bytes() == b"payload", "assertion failed")
+    assert not src.exists()
+    assert dst.read_bytes() == b"payload"
 
 
 def test_move_file_within_root_rejects_src_outside_root(tmp_path: Path) -> None:
@@ -133,7 +148,14 @@ def test_move_file_within_root_rejects_dst_outside_root(tmp_path: Path) -> None:
 def test_move_file_within_root_rejects_dst_through_symlink(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
-    link = _symlink_to_outside(tmp_path, root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    link = root / "sym"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported in this environment")
 
     src = root / "src.bin"
     src.write_bytes(b"data")
