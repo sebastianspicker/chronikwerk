@@ -189,6 +189,15 @@ def _get_cached_signer(pfx: _PfxMaterial) -> Any:
     return _cache_new_signer(pfx_path_str, current_mtime, entry)
 
 
+def _classify_signing_failure(exc: Exception) -> PermanentError | TransientError:
+    if isinstance(
+        exc,
+        (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
+    ):
+        return TransientError("Failed to sign PDF due to temporary (TSA) network issue")
+    return PermanentError("Failed to sign PDF")
+
+
 def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = False) -> bytes:
     """
     Sign a PDF with an (invisible) PAdES signature using a locally provided PKCS#12/PFX bundle.
@@ -242,14 +251,6 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
     except (TransientError, PermanentError):
         raise
     except Exception as exc:
-        # P2-3: Classify by exception type instead of string matching.
-        # Network/timeout errors (likely from TSA) are transient; everything else permanent.
-        if isinstance(
-            exc,
-            (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
-        ):
-            raise TransientError("Failed to sign PDF due to temporary (TSA) network issue") from exc
+        raise _classify_signing_failure(exc) from exc
 
-        # Mapping remaining pyHanko errors to PermanentError for callers.
-        raise PermanentError("Failed to sign PDF") from exc
     return out.getvalue()

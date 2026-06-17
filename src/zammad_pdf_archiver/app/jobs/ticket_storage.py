@@ -56,7 +56,7 @@ def _iter_attachment_payloads(snapshot: Snapshot) -> list[tuple[Any, Any]]:
         (article, attachment)
         for article in snapshot.articles
         for attachment in article.attachments
-        if attachment.content is not None
+        if getattr(attachment, "content", None) is not None
     ]
 
 
@@ -79,9 +79,12 @@ def _write_attachment_payload(
     fsync: bool,
 ) -> dict[str, Any]:
     safe_name = _attachment_safe_name(article, attachment)
+    content = getattr(attachment, "content", None)
+    if content is None:
+        raise ValueError("attachment content missing")
     write_bytes(
         temp_attachments_dir / safe_name,
-        attachment.content,
+        content,
         fsync=fsync,
         storage_root=storage_root,
     )
@@ -271,49 +274,6 @@ def _commit_sidecar(
         raise
 
 
-def _prepare_temp_archive(
-    *,
-    temp_archive_root: Path,
-    pdf_bytes: bytes,
-    snapshot: Snapshot,
-    target_path: Path,
-    sidecar_path: Path,
-    ticket_id: int,
-    now: datetime,
-    settings: Settings,
-    sha256_hex: str,
-) -> list[dict[str, Any]]:
-    ensure_dir(temp_archive_root)
-    attachments_dir = target_path.parent / "attachments"
-    attachment_entries = _write_attachments(
-        temp_archive_root,
-        snapshot,
-        settings.storage.root,
-        attachments_dir,
-        fsync=settings.storage.fsync,
-    )
-    write_bytes(
-        temp_archive_root / target_path.name,
-        pdf_bytes,
-        fsync=settings.storage.fsync,
-        storage_root=settings.storage.root,
-    )
-    _build_and_write_audit(
-        temp_archive_root,
-        sidecar_path.name,
-        context=AuditWriteContext(
-            ticket_id=ticket_id,
-            snapshot=snapshot,
-            now=now,
-            target_path=target_path,
-            sha256_hex=sha256_hex,
-            settings=settings,
-            attachment_entries=attachment_entries,
-        ),
-    )
-    return attachment_entries
-
-
 def store_ticket_files(
     pdf_bytes: bytes,
     snapshot: Snapshot,
@@ -336,16 +296,33 @@ def store_ticket_files(
     )
 
     try:
-        attachment_entries = _prepare_temp_archive(
-            temp_archive_root=temp_archive_root,
-            pdf_bytes=pdf_bytes,
-            snapshot=snapshot,
-            target_path=target_path,
-            sidecar_path=sidecar_path,
-            ticket_id=ticket_id,
-            now=now,
-            settings=settings,
-            sha256_hex=sha256_hex,
+        ensure_dir(temp_archive_root)
+        attachments_dir = target_path.parent / "attachments"
+        attachment_entries = _write_attachments(
+            temp_archive_root,
+            snapshot,
+            settings.storage.root,
+            attachments_dir,
+            fsync=settings.storage.fsync,
+        )
+        write_bytes(
+            temp_archive_root / target_path.name,
+            pdf_bytes,
+            fsync=settings.storage.fsync,
+            storage_root=settings.storage.root,
+        )
+        _build_and_write_audit(
+            temp_archive_root,
+            sidecar_path.name,
+            context=AuditWriteContext(
+                ticket_id=ticket_id,
+                snapshot=snapshot,
+                now=now,
+                target_path=target_path,
+                sha256_hex=sha256_hex,
+                settings=settings,
+                attachment_entries=attachment_entries,
+            ),
         )
         _commit_files_to_storage(
             temp_archive_root,

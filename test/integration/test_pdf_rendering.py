@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import warnings
 
@@ -64,7 +65,7 @@ def _internal_article() -> dict[str, object]:
 
 
 def test_render_pdf_default_template_produces_pdf_bytes() -> None:
-    pdf_bytes = render_pdf(_rendering_snapshot(), "default")
+    pdf_bytes = asyncio.run(render_pdf(_rendering_snapshot()))
 
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 5_000
@@ -88,7 +89,7 @@ def test_render_pdf_does_not_emit_pydyf_identifier_deprecation_warning() -> None
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        pdf_bytes = render_pdf(snapshot, "default")
+        pdf_bytes = asyncio.run(render_pdf(snapshot))
 
     assert pdf_bytes.startswith(b"%PDF")
     assert not any(
@@ -117,7 +118,7 @@ def test_render_pdf_default_template_avoids_ignored_css_warnings(caplog) -> None
     )
 
     with caplog.at_level(logging.WARNING, logger="weasyprint"):
-        pdf_bytes = render_pdf(snapshot, "default")
+        pdf_bytes = asyncio.run(render_pdf(snapshot))
 
     assert pdf_bytes.startswith(b"%PDF")
     assert not any(

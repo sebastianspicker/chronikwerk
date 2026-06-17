@@ -8,7 +8,9 @@ def test_dev_run_local_script_is_not_placeholder() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     script = repo_root / "scripts" / "dev" / "run-local.sh"
 
-    proc = subprocess.run([str(script), "--dry-run"], capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        ["/bin/sh", str(script), "--dry-run"], capture_output=True, text=True, check=False
+    )
     assert proc.returncode == 0, proc.stderr
     assert "TODO" not in proc.stdout
     assert "uvicorn" in proc.stdout
@@ -21,7 +23,7 @@ def test_dev_gen_certs_script_is_not_placeholder(tmp_path: Path) -> None:
 
     out_dir = tmp_path / "certs"
     proc = subprocess.run(
-        [str(script), "--dry-run", str(out_dir)],
+        ["/bin/sh", str(script), "--dry-run", str(out_dir)],
         capture_output=True,
         text=True,
         check=False,

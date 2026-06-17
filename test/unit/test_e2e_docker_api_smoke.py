@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
@@ -105,17 +104,15 @@ def test_dry_run_prints_docker_api_plan(capsys: pytest.CaptureFixture[str]) -> N
     assert "POST /retry/1104 expected=processed" in out
 
 
-def test_e2e_script_supports_dry_run_subprocess() -> None:
+def test_e2e_script_supports_dry_run_cli(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     script = repo_root / "scripts" / "e2e" / "docker_api_smoke.py"
 
-    proc = subprocess.run(
-        [sys.executable, str(script), "--dry-run"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    monkeypatch.setattr(sys, "argv", [str(script), "--dry-run"])
 
-    assert proc.returncode == 0, proc.stderr
-    assert "Docker API E2E smoke" in proc.stdout
-    assert "docker compose -p zammad-archiver-e2e" in proc.stdout
+    assert docker_api_smoke.main() == 0
+    out = capsys.readouterr().out
+    assert "Docker API E2E smoke" in out
+    assert "docker compose -p zammad-archiver-e2e" in out

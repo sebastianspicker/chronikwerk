@@ -33,6 +33,13 @@ class _RetryPolicy:
         return self.backoff_base_seconds * (2**attempt)
 
 
+@dataclass(frozen=True, slots=True)
+class _ZammadRuntimeOptions:
+    retry_policy: _RetryPolicy | None = None
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    http_client: httpx.AsyncClient | None = None
+
+
 class AsyncZammadClient:
     """Async HTTP client for the Zammad REST API with retry and error mapping."""
 
@@ -44,9 +51,7 @@ class AsyncZammadClient:
         timeout_seconds: float = 10.0,
         verify_tls: bool = True,
         trust_env: bool = False,
-        retry_policy: _RetryPolicy | None = None,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        http_client: httpx.AsyncClient | None = None,
+        _runtime: _ZammadRuntimeOptions | None = None,
     ) -> None:
         url = httpx.URL(base_url)
         if not url.scheme or not url.host:
@@ -56,11 +61,12 @@ class AsyncZammadClient:
         base_path = url.path.rstrip("/") + "/"
         self._base_url = url.copy_with(path=base_path)
 
-        self._sleep = sleep
-        self._retry = retry_policy or _RetryPolicy()
+        runtime = _runtime or _ZammadRuntimeOptions()
+        self._sleep = runtime.sleep
+        self._retry = runtime.retry_policy or _RetryPolicy()
 
-        self._owns_http_client = http_client is None
-        self._http = http_client or httpx.AsyncClient(
+        self._owns_http_client = runtime.http_client is None
+        self._http = runtime.http_client or httpx.AsyncClient(
             base_url=self._base_url,
             headers={
                 "Authorization": f"Token token={api_token}",

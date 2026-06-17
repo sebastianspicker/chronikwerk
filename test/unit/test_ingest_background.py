@@ -7,8 +7,6 @@ from starlette.requests import Request
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.routes.ingest import IngestPayload
 from zammad_pdf_archiver.app.server import create_app
-from zammad_pdf_archiver.config.settings import Settings
-
 
 
 def test_ingest_does_not_block_on_processing(tmp_path, monkeypatch) -> None:

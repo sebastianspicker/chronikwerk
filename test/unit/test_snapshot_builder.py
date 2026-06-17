@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, cast
 
 from zammad_pdf_archiver.adapters.snapshot.build_snapshot import build_snapshot
 from zammad_pdf_archiver.adapters.zammad.models import Article as ZammadArticle
@@ -46,7 +47,7 @@ def test_articles_are_sorted_and_text_is_escaped() -> None:
             ),
         ]
         snapshot = await build_snapshot(
-            _FakeZammadClient(ticket=ticket, tags=["pdf:sign"], articles=articles),
+            cast(Any, _FakeZammadClient(ticket=ticket, tags=["pdf:sign"], articles=articles)),
             1,
         )
         assert [article.id for article in snapshot.articles] == [1, 2]
@@ -71,7 +72,7 @@ def test_attachment_metadata_is_kept_without_binary_content() -> None:
             )
         ]
         snapshot = await build_snapshot(
-            _FakeZammadClient(ticket=ticket, tags=[], articles=articles),
+            cast(Any, _FakeZammadClient(ticket=ticket, tags=[], articles=articles)),
             1,
         )
         attachment = snapshot.articles[0].attachments[0]

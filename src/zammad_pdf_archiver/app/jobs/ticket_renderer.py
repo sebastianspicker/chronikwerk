@@ -70,7 +70,7 @@ async def build_and_render_pdf(
 
     if settings.signing.enabled:
         sign_started = perf_counter()
-        pdf_bytes = await sign_pdf(pdf_bytes, settings=settings)
+        pdf_bytes = sign_pdf(pdf_bytes, signing=settings.signing)
         sign_seconds.observe(perf_counter() - sign_started)
 
     return pdf_bytes, snapshot

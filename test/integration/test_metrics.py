@@ -7,8 +7,8 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
-from zammad_pdf_archiver.app.server import create_app
 from test.support.settings_factory import make_settings
+from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.state_machine import TRIGGER_TAG
 

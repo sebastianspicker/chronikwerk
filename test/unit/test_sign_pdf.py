@@ -112,10 +112,16 @@ def test_sign_pdf_missing_optional_dependency_raises(
 
     real_import = builtins.__import__
 
-    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+    def fake_import(
+        name: str,
+        globals_: dict[str, object] | None = None,
+        locals_: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
         if name == "cryptography.hazmat.primitives.serialization":
             raise ModuleNotFoundError("No module named 'cryptography'", name="cryptography")
-        return real_import(name, *args, **kwargs)
+        return real_import(name, globals_, locals_, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     signing = _make_settings(pfx_path=pfx_path, pfx_password=None)

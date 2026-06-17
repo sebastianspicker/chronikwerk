@@ -10,11 +10,11 @@ from typing import Any
 import httpx
 import respx
 
+from test.support.settings_factory import make_settings
 from zammad_pdf_archiver._version import VERSION
 from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
-from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.state_machine import (
     DONE_TAG,

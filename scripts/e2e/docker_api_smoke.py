@@ -139,8 +139,11 @@ def _compose_base(project: str, compose_file: Path) -> list[str]:
 
 
 def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    command = list(args)
+    if not command or command[0] != "docker":
+        raise E2EFailure("internal error: only docker commands are supported")
     return subprocess.run(
-        list(args),
+        ["docker", *command[1:]],
         capture_output=True,
         text=True,
         check=False,
