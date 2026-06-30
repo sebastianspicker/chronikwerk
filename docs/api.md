@@ -1,123 +1,105 @@
-# API
+# API Reference
 
-This document defines the HTTP contract for `zammad-pdf-archiver`.
+This document describes the HTTP contract exposed by `zammad-pdf-archiver`.
 
-## 1. Endpoints
+## `POST /ingest`
 
-### `POST /ingest`
-
-Webhook ingestion endpoint.
-
-#### Query parameters
-
-- `dry_run` (bool, optional, default `false`) -- when `true`, validates the payload and returns `202` with `{"status":"dry_run_accepted","ticket_id":<int>}` without dispatching any background work. Useful for integration testing.
-
-#### Request headers
-
-- `Content-Type: application/json` (recommended)
-- `X-Request-Id: <id>` (optional)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
-
-#### Request body
-
-JSON object. Ticket ID is extracted from either:
-- `ticket.id`
-- `ticket_id`
-
-If ticket ID is missing or invalid, the request is rejected with `422` (schema validation); valid payloads get `202` and background processing.
-
-Example payload:
-- [`../examples/webhook-payload.sample.json`](../examples/webhook-payload.sample.json)
-
-#### Success response
-
-- status: `202`
-- body: `{"status":"accepted","ticket_id":123}`
-- header: `X-Request-Id` is always returned
-
-#### Error responses
-
-- `400` `{"detail":"missing_delivery_id"}`
-- `403` `{"detail":"forbidden"}`
-- `422` invalid body (e.g. missing or invalid ticket id)
-- `413` `{"detail":"request_too_large"}`
-- `429` `{"detail":"rate_limited"}`
-- `503` `{"detail":"webhook_auth_not_configured"}`
-
-### `POST /ingest/batch`
-
-Batch webhook ingestion endpoint.
-
-#### Query parameters
-
-- `dry_run` (bool, optional, default `false`) -- when `true`, validates the payload and returns `202` with `{"status":"dry_run_accepted","count":<int>}` without dispatching any background work. Useful for integration testing.
-
-#### Request headers
-
-- `Content-Type: application/json` (recommended)
-- `X-Request-Id: <id>` (optional)
-- `X-Zammad-Delivery: <id>` (required only when `hardening.webhook.require_delivery_id=true`)
-
-#### Request body
-
-JSON array of ingest payload objects (maximum **100** items per request). Each item must contain either:
-- `ticket.id`
-- `ticket_id`
-
-When `X-Zammad-Delivery` is present, the service derives per-item delivery IDs as `<delivery-id>:<index>` (zero-based) before applying idempotency checks.
-
-#### Success response
-
-- status: `202`
-- body: `{"status":"accepted","count":<int>}`
-- header: `X-Request-Id` is always returned
-
-#### Error responses
-
-- `400` `{"detail":"missing_delivery_id"}`
-- `403` `{"detail":"forbidden"}`
-- `422` invalid body (e.g. missing or invalid ticket id in an item), or batch exceeds 100 items (`{"detail":"batch_too_large"}`)
-- `413` `{"detail":"request_too_large"}`
-- `429` `{"detail":"rate_limited"}`
-- `503` `{"detail":"webhook_auth_not_configured"}` or `{"detail":"shutting_down"}`
-
-### `POST /retry/{ticket_id}`
-
-Schedules one forced reprocessing run for a specific ticket ID.
-Requires `Authorization: Bearer <ADMIN_BEARER_TOKEN>`.
-
-Behavior notes:
-- bypasses trigger-tag gating
-- bypasses `pdf:signed` skip behavior
-- still skips delivery-ID dedupe by using no delivery ID
-
-#### Request headers
-
-- `Authorization: Bearer <ADMIN_BEARER_TOKEN>` (required)
-
-#### Path parameters
-
-- `ticket_id` (int, required)
-
-#### Success response
-
-- status: `202`
-- body: `{"status":"accepted","ticket_id":<int>}`
-
-#### Error responses
-
-- `401` missing/invalid bearer token
-- `503` `{"detail":"retry_token_not_configured"}` or `{"detail":"settings_not_configured"}`
-
-
-
-### `GET /jobs/history`
+Accepts one Zammad webhook payload and schedules background processing.
 
 Query parameters:
-- `limit` (optional, default `100`, max `5000`)
-- `ticket_id` (optional int filter)
 
-Response:
+- `dry_run` (bool, default `false`): validate the payload and return `202`
+  without scheduling work.
+
+Headers:
+
+- `Content-Type: application/json`
+- `X-Hub-Signature`: required when webhook HMAC verification is configured.
+- `X-Zammad-Delivery`: required only when
+  `hardening.webhook.require_delivery_id=true`.
+- `X-Request-Id`: optional request correlation ID.
+
+Body:
+
+- JSON object containing either `ticket.id` or `ticket_id`.
+
+Success:
+
+```json
+{"status":"accepted","ticket_id":123}
+```
+
+Dry run success:
+
+```json
+{"status":"dry_run_accepted","ticket_id":123}
+```
+
+Common errors:
+
+| Status | Detail/code | Meaning |
+| --- | --- | --- |
+| `400` | `missing_delivery_id` | Strict delivery-ID mode is enabled and the header is missing. |
+| `403` | `forbidden` | HMAC validation failed. |
+| `413` | `request_too_large` | Request body exceeds the configured limit. |
+| `422` | validation error | Payload does not contain a positive ticket ID. |
+| `429` | `rate_limited` | Rate limit exceeded. |
+| `503` | `webhook_auth_not_configured` | Signed mode is required but no webhook secret is configured. |
+
+## `POST /ingest/batch`
+
+Accepts a JSON array of webhook payloads and schedules one job per item.
+
+Limits:
+
+- Maximum batch size: `100`.
+- Each item must contain either `ticket.id` or `ticket_id`.
+
+Headers and error behavior match `POST /ingest`. When a batch-level
+`X-Zammad-Delivery` header is present, per-item delivery IDs are derived as
+`<delivery-id>:<index>`.
+
+Success:
+
+```json
+{"status":"accepted","count":2}
+```
+
+Dry run success:
+
+```json
+{"status":"dry_run_accepted","count":2}
+```
+
+## `POST /retry/{ticket_id}`
+
+Forces one reprocessing attempt for a ticket.
+
+Headers:
+
+- `Authorization: Bearer <RETRY_BEARER_TOKEN>`
+
+Success:
+
+```json
+{"status":"accepted","ticket_id":123}
+```
+
+Common errors:
+
+- `401`: missing or invalid bearer token.
+- `503`: retry token or settings are not configured.
+
+## `GET /jobs/history`
+
+Returns process-local processing history.
+
+Query parameters:
+
+- `limit` (default `100`, max enforced by runtime history store)
+- `ticket_id` (optional integer filter)
+
+Example response:
 
 ```json
 {
@@ -136,106 +118,65 @@ Response:
 }
 ```
 
-### `GET /healthz`
+## `GET /healthz`
 
-Always available.
+Returns shallow service health by default.
 
-#### Query parameters
+Query parameters:
 
+- `deep` (bool, default `false`): include a storage writability check.
 
-#### Example response (shallow)
+Example:
 
 ```json
 {
   "status": "ok",
   "service": "zammad-pdf-archiver",
-  "version": "0.1.0",
+  "version": "0.2.0rc2",
   "time": "2026-02-07T12:00:00+00:00"
 }
 ```
 
-#### Example response (deep)
+When `OBSERVABILITY__HEALTHZ_OMIT_VERSION=true`, the response omits `service`
+and `version`.
 
-```json
-{
-  "status": "ok",
-  "service": "zammad-pdf-archiver",
-  "version": "0.1.0",
-  "time": "2026-02-07T12:00:00+00:00",
-  "checks": {
-    "storage": { "writable": true }
-  }
-}
-```
+## `GET /metrics`
 
-When a deep check fails, the response may look like:
+Mounted only when `observability.metrics_enabled=true`.
 
-```json
-{
-  "status": "degraded",
-  "service": "zammad-pdf-archiver",
-  "version": "0.1.0",
-  "time": "2026-02-07T12:00:00+00:00",
-  "checks": {
-    "storage": { "writable": true }
-  }
-}
-```
+Authentication:
 
-Notes:
-- `version` comes from installed package metadata; fallback may be `0.0.0` in some non-packaged contexts.
-- When `OBSERVABILITY__HEALTHZ_OMIT_VERSION=true`, the response contains only `status` and `time` (no `service` or `version`).
-- The `checks` object is only present when `deep=true`.
+- If `OBSERVABILITY__METRICS_BEARER_TOKEN` is set, requests must include
+  `Authorization: Bearer <token>`.
+- Without a configured token, the endpoint is unauthenticated and must be
+  protected by network controls.
 
-### `GET /metrics`
+Response format: Prometheus text exposition.
 
-Only mounted when `observability.metrics_enabled=true`. When `OBSERVABILITY__METRICS_BEARER_TOKEN` is set, requests must include `Authorization: Bearer <token>`; otherwise `401` is returned.
+## Webhook HMAC
 
-Response format:
-- Prometheus text exposition (`text/plain`)
+Supported signature header:
 
-## 2. Webhook Security Contract
+- `X-Hub-Signature`
 
-### HMAC verification
+Supported algorithms:
 
-When a secret is configured:
-- header: `X-Hub-Signature`
-- algorithms: HMAC-SHA1 and HMAC-SHA256 (sender chooses; prefer SHA-256 for new setups)
-- message: raw request body bytes
+- `sha1=<hex>`
+- `sha256=<hex>`
 
-Secret sources:
-- preferred: `zammad.webhook_hmac_secret` (`ZAMMAD__WEBHOOK_HMAC_SECRET`)
-- webhook secret: `zammad.webhook_hmac_secret`
+The signature is computed over the raw request body bytes. Prefer SHA-256 for
+new setups.
 
-### Unsigned mode
-
-Default is fail-closed.
-
-To allow unsigned requests (internal testing only):
-
-### Delivery ID requirement
-
-Optional strict mode:
-- set `hardening.webhook.require_delivery_id=true`
-- then `X-Zammad-Delivery` is mandatory
-
-## 3. Idempotency Contract
-
-`X-Zammad-Delivery` is used for best-effort dedupe:
-- duplicate delivery IDs are skipped for `workflow.delivery_id_ttl_seconds`
-- dedupe state is in-memory by default and not durable across restarts
-
-## 4. Example Signed Request
-
-SHA-1 (Zammad typically sends this):
+Example:
 
 ```bash
 curl -i \
   -H "Content-Type: application/json" \
-  -H "X-Hub-Signature: $sig" \
+  -H "X-Hub-Signature: sha256=$hex_signature" \
   -H "X-Zammad-Delivery: delivery-001" \
-  --data-binary @payload.json \
+  --data-binary @examples/webhook-payload.sample.json \
   http://127.0.0.1:8080/ingest
 ```
 
-SHA-256 is also accepted: use `sha256=<hex>` in the header and compute HMAC-SHA256 over the raw body.
+Unsigned webhook mode is for local/internal testing only. Production deployments
+should configure `ZAMMAD__WEBHOOK_HMAC_SECRET`.

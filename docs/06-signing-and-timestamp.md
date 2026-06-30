@@ -1,130 +1,47 @@
-# 06 - Signing and Timestamp
+# 06 - Signing and Timestamping
 
-This service supports:
-- PAdES PDF signing
-- optional RFC3161 timestamping (TSA)
+Signing is optional. When enabled, the service applies a PAdES signature to the
+rendered PDF and can request an RFC3161 timestamp.
 
-## 1. Signing Flow
+## Required Configuration
 
-```mermaid
-flowchart LR
-  A["Rendered PDF bytes"] --> B{"signing.enabled"}
-  B -->|false| C["Store unsigned PDF"]
-  B -->|true| D["Load PFX and validate certificate"]
-  D --> E["Apply PAdES signature"]
-  E --> F{"timestamp.enabled"}
-  F -->|false| G["Store signed PDF"]
-  F -->|true| H["Request RFC3161 token"]
-  H --> I{"TSA response valid"}
-  I -->|true| G
-  I -->|false| J["Classify failure (transient/permanent)"]
-```
-
-Code:
-- `src/zammad_pdf_archiver/adapters/signing/sign_pdf.py`
-
-Current signing behavior:
-- enabled by `signing.enabled=true`
-- requires `signing.pfx_path`
-- validates cert validity window before signing
-- uses invisible signature field `Signature1`
-
-## 2. Implemented Material Type
-
-Implemented signer input:
-- PKCS#12/PFX bundle (`signing.pfx_path`, `signing.pfx_password`)
-
-Compatibility keys exist in settings but are not used by current signer:
-
-## 3. RFC3161 Timestamping
-
-Code:
-- `src/zammad_pdf_archiver/adapters/signing/tsa_rfc3161.py`
-
-Behavior:
-- timestamping is controlled by `signing.timestamp.enabled`
-- TSA URL required: `signing.timestamp.rfc3161.tsa_url`
-- request uses strict response checks:
-  - HTTP status must be `200`
-  - `Content-Type` must be `application/timestamp-reply`
-- optional basic auth is env-only:
-  - `TSA_USER`
-  - `TSA_PASS`
-
-Important:
-- Timestamping is executed only inside signing flow.
-- If signing is disabled, no TSA call is made.
-
-## 4. Configuration Examples
-
-### YAML
-
-```yaml
-signing:
-  enabled: true
-  pfx_path: "/run/secrets/signing.pfx"
-  pfx_password: null
-  pades:
-    reason: "Ticket archive"
-    location: "Datacenter"
-  timestamp:
-    enabled: true
-    rfc3161:
-      tsa_url: "https://tsa.example.local/rfc3161"
-      timeout_seconds: 10
-      ca_bundle_path: null
-```
-
-### Environment
+Signing:
 
 ```bash
-SIGNING_ENABLED=true
-SIGNING_PFX_PATH=/run/secrets/signing.pfx
-SIGNING_PFX_PASSWORD=change-me
-TSA_ENABLED=true
-TSA_URL=https://tsa.example.local/rfc3161
-TSA_TIMEOUT_SECONDS=10
-TSA_CA_BUNDLE_PATH=/etc/ssl/certs/tsa-ca.pem
-TSA_USER=tsa-user
-TSA_PASS=tsa-pass
+SIGNING__ENABLED=true
+SIGNING__PFX_PATH=/run/secrets/signing.pfx
+SIGNING__PFX_PASSWORD=CHANGE-ME
 ```
 
-## 5. Failure Classification
-
-Timestamp adapter classification:
-- transient:
-  - network/request errors
-  - HTTP `5xx`
-- permanent:
-  - HTTP `4xx`
-  - malformed content type/body
-  - missing TSA config
-  - partial basic auth configuration
-
-Signing adapter typical permanent failures:
-- missing PFX path/file
-- wrong or missing PFX password
-- invalid/corrupt PKCS#12 bundle
-- certificate not yet valid or expired
-- pyHanko signing errors
-
-These classifications feed ticket tag behavior in `process_ticket`.
-
-## 6. Verification
-
-Scripts:
-
-Example:
+Timestamping:
 
 ```bash
+SIGNING__TIMESTAMP__ENABLED=true
+SIGNING__TIMESTAMP__RFC3161__TSA_URL=https://tsa.example.com
 ```
 
-Expected output:
-- `PASS` for successful verification
-- `FAIL` with diagnostics otherwise
+Optional TSA basic auth:
 
-## 7. Limitations
+```bash
+SIGNING__TIMESTAMP__RFC3161__USER=tsa-user
+SIGNING__TIMESTAMP__RFC3161__PASSWORD=CHANGE-ME
+```
 
-- Signature appearance is invisible (no visual stamp).
-- No built-in long-term validation profile management (LTV).
-- Long-term trust depends on external trust anchors, revocation evidence, TSA policy retention, and storage controls.
+## Runtime Behavior
+
+- If signing is disabled, the unsigned PDF is stored.
+- If signing is enabled but the PFX is missing or invalid, processing fails.
+- If timestamping is enabled but the TSA request fails, processing fails.
+- Signing and timestamp flags are recorded in the audit sidecar.
+
+## Secret Handling
+
+Keep PFX files and passwords outside the repository. Use deployment secret
+storage, protected environment files, or read-only mounted files.
+
+## Verification
+
+Use a PDF signature validation tool that trusts the issuing certificate chain and
+the configured TSA certificate chain. Validation depends on the operator trust
+store; the app records best-effort signing metadata but does not replace an
+external validation policy.
