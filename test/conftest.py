@@ -12,7 +12,7 @@ def pytest_configure() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     src_path = repo_root / "src"
     sys.path.insert(0, str(src_path))
-    
+
     # Set required env vars for Settings validation during test collection
     os.environ["ZAMMAD__BASE_URL"] = "http://localhost:8080"
     os.environ["ZAMMAD__API_TOKEN"] = "fake-token"

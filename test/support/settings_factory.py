@@ -37,4 +37,3 @@ def make_settings(
     if overrides:
         data = _deep_merge(data, overrides)
     return Settings.from_mapping(data)
-

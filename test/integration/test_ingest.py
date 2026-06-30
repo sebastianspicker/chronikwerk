@@ -181,6 +181,20 @@ def test_ingest_rejects_missing_delivery_id_when_required(tmp_path) -> None:
     assert response.headers.get("X-Request-Id")
 
 
+def test_ingest_without_settings_fails_closed(tmp_path) -> None:
+    app = create_app(_test_settings(str(tmp_path)))
+    app.state.settings = None
+    client = TestClient(app)
+
+    response = _post_signed(client, "/ingest", {"ticket_id": 123})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "settings not configured",
+        "code": "settings_not_configured",
+    }
+
+
 def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
     """Schema validation: ticket.id must be a positive int (422); no background run."""
     calls: list[tuple[str | None, dict[str, Any], Settings]] = []
@@ -261,6 +275,20 @@ def test_batch_ingest_ignores_force_reprocess_flag_from_public_payload(
     assert len(calls) == 2
     assert FORCE_REPROCESS_KEY not in calls[0][1]
     assert FORCE_REPROCESS_KEY not in calls[1][1]
+
+
+def test_batch_ingest_without_settings_fails_closed(tmp_path) -> None:
+    app = create_app(_test_settings(str(tmp_path)))
+    app.state.settings = None
+    client = TestClient(app)
+
+    response = _post_signed(client, "/ingest/batch", [{"ticket_id": 123}])
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "settings not configured",
+        "code": "settings_not_configured",
+    }
 
 
 def _test_settings_with_retry_token(storage_root: str, **extra_overrides: Any) -> Settings:

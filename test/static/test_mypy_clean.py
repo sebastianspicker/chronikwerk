@@ -17,7 +17,8 @@ def test_mypy_clean(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["MYPY_CACHE_DIR"] = str(tmp_path)
 
-    proc = subprocess.run(
+    # Fixed interpreter/module invocation.
+    proc = subprocess.run(  # nosec B603
         [sys.executable, "-m", "mypy", ".", "--config-file", "pyproject.toml"],
         cwd=repo_root,
         env=env,
@@ -26,4 +27,3 @@ def test_mypy_clean(tmp_path: Path) -> None:
         check=False,
     )
     assert proc.returncode == 0, (proc.stdout + proc.stderr)
-

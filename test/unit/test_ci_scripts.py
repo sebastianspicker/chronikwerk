@@ -8,7 +8,10 @@ def test_ci_smoke_script_checks_current_repo_layout() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     script = repo_root / "scripts" / "ci" / "smoke-test.sh"
 
-    proc = subprocess.run(["/bin/sh", str(script)], capture_output=True, text=True, check=False)
+    # Fixed shell path runs repo smoke script.
+    proc = subprocess.run(  # nosec B603
+        ["/bin/sh", str(script)], capture_output=True, text=True, check=False
+    )
     assert proc.returncode == 0, proc.stderr
     assert "Missing required path" not in proc.stderr
     assert "OK." in proc.stdout

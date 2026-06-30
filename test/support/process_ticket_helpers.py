@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# ruff: noqa: I001
 import asyncio
 import hashlib
 import hmac
@@ -8,9 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi.testclient import TestClient
-
 from test.support.settings_factory import make_settings
+from fastapi.testclient import TestClient
 from zammad_pdf_archiver.adapters.zammad.models import TagList
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.errors import TransientError
@@ -31,9 +31,9 @@ def post_signed_json(
 
 
 async def noop_process_ticket(
-    delivery_id: object,
-    payload: object,
-    settings: object,
+    _delivery_id: object,
+    _payload: object,
+    _settings: object,
 ) -> None:
     return None
 
@@ -66,10 +66,10 @@ class CapturingLog:
     def __init__(self) -> None:
         self.exception_events: list[str] = []
 
-    def info(self, *args: Any, **kwargs: Any) -> None:
+    def info(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
-    def exception(self, event: str, **kwargs: Any) -> None:
+    def exception(self, event: str, **_kwargs: Any) -> None:
         self.exception_events.append(event)
 
 
@@ -89,20 +89,20 @@ class BaseProcessTicketClient:
     async def get_ticket(self, ticket_id: int) -> SimpleNamespace:
         return fake_ticket(ticket_id, self.title)
 
-    async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
+    async def list_tags(self, _ticket_id: int) -> TagList:
         return TagList(sorted(type(self)._tags))
 
-    async def remove_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
+    async def remove_tag(self, _ticket_id: int, tag: str) -> None:
         type(self)._tags.discard(tag)
 
-    async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
+    async def add_tag(self, _ticket_id: int, tag: str) -> None:
         type(self)._tags.add(tag)
 
-    async def list_articles(self, ticket_id: int) -> list[SimpleNamespace]:  # noqa: ARG002
+    async def list_articles(self, _ticket_id: int) -> list[SimpleNamespace]:
         return []
 
     async def create_internal_article(
-        self, ticket_id: int, subject: str, body_html: str  # noqa: ARG002
+        self, _ticket_id: int, _subject: str, _body_html: str
     ) -> SimpleNamespace:
         return SimpleNamespace(id=1)
 
@@ -120,13 +120,13 @@ class SerializingProcessTicketClient(BaseProcessTicketClient):
         cls._tags = {"pdf:sign"}
         cls._notes_written = 0
 
-    async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
+    async def list_tags(self, _ticket_id: int) -> TagList:
         snapshot = sorted(type(self)._tags)
         await asyncio.sleep(0.05)
         return TagList(snapshot)
 
     async def create_internal_article(
-        self, ticket_id: int, subject: str, body_html: str  # noqa: ARG002
+        self, _ticket_id: int, _subject: str, _body_html: str
     ) -> SimpleNamespace:
         type(self)._notes_written += 1
         return SimpleNamespace(id=type(self)._notes_written)
@@ -143,12 +143,12 @@ class InflightRetryProcessTicketClient(BaseProcessTicketClient):
         cls._success_notes = 0
         cls._error_notes = 0
 
-    async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
+    async def list_tags(self, _ticket_id: int) -> TagList:
         await asyncio.sleep(0.05)
         return TagList(sorted(type(self)._tags))
 
     async def create_internal_article(
-        self, ticket_id: int, subject: str, body_html: str  # noqa: ARG002
+        self, _ticket_id: int, subject: str, _body_html: str
     ) -> SimpleNamespace:
         if "archiver error" in subject:
             type(self)._error_notes += 1
@@ -158,11 +158,11 @@ class InflightRetryProcessTicketClient(BaseProcessTicketClient):
 
 
 async def no_op_apply_error(
-    client: object,
-    ticket_id: int,
+    _client: object,
+    _ticket_id: int,
     *,
-    keep_trigger: bool = True,
-    trigger_tag: str = "pdf:sign",
+    _keep_trigger: bool = True,
+    _trigger_tag: str = "pdf:sign",
 ) -> None:
     return None
 
@@ -172,11 +172,11 @@ async def raise_transient_render_failure(*args: Any, **kwargs: Any) -> SimpleNam
 
 
 async def successful_render(
-    client: object,
+    _client: object,
     ticket: SimpleNamespace,
-    tags: TagList,
-    ticket_id: int,
-    settings: Settings,
+    _tags: TagList,
+    _ticket_id: int,
+    _settings: Settings,
 ) -> tuple[bytes, SimpleNamespace]:
     return b"%PDF-1.7\n%%EOF\n", SimpleNamespace(ticket=ticket)
 
@@ -192,7 +192,7 @@ def stored_pdf_result(tmp_path: Path) -> SimpleNamespace:
 
 
 def fake_store_ticket_files(tmp_path: Path):
-    def _store_ticket_files(*args: Any, **kwargs: Any) -> SimpleNamespace:
+    def _store_ticket_files(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
         return stored_pdf_result(tmp_path)
 
     return _store_ticket_files

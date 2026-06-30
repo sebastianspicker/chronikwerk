@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+# pylint: disable=import-outside-toplevel
+
+# ruff: noqa: I001
 import hashlib
 import hmac
 
-from fastapi.testclient import TestClient
-
 from test.support.process_ticket_helpers import noop_process_ticket
 from test.support.settings_factory import make_settings
+from fastapi.testclient import TestClient
 from zammad_pdf_archiver.app.server import create_app
 
 

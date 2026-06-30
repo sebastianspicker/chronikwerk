@@ -92,6 +92,3 @@ def test_build_filename_from_pattern_sanitizes_special_chars() -> None:
     # sanitize_segment replaces "/" with "_"
     assert "/" not in result
     assert result == "12_34.pdf"
-
-
-
