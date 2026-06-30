@@ -90,7 +90,7 @@ Common errors:
 - `401`: missing or invalid bearer token.
 - `503`: retry token or settings are not configured.
 
-## `GET /jobs/history`
+### `GET /jobs/history`
 
 Returns process-local processing history.
 
