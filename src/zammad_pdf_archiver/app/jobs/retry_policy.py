@@ -85,9 +85,9 @@ def _classify_httpx_error(exc: BaseException) -> TransientError | PermanentError
 
 
 def _classify_zammad_error(exc: BaseException) -> TransientError | PermanentError | None:
-    if isinstance(exc, (ServerError, RateLimitError)):
+    if isinstance(exc, ServerError | RateLimitError):
         return TransientError(str(exc) or ErrorMessages.ZAMMAD_TRANSIENT_ERROR)
-    if isinstance(exc, (AuthError, NotFoundError)):
+    if isinstance(exc, AuthError | NotFoundError):
         return PermanentError(str(exc) or ErrorMessages.ZAMMAD_PERMANENT_ERROR)
     if isinstance(exc, ClientError):
         return PermanentError(str(exc) or ErrorMessages.ZAMMAD_CLIENT_ERROR)
@@ -103,7 +103,7 @@ def classify(exc: BaseException) -> TransientError | PermanentError:
       - Keep retryable failures retryable: network timeouts, upstream 5xx, rate limits,
         and certain filesystem errors commonly seen with network shares.
     """
-    if isinstance(exc, (TransientError, PermanentError)):
+    if isinstance(exc, TransientError | PermanentError):
         return exc
 
     httpx_result = _classify_httpx_error(exc)
@@ -119,7 +119,7 @@ def classify(exc: BaseException) -> TransientError | PermanentError:
         return _classify_os_error(exc)
 
     # Validation/data issues (e.g. missing required ticket fields, path policy violations).
-    if isinstance(exc, (ValueError, TypeError)):
+    if isinstance(exc, ValueError | TypeError):
         return PermanentError(str(exc) or exc.__class__.__name__)
 
     # Fail-safe default: stop automatic reprocessing unless explicitly classified transient.

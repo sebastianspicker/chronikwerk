@@ -25,7 +25,7 @@ def _fsync_dir_best_effort(dir_path: Path) -> None:
     try:
         os.fsync(fd)
     except OSError:
-        pass
+        return
     finally:
         os.close(fd)
 
@@ -71,7 +71,7 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
 
     try:
         relative = dir_resolved.relative_to(root_resolved)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover  # pylint: disable=broad-exception-caught
         raise ValueError("target path escapes root") from exc
 
     current = root_resolved
@@ -83,46 +83,6 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
         except OSError as exc:
             # If the path is unreadable, treat it as unsafe.
             raise ValueError("target path validation failed (unreadable component)") from exc
-
-
-def _write_tmp_file(fd: int, data: bytes, *, fsync: bool) -> None:
-    """Write data to the temp fd with correct permissions, optionally fsyncing."""
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-        f.flush()
-        # Bug #21: set mode on fd before replace so target gets correct permissions.
-        os.fchmod(f.fileno(), 0o640)
-        if fsync:
-            os.fsync(f.fileno())
-
-
-def _replace_tmp_with_target(tmp_path: Path, target: Path) -> None:
-    """Atomically replace target with the temp file; cleans up the temp on failure."""
-    try:
-        os.replace(tmp_path, target)
-    except Exception:
-        _safe_unlink(tmp_path)
-        raise
-
-
-def _safe_close(fd: int | None) -> None:
-    """Close a file descriptor if non-None, swallowing OSError."""
-    if fd is None:
-        return
-    try:
-        os.close(fd)
-    except OSError:
-        pass
-
-
-def _safe_unlink(path: Path | None) -> None:
-    """Remove a file if non-None, swallowing FileNotFoundError and OSError."""
-    if path is None:
-        return
-    try:
-        path.unlink()
-    except (FileNotFoundError, OSError):
-        pass
 
 
 def move_file_within_root(

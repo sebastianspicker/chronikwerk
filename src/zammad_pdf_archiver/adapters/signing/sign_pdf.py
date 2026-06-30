@@ -1,3 +1,4 @@
+# pylint: disable=import-outside-toplevel
 from __future__ import annotations
 
 import io
@@ -78,7 +79,6 @@ def _validate_cert_not_expired(pfx_bytes: bytes, password: bytes | None) -> None
 @dataclass
 class _CachedSigner:
     signer: Any  # signers.SimpleSigner
-    pfx_path: str
     pfx_mtime: float
     pfx_bytes: bytes
     password: bytes | None
@@ -124,7 +124,7 @@ def _signer_after_cert_recheck(
 def _build_signer_entry(
     pfx: _PfxMaterial,
     *,
-    pfx_path_str: str,
+    _pfx_path_str: str,
     current_mtime: float,
 ) -> tuple[_CachedSigner, Any]:
     try:
@@ -135,13 +135,12 @@ def _build_signer_entry(
     _validate_cert_not_expired(pfx.pfx_bytes, pfx.password)
     try:
         signer = signers.SimpleSigner.load_pkcs12(pfx.path, passphrase=pfx.password)
-    except Exception as exc:  # noqa: BLE001 - surface as PermanentError with context
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise PermanentError("Failed to initialise signer from PKCS#12/PFX bundle") from exc
 
     return (
         _CachedSigner(
             signer=signer,
-            pfx_path=pfx_path_str,
             pfx_mtime=current_mtime,
             pfx_bytes=pfx.pfx_bytes,
             password=pfx.password,
@@ -183,7 +182,7 @@ def _get_cached_signer(pfx: _PfxMaterial) -> Any:
 
     entry, _signer = _build_signer_entry(
         pfx,
-        pfx_path_str=pfx_path_str,
+        _pfx_path_str=pfx_path_str,
         current_mtime=current_mtime,
     )
     return _cache_new_signer(pfx_path_str, current_mtime, entry)
@@ -192,7 +191,7 @@ def _get_cached_signer(pfx: _PfxMaterial) -> Any:
 def _classify_signing_failure(exc: Exception) -> PermanentError | TransientError:
     if isinstance(
         exc,
-        (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
+        httpx.TimeoutException | httpx.ConnectError | ConnectionError | OSError | TimeoutError,
     ):
         return TransientError("Failed to sign PDF due to temporary (TSA) network issue")
     return PermanentError("Failed to sign PDF")
@@ -204,7 +203,7 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
 
     If enabled via settings, an RFC3161 TSA timestamp will be embedded (PAdES-T style).
     """
-    if not isinstance(pdf_bytes, (bytes, bytearray)) or not pdf_bytes:
+    if not isinstance(pdf_bytes, bytes | bytearray) or not pdf_bytes:
         raise ValueError("pdf_bytes must be non-empty bytes")
 
     pfx = _load_pfx(signing)
@@ -250,7 +249,7 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
         pdf_signer.sign_pdf(writer, output=out)
     except (TransientError, PermanentError):
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         raise _classify_signing_failure(exc) from exc
 
     return out.getvalue()

@@ -1,5 +1,6 @@
 """Safe URL fetcher for WeasyPrint: blocks file:// outside template root (Bug #18)."""
 
+# pylint: disable=import-outside-toplevel
 from __future__ import annotations
 
 import mimetypes
@@ -28,8 +29,6 @@ class _SafeURLFetcher:
                 raise FatalURLFetchingError(f"file URL outside template root: {url!r}")
             if not path.is_file():
                 raise FatalURLFetchingError(f"file URL not a file: {url!r}")
-        except FatalURLFetchingError:
-            raise
         except (OSError, ValueError) as e:  # resolve() / is_file() failures
             raise FatalURLFetchingError(f"invalid file URL: {url!r}") from e
 

@@ -156,28 +156,34 @@ def action_hint(exc: BaseException, *, classified: TransientError | PermanentErr
         )
 
     # PermanentError: aim for a concrete operator action.
-    if isinstance(exc, AuthError):
-        return "Fix Zammad API token/permissions (HTTP 401/403), then reapply the pdf:sign macro."
-    if isinstance(exc, NotFoundError):
-        return (
+    for error_type, hint in (
+        (
+            AuthError,
+            "Fix Zammad API token/permissions (HTTP 401/403), then reapply the pdf:sign macro.",
+        ),
+        (
+            NotFoundError,
             "Ticket/resource not found in Zammad. Verify the ticket still exists, then reapply "
-            "pdf:sign."
-        )
-    if isinstance(exc, (ServerError, RateLimitError)):
-        return (
+            "pdf:sign.",
+        ),
+        (
+            (ServerError, RateLimitError),
             "Upstream Zammad error was treated as permanent by policy. "
-            "If the issue is resolved, reapply the pdf:sign macro to reprocess."
-        )
-    if isinstance(exc, PermissionError):
-        return (
+            "If the issue is resolved, reapply the pdf:sign macro to reprocess.",
+        ),
+        (
+            PermissionError,
             "Storage permission denied. Check network share mount options, ownership, and ACLs, "
-            "then reapply the pdf:sign macro."
-        )
-    if isinstance(exc, (ValueError, TypeError)):
-        return (
+            "then reapply the pdf:sign macro.",
+        ),
+        (
+            (ValueError, TypeError),
             "Fix ticket fields / path policy validation, then reapply the pdf:sign macro "
-            "(and optionally remove pdf:error for clarity)."
-        )
+            "(and optionally remove pdf:error for clarity).",
+        ),
+    ):
+        if isinstance(exc, error_type):
+            return hint
     return (
         "Non-retryable failure by policy. Fix the underlying issue and reapply the pdf:sign macro "
         "(and optionally remove pdf:error)."

@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jinja2 import Environment, PackageLoader, pass_context, select_autoescape
 
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
-_TEMPLATE_NAME = "default"
+DEFAULT_TEMPLATE_NAME = "default"
 _TEMPLATE_FILE = "ticket.html"
+_TEMPLATE_PATH = f"{DEFAULT_TEMPLATE_NAME}/{_TEMPLATE_FILE}"
 
 
 
@@ -32,7 +33,6 @@ def _register_filters(env: Environment) -> None:
             timezone=str(ctx.get("pdf_timezone") or "Europe/Berlin"),
         )
 
-    env.filters["datetime"] = datetime_filter
     env.filters["format_dt_local"] = datetime_filter
 
 
@@ -43,7 +43,7 @@ def _format_datetime(value: Any, *, fmt: str, timezone: str) -> str:
         target_tz = ZoneInfo(timezone)
         localized = value.astimezone(target_tz)
         return localized.strftime(fmt)
-    except Exception:
+    except (AttributeError, TypeError, ValueError, ZoneInfoNotFoundError):
         return value.strftime(fmt) if hasattr(value, "strftime") else str(value)
 
 
@@ -53,7 +53,7 @@ def render_html(
     locale: str = "de_DE",
     timezone: str = "Europe/Berlin",
 ) -> str:
-    template = _env_for().get_template(f"{_TEMPLATE_NAME}/{_TEMPLATE_FILE}")
+    template = _env_for().get_template(_TEMPLATE_PATH)
     return template.render(
         snapshot=snapshot,
         ticket=snapshot.ticket,

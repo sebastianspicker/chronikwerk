@@ -30,8 +30,7 @@ def _cap_articles_if_configured(
     max_articles = settings.pdf.max_articles
     if (
         settings.pdf.article_limit_mode == "cap_and_continue"
-        and max_articles > 0
-        and len(snapshot.articles) > max_articles
+        and 0 < max_articles < len(snapshot.articles)
     ):
         log.warning(
             "process_ticket.article_limit_capped",
@@ -39,10 +38,7 @@ def _cap_articles_if_configured(
             total=len(snapshot.articles),
             cap=max_articles,
         )
-        return Snapshot(
-            ticket=snapshot.ticket,
-            articles=snapshot.articles[:max_articles],
-        )
+        return snapshot.model_copy(update={"articles": snapshot.articles[:max_articles]})
     return snapshot
 
 

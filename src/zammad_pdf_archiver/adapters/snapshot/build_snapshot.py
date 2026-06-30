@@ -14,7 +14,6 @@ from zammad_pdf_archiver.domain.snapshot_models import (
     Snapshot,
     TicketMeta,
 )
-from zammad_pdf_archiver.domain.ticket_utils import ticket_custom_fields
 
 if TYPE_CHECKING:
     from zammad_pdf_archiver.adapters.zammad.client import AsyncZammadClient
@@ -92,6 +91,13 @@ async def build_snapshot(
     snapshot_articles = [_article_to_snapshot(article) for article in articles]
     snapshot_articles.sort(key=_sort_key)
 
+    custom_fields = (
+        ticket.preferences.custom_fields
+        if ticket.preferences is not None
+        and isinstance(ticket.preferences.custom_fields, dict)
+        else {}
+    )
+
     return Snapshot(
         ticket=TicketMeta(
             id=ticket.id,
@@ -102,7 +108,7 @@ async def build_snapshot(
             customer=_party_from_zammad_ref(ticket.customer),
             owner=_party_from_zammad_ref(ticket.owner),
             tags=list(tags.root),
-            custom_fields=ticket_custom_fields(ticket),
+            custom_fields=custom_fields,
         ),
         articles=snapshot_articles,
     )

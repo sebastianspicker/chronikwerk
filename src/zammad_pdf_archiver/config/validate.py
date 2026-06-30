@@ -4,12 +4,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-import structlog
 from pydantic import ValidationError
 
 from zammad_pdf_archiver.config.settings import Settings
-
-log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)

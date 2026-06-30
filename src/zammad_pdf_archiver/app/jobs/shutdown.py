@@ -1,23 +1,22 @@
 import asyncio
+from threading import Event
 
-_SHUTTING_DOWN = False
+_SHUTTING_DOWN = Event()
 _TASKS: set[asyncio.Task] = set()
 
 
 def is_shutting_down() -> bool:
     """Return True if the application is in the process of shutting down."""
-    return _SHUTTING_DOWN
+    return _SHUTTING_DOWN.is_set()
 
 
 def set_shutting_down() -> None:
     """Mark the application as shutting down to stop new work from being accepted."""
-    global _SHUTTING_DOWN
-    _SHUTTING_DOWN = True
+    _SHUTTING_DOWN.set()
 
 
 def clear_shutting_down() -> None:
-    global _SHUTTING_DOWN
-    _SHUTTING_DOWN = False
+    _SHUTTING_DOWN.clear()
 
 
 def track_task(task: asyncio.Task) -> None:

@@ -31,7 +31,7 @@ async def try_claim_delivery_id(settings: Settings, delivery_id: str) -> bool:
         return await store.try_claim(delivery_id)
 
 
-async def try_acquire_ticket(settings: Settings, ticket_id: int) -> bool:
+async def try_acquire_ticket(_settings: Settings, ticket_id: int) -> bool:
     async with _IN_FLIGHT_TICKETS_GUARD:
         if ticket_id in _IN_FLIGHT_TICKETS:
             return False
@@ -39,7 +39,7 @@ async def try_acquire_ticket(settings: Settings, ticket_id: int) -> bool:
         return True
 
 
-async def release_ticket(settings: Settings, ticket_id: int) -> None:
+async def release_ticket(ticket_id: int) -> None:
     async with _IN_FLIGHT_TICKETS_GUARD:
         _IN_FLIGHT_TICKETS.discard(ticket_id)
 
@@ -54,4 +54,3 @@ async def aclose_stores() -> None:
 def reset_for_tests() -> None:
     _DELIVERY_ID_SETS.clear()
     _IN_FLIGHT_TICKETS.clear()
-

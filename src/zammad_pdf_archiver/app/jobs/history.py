@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from typing import Any
 
 from zammad_pdf_archiver.config.redact import scrub_secrets_in_text
 
-_HISTORY: list[dict[str, Any]] = []
 _MAX_HISTORY = 5000
+_HISTORY: deque[dict[str, Any]] = deque(maxlen=_MAX_HISTORY)
 
 
 def record_history_event(
@@ -29,7 +30,6 @@ def record_history_event(
             "created_at": time.time(),
         }
     )
-    del _HISTORY[:-_MAX_HISTORY]
 
 
 def read_history(

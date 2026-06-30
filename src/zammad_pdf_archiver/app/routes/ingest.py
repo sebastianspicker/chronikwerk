@@ -77,7 +77,7 @@ async def _run_process_ticket_background(
     structlog.contextvars.bind_contextvars(**bound)
     try:
         await process_ticket(delivery_id, payload, settings)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         log.exception(
             "ingest.process_ticket_unhandled_error",
             ticket_id=ticket_id,
@@ -85,6 +85,23 @@ async def _run_process_ticket_background(
         )
     finally:
         structlog.contextvars.unbind_contextvars(*bound.keys())
+
+
+def _schedule_background_task(
+    *,
+    delivery_id: str | None,
+    payload: dict[str, Any],
+    settings: Settings,
+) -> None:
+    track_task(
+        asyncio.create_task(
+            _run_process_ticket_background(
+                delivery_id=delivery_id,
+                payload=payload,
+                settings=settings,
+            )
+        )
+    )
 
 
 def _resolve_settings_or_error(request: Request) -> tuple[Settings | None, JSONResponse | None]:
@@ -98,26 +115,6 @@ def _resolve_settings_or_error(request: Request) -> tuple[Settings | None, JSONR
 
 
 
-def _schedule_background_task(
-    delivery_id: str | None,
-    payload: dict[str, Any],
-    *,
-    settings: Settings,
-) -> None:
-    async def _runner() -> None:
-        await process_ticket(delivery_id, payload, settings)
-
-    track_task(asyncio.create_task(_runner()))
-
-async def _dispatch_ticket(
-    *,
-    delivery_id: str | None,
-    payload: dict[str, Any],
-    settings: Settings,
-) -> None:
-    _schedule_background_task(delivery_id, payload, settings=settings)
-
-
 @router.post("/ingest", status_code=202)
 async def ingest_webhook(
     request: Request,
@@ -128,6 +125,8 @@ async def ingest_webhook(
     settings, error = _resolve_settings_or_error(request)
     if error is not None:
         return error
+    if settings is None:
+        return api_error(503, "settings not configured", code="settings_not_configured")
 
     ticket_id = payload.resolved_ticket_id()
     if dry_run:
@@ -142,12 +141,27 @@ async def ingest_webhook(
             payload,
             getattr(request.state, "request_id", None),
         )
-        assert settings is not None
-        await _dispatch_ticket(
-            delivery_id=delivery_id,
-            payload=payload_for_job,
-            settings=settings,
-        )
+        ticket_id = extract_ticket_id(payload_for_job)
+        if ticket_id is not None:
+            bound: dict[str, object] = {"ticket_id": ticket_id}
+            if delivery_id:
+                bound["delivery_id"] = delivery_id
+
+            structlog.contextvars.bind_contextvars(**bound)
+            try:
+                _schedule_background_task(
+                delivery_id=delivery_id,
+                payload=payload_for_job,
+                settings=settings,
+            )
+            except Exception:  # pylint: disable=broad-exception-caught
+                log.exception(
+                    "ingest.process_ticket_unhandled_error",
+                    ticket_id=ticket_id,
+                    delivery_id=delivery_id,
+                )
+            finally:
+                structlog.contextvars.unbind_contextvars(*bound.keys())
 
     return JSONResponse(status_code=202, content={"status": "accepted", "ticket_id": ticket_id})
 
@@ -162,6 +176,8 @@ async def batch_ingest(
     settings, error = _resolve_settings_or_error(request)
     if error is not None:
         return error
+    if settings is None:
+        return api_error(503, "settings not configured", code="settings_not_configured")
 
     # Security: reject oversized batches before processing any items.
     if len(payloads) > MAX_BATCH_SIZE:
@@ -187,8 +203,7 @@ async def batch_ingest(
                 getattr(request.state, "request_id", None),
             )
             delivery_id = f"{batch_delivery_id}:{index}" if batch_delivery_id is not None else None
-            assert settings is not None
-            await _dispatch_ticket(
+            _schedule_background_task(
                 delivery_id=delivery_id,
                 payload=payload_for_job,
                 settings=settings,
@@ -215,7 +230,7 @@ async def retry_ticket(
     payload_for_job: dict[str, Any] = {"ticket_id": ticket_id}
     payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
     payload_for_job[FORCE_REPROCESS_KEY] = True
-    await _dispatch_ticket(
+    _schedule_background_task(
         delivery_id=None,  # Retry does not need deduplication
         payload=payload_for_job,
         settings=settings,

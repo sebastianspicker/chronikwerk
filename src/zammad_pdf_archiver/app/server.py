@@ -10,7 +10,6 @@ from zammad_pdf_archiver._version import __version__
 from zammad_pdf_archiver.app.jobs.shutdown import (
     clear_shutting_down,
     set_shutting_down,
-    track_task,
     wait_for_tasks,
 )
 from zammad_pdf_archiver.app.jobs.ticket_stores import aclose_stores
@@ -30,7 +29,7 @@ from zammad_pdf_archiver.config.settings import Settings
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Track graceful shutdown for in-process jobs."""
     clear_shutting_down()
     try:
@@ -41,7 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await aclose_stores()
 
 
-async def _global_exception_handler(request: Request, exc: Exception) -> Response:
+async def _global_exception_handler(request: Request, _exc: Exception) -> Response:
     request_id = getattr(request.state, "request_id", None)
     response = api_error(
         500,
@@ -66,7 +65,6 @@ def _wire_app(app: FastAPI, *, settings: Settings | None) -> None:
     app.include_router(jobs_router)
     if settings is not None and settings.observability.metrics_enabled:
         app.include_router(metrics_router)
-    app.state.track_task = track_task
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal, NoReturn, TypeVar
+from typing import Any, Literal, NoReturn
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
@@ -17,8 +17,6 @@ from zammad_pdf_archiver.adapters.zammad.errors import (
     ServerError,
 )
 from zammad_pdf_archiver.adapters.zammad.models import Article, TagList, Ticket
-
-_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
