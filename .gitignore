@@ -20,6 +20,7 @@ htmlcov/
 .venv/
 venv/
 pip-wheel-metadata/
+uv.lock
 
 # Environment / secrets
 .env
@@ -46,33 +47,13 @@ coverage.json
 # Local audit and planning artifacts
 audit/
 docs/audit/
+docs/assets/demo/
+private/
 plans/
-progress.md
-AGENTS.md
-AUDIT.md
-HARNESS_PRINCIPLES.md
-code_review.md
-docs/agent/
 docs/source-audit/
-docs/archive/
-docs/deprecated/
-deprecated/
+/deprecated/
 reports/
 .jscpd/
 *.sarif
-codacy-*.json
-codacy-*.sarif
-docs/codacy-*-ledger.md
-docs/*-ledger.md
-docs/*-status-ledger.md
-docs/*-remediation-ledger.md
-docs/*-remediation-status.md
-scripts/topology_inventory.sh
-
-# Local agent/tool state
-.codacy/
-.claude/
-.codex/
-.agents/
-.github/codex/
-.github/workflows/codex.yml
+*-local.json
+*-local.sarif
