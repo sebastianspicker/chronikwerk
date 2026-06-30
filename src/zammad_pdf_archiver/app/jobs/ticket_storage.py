@@ -201,7 +201,7 @@ def _commit_files_to_storage(
 def _commit_attachments(
     tmp_dir: Path,
     target_path: Path,
-    sidecar_path: Path,
+    _sidecar_path: Path,
     attachment_entries: list[dict[str, Any]],
     *,
     storage_root: Path,
@@ -228,7 +228,7 @@ def _commit_attachments(
 def _commit_pdf(
     tmp_dir: Path,
     target_path: Path,
-    sidecar_path: Path,
+    _sidecar_path: Path,
     *,
     storage_root: Path,
     fsync: bool,
@@ -258,7 +258,7 @@ def _commit_sidecar(
             storage_root=storage_root,
             fsync=fsync,
         )
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         _log = structlog.get_logger(__name__)
         _log.error(
             "ticket_storage.sidecar_move_failed_removing_orphan_pdf",

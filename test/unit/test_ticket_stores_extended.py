@@ -35,8 +35,8 @@ def test_ticket_in_flight_is_process_local(tmp_path) -> None:
         ticket_stores.reset_for_tests()
         assert await ticket_stores.try_acquire_ticket(settings, 123) is True
         assert await ticket_stores.try_acquire_ticket(settings, 123) is False
-        await ticket_stores.release_ticket(settings, 123)
+        await ticket_stores.release_ticket(123)
         assert await ticket_stores.try_acquire_ticket(settings, 123) is True
-        await ticket_stores.release_ticket(settings, 123)
+        await ticket_stores.release_ticket(123)
 
     asyncio.run(run())

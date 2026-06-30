@@ -58,8 +58,6 @@ def _render_filename_pattern(pattern: str, *, ticket_safe: str, ts_safe: str) ->
         raise ValueError(
             f"invalid filename_pattern format: unknown placeholder {exc.args[0]!r}"
         ) from exc
-    except ValueError:
-        raise
     except (IndexError, TypeError) as exc:
         raise ValueError(f"invalid filename_pattern format: {exc}") from exc
 

@@ -1,36 +1,23 @@
 # 08 - Operations
 
-This runbook is for deployment, monitoring, troubleshooting, and recovery.
+Canonical runbook for starting, observing, troubleshooting, and recovering the
+service. Deployment preparation lives in [deploy.md](deploy.md).
 
-## 1. Endpoint Semantics
+## Endpoint Semantics
 
-- `POST /ingest`
-  - returns `202` with `{"status":"accepted","ticket_id":...}` on accepted payload
-  - processing happens asynchronously in background
-- `POST /ingest/batch`
-  - returns `202` with `{"status":"accepted","count":...}`
-  - schedules one background task per payload
-- `POST /retry/{ticket_id}`
-  - returns `202` with `{"status":"accepted","ticket_id":...}`
-  - schedules one explicit forced reprocessing job without delivery-ID dedupe
-- `GET /jobs/history`
-  - returns process-local processing history
-- `GET /healthz`
-  - basic liveness/status payload (optionally omit version/service via `OBSERVABILITY__HEALTHZ_OMIT_VERSION`)
-- `GET /metrics`
-  - available only when `observability.metrics_enabled=true`; optional Bearer auth via `OBSERVABILITY__METRICS_BEARER_TOKEN`
+- `POST /ingest`: returns `202` after accepting one payload; processing runs in
+  the background.
+- `POST /ingest/batch`: returns `202` after accepting a batch; each payload is
+  scheduled separately.
+- `POST /retry/{ticket_id}`: returns `202` after accepting one forced retry.
+- `GET /jobs/history`: returns process-local history.
+- `GET /healthz`: liveness/status, with optional `?deep=true` storage check.
+- `GET /metrics`: Prometheus metrics when enabled.
 
-Common ingest error responses:
-- `403` invalid/missing HMAC signature when signed mode is active
-- `503` no webhook auth configured and unsigned mode disabled
-- `400` missing delivery header when `require_delivery_id=true`
-- `413` request exceeds configured body size
-- `422` invalid body (e.g. missing or invalid ticket id)
-- `429` request rate-limited
+`202` means accepted, not archived. Confirm completion by checking final tags,
+the internal ticket note, logs, and archive output.
 
-## 2. Start/Stop
-
-### Docker Compose
+## Start and Stop
 
 ```bash
 sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
@@ -39,175 +26,128 @@ sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env logs -f
 sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env down
 ```
 
-### Optional systemd wrapper
+Health check:
+
+```bash
+curl -fsS "http://127.0.0.1:${SERVER_PORT:-8080}/healthz"
+curl -fsS "http://127.0.0.1:${SERVER_PORT:-8080}/healthz?deep=true"
+```
+
+## Update and Rollback
+
+Update:
+
+```bash
+cd /opt/zammad-ticket-archiver
+sudo rsync -a --delete /path/to/updated/repo/ ./
+sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
+```
+
+Rollback:
+
+```bash
+cd /opt/zammad-ticket-archiver
+sudo git checkout <known-good-commit-or-tag>
+sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
+```
+
+For no-build rollbacks, publish versioned images and pin compose `image:` tags.
+
+## Optional systemd Wrapper
+
+```bash
+sudo install -m 0644 infra/systemd/zammad-archiver.service /etc/systemd/system/zammad-archiver.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now zammad-archiver.service
+```
+
+The unit assumes `/opt/zammad-ticket-archiver`. Adjust `WorkingDirectory=` if
+your deployment path differs.
 
 ```bash
 sudo systemctl status zammad-archiver.service
 sudo journalctl -u zammad-archiver.service -f
 ```
 
-## 3. Observability Sources
+## Observability
 
 Primary signals:
+
 - structured service logs (`request_id`, `ticket_id`, optional `delivery_id`)
-- ticket internal notes (`PDF archived...` / `PDF archiver error...`)
+- ticket internal notes
 - ticket tags (`pdf:sign`, `pdf:processing`, `pdf:signed`, `pdf:error`)
-- metrics (`processed_total`, `failed_total`, timing histograms)
+- `GET /jobs/history`
+- optional Prometheus metrics
 
-## 4. Processing and Idempotency Behavior
+## Idempotency and Retry Limits
 
-### Background processing (202)
+The default runtime is process-local:
 
+- Background tasks can be lost if the process exits before completion.
+- In-flight ticket locks are process-local.
+- Delivery-ID dedupe is in-memory and resets on restart.
+- A delivery ID is claimed before processing completes, so retry with a new
+  Zammad delivery or wait for the TTL after failures.
 
-- `inprocess` (default): best-effort in-process tasks. If the process restarts before completion, work can be lost.
+Use one service instance unless you have verified the concurrency and storage
+semantics for your deployment.
 
+## Reprocessing Workflow
 
-### Tag transitions
+1. Read the latest archiver ticket note and classification.
+2. Fix the root cause: storage, credentials, network, signing, TSA, or payload.
+3. Remove stale `pdf:processing` if present.
+4. Ensure the trigger tag is present unless using `POST /retry/{ticket_id}`.
+5. Remove `pdf:signed` only when you intentionally want a new archive output.
+6. Trigger a fresh Zammad update or call `POST /retry/{ticket_id}`.
+7. Confirm `pdf:signed` or a new `pdf:error` note.
 
-- processing start:
-  - normal ingest: remove `pdf:error`, trigger tag
-  - explicit retry/reprocess: also remove `pdf:signed`
-  - add `pdf:processing`
-- success:
-  - remove `pdf:processing`, `pdf:error`, trigger tag
-  - add `pdf:signed`
-- failure:
-  - remove `pdf:processing`, `pdf:signed`
-  - add `pdf:error`
-  - transient keeps/re-adds trigger
-  - permanent removes trigger
-
-### Delivery ID dedupe
-
-- dedupe key: `X-Zammad-Delivery`
-- repeated delivery IDs are skipped for `workflow.delivery_id_ttl_seconds`
-- for `POST /ingest/batch`, each item uses a derived key `<delivery-id>:<index>` so retries of the same batch are deduplicated per item
-- dedupe store depends on backend:
-
-### Workflow and idempotency limitations (Bugs #32–#37)
-
-Operators should be aware of the following; some are documented only, others are inherent to the current design:
-
-- **In-flight lock is process-local:** Per-ticket concurrency is in-memory. Multiple processes or replicas can process the same ticket concurrently; use a single instance or accept possible tag races when scaling out.
-- **should_process:** The gate skips when the “done” tag (`pdf:signed`) is present. Tickets in `pdf:processing` or `pdf:error` can be considered eligible depending on `require_tag` and tag state; a second worker may start if in-flight state is not shared.
-- **TOCTOU on tag updates:** Two workers can both pass `should_process`; the slower one may then call `apply_processing`, removing `pdf:signed` and setting `pdf:processing`, undoing the first worker’s completion. Conditional or atomic tag updates are not used; accept or avoid concurrent workers per ticket.
-- **Error path orphans:** If `apply_error` fails after the trigger was removed, the ticket can end with no state tags and be skipped when `require_tag=true`. Recovery: re-add trigger and remove stale `pdf:processing` if present, then re-trigger.
-- **Delivery ID claim order:** The delivery ID is claimed before `should_process` is evaluated. If the run exits early (e.g. no trigger tag), that delivery ID is still “seen” for the TTL, so a later replay with the same ID is skipped until TTL expires.
-- **Claim before success:** The delivery ID is marked seen when the job starts, not after successful completion. A failure after claim but before `apply_done` prevents the same delivery ID from retrying until TTL expires; use a new webhook (new delivery ID) or wait for TTL to retry.
-
-## 5. Reprocessing Workflow
-
-Use this procedure after failed runs:
-
-1. Read latest ticket error note and identify classification (Transient/Permanent).
-2. Fix root cause (storage permissions, credentials, network, signing, TSA, etc.).
-3. Normalize tags:
-  - remove stale `pdf:processing` if present
-  - ensure trigger tag is present
-  - remove `pdf:signed` only if you intentionally want a new archive output
-4. Trigger a fresh ticket update/macro to emit a new webhook, or call `POST /retry/{ticket_id}`.
-  - explicit retry forces one reprocessing run even when the trigger tag is missing or `pdf:signed` is present
-5. Confirm final state (`pdf:signed` or new `pdf:error` with updated note).
-
-## 6. Troubleshooting Matrix
+## Troubleshooting
 
 ### `403 forbidden` on `/ingest`
 
 Check:
-- identical HMAC secret on Zammad and service
-- header name `X-Hub-Signature`
-- request body not transformed by proxy
+
+- matching `ZAMMAD__WEBHOOK_HMAC_SECRET`
+- `X-Hub-Signature` header is present
+- proxy does not transform the request body after signing
 
 ### `503 webhook_auth_not_configured`
 
-Cause:
-- no webhook secret configured
-
-Fix:
-- set `ZAMMAD__WEBHOOK_HMAC_SECRET`, or
+Set `ZAMMAD__WEBHOOK_HMAC_SECRET` for signed mode.
 
 ### `400 missing_delivery_id`
 
-Cause:
-- `hardening.webhook.require_delivery_id=true`
-- missing `X-Zammad-Delivery`
+`hardening.webhook.require_delivery_id=true` is enabled and the request lacks
+`X-Zammad-Delivery`.
 
-Fix:
-- ensure header is sent, or disable strict requirement
-
-### Ticket in `pdf:error` with storage messages
+### Ticket ends in `pdf:error`
 
 Check:
-- `STORAGE__ROOT` path and mount
-- UID/GID mapping
-- share ACLs and write permissions
-- free space/quota
 
-### Ticket in `pdf:error` with signing messages
+- storage mount path, permissions, free space, and quota
+- Zammad API token permissions
+- signing PFX path/password
+- TSA URL, credentials, and trust
+- `pdf.max_articles` and attachment limits for large tickets
 
-Check:
-- `SIGNING_ENABLED=true`
-- PFX present at `SIGNING_PFX_PATH`
-- correct PFX password
-- certificate validity dates
+### Ticket remains `pdf:processing`
 
-### Ticket in `pdf:error` with TSA messages
+The process may have exited during background work. Inspect logs and
+`/jobs/history`, then run the reprocessing workflow above.
 
-Check:
-- `TSA_URL`
-- `TSA_CA_BUNDLE_PATH` (private CA)
-- `TSA_USER` and `TSA_PASS` when auth required
-- outbound connectivity and TLS trust
+## On-Call Fast Triage
 
-### Rendering article limit exceeded
+1. Did `/ingest` return `202`?
+2. What is the current ticket tag state?
+3. What does the latest internal note say?
+4. Is the expected destination path writable?
+5. Could delivery-ID dedupe have skipped the replay?
+6. Does `GET /healthz?deep=true` report writable storage?
 
-Cause:
-- ticket has more articles than `pdf.max_articles` and `pdf.article_limit_mode` is `fail` (default).
+## Release Safety Reminders
 
-Fix:
-- increase `PDF_MAX_ARTICLES` or set to `0` for unlimited; or
-- set `PDF_ARTICLE_LIMIT_MODE=cap_and_continue` to truncate and archive with a warning; or
-
-## 7. Signature Verification Procedure
-
-```bash
-```
-
-Optional detailed output:
-
-```bash
-```
-
-Optional trust inputs:
-
-```bash
-```
-
-## 8. On-Call Fast Triage
-
-1. Was webhook accepted (`202`) by `/ingest`?
-2. What is current ticket tag state?
-3. What does latest internal note report?
-4. Is destination path expected and writable?
-5. Could run be skipped by delivery-ID dedupe?
-
-## 9. Scripts
-
-| Script | Purpose |
-|--------|--------|
-| `scripts/ci/smoke-test.sh` | Optional CI smoke test (requires env and optional services). |
-| `scripts/dev/run-local.sh` | Run the service locally (e.g. with env loaded). |
-| `scripts/dev/gen-dev-certs.sh` | Generate development certificates. |
-| `scripts/ops/mount-cifs.sh` | Mount CIFS/SMB share (operations helper). |
-
-For local development, to remove untracked and ignored files (e.g. `.mypy_cache`, `build/`): `git clean -fdx` (use with care).
-
-## 10. Residual risks and release checklist
-
-External risks operators should be aware of:
-
-- **CIFS/network storage:** Durability and consistency depend on the share and network; consider fsync and atomic write settings.
-- **`/metrics` access:** When enabled, protect with `OBSERVABILITY__METRICS_BEARER_TOKEN` or network policy; otherwise metrics may be exposed.
-- **TSA certificate trust:** RFC3161 timestamp validation depends on TSA and CA trust configuration.
-
-Before deployment, run through [Release and deployment checklist](release-checklist.md) for safety checks.
+- Protect `/metrics` with a bearer token or network policy when enabled.
+- Treat CIFS/SMB durability as a storage-system contract, not an app guarantee.
+- Validate signing and timestamp trust in the target environment.
+- Run [release-checklist.md](release-checklist.md) before publication.

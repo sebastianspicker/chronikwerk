@@ -1,3 +1,4 @@
+# pylint: disable=import-outside-toplevel
 from __future__ import annotations
 
 import hashlib
@@ -7,43 +8,47 @@ from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
 
-from zammad_pdf_archiver.adapters.pdf.template_engine import render_html
+from zammad_pdf_archiver.adapters.pdf.template_engine import (
+    DEFAULT_TEMPLATE_NAME,
+    render_html,
+)
 from zammad_pdf_archiver.adapters.pdf.url_fetcher import _safe_url_fetcher
 from zammad_pdf_archiver.domain.errors import PermanentError
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
-_TEMPLATE_NAME = "default"
 _TEMPLATE_STYLES_MAIN = "styles.css"
 
 
 @contextmanager
 def _template_folder_path() -> Generator[Path, None, None]:
-    traversable = resources.files("zammad_pdf_archiver").joinpath("templates", _TEMPLATE_NAME)
+    traversable = resources.files("zammad_pdf_archiver").joinpath(
+        "templates", DEFAULT_TEMPLATE_NAME
+    )
     with resources.as_file(traversable) as path:
         yield path
 
 
-def _css_file_paths(template_folder: Path) -> list[Path]:
+def _css_file_paths(template_folder: Path) -> tuple[Path, ...]:
     main = template_folder / _TEMPLATE_STYLES_MAIN
     if not main.is_file():
         raise FileNotFoundError(f"Template CSS not found: {main}")
-    return [main]
+    return (main,)
 
 
 def _validate_article_limit(snapshot: Snapshot, max_articles: int) -> None:
-    if max_articles > 0 and len(snapshot.articles) > max_articles:
+    if 0 < max_articles < len(snapshot.articles):
         raise PermanentError(
-            f"Ticket has {len(snapshot.articles)} articles; too many articles; "
+            f"too many articles: ticket has {len(snapshot.articles)} articles; "
             f"maximum allowed is {max_articles}"
         )
 
 
-def _pdf_identifier(html: str, css_paths: list[Path]) -> bytes:
+def _pdf_identifier(html: str, css_paths: tuple[Path, ...]) -> bytes:
     css_bytes = b"\0".join(path.read_bytes() for path in css_paths)
     return hashlib.sha256(html.encode("utf-8") + b"\0" + css_bytes).digest()[:16]
 
 
-def _write_pdf(html: str, *, template_folder: Path, css_paths: list[Path]) -> bytes:
+def _write_pdf(html: str, *, template_folder: Path, css_paths: tuple[Path, ...]) -> bytes:
     from weasyprint import CSS, HTML
 
     stylesheets = [CSS(filename=str(path)) for path in css_paths]

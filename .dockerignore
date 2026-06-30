@@ -8,6 +8,14 @@
 .idea
 .cursor
 
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Hidden local state
+.*
+!.env.example
+
 # Environment and secrets
 .env
 .env.*
@@ -50,9 +58,6 @@ Makefile
 # Pre-commit
 .pre-commit-config.yaml
 
-# Local audit / codex
-.claude
-.codex
-.agents
-.codacy
-.github/codex
+# Local tool state
+.local
+private

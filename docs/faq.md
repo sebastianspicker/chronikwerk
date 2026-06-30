@@ -1,94 +1,77 @@
 # FAQ
 
-## Why did `/ingest` return `202` but no PDF exists yet?
+## Does `202 Accepted` mean the PDF was archived?
 
-`202` means the request was accepted, not that processing completed. Processing after `202` is best-effort: there is no guaranteed retry, and work can be lost on process restart (no durable queue). If the service restarted or the job never ran, re-trigger by saving the ticket or reapplying the macro.
+No. `202` only means the request was accepted and background processing was
+scheduled. Confirm completion with:
 
-Check:
-- ticket tags (`pdf:processing`, `pdf:signed`, `pdf:error`)
+- ticket tags (`pdf:signed` or `pdf:error`)
 - latest internal ticket note
-- service logs by `ticket_id` or `X-Request-Id`
+- service logs using `ticket_id`, `delivery_id`, or `request_id`
+- archive PDF and sidecar presence on disk
 
 ## Why do I get `403 forbidden` on `/ingest`?
 
-HMAC validation failed while signed mode is active.
+HMAC validation failed.
 
 Check:
-- `ZAMMAD__WEBHOOK_HMAC_SECRET`
-- header `X-Hub-Signature`
-- request body not modified by proxies
 
-See [`api.md`](api.md).
+- `ZAMMAD__WEBHOOK_HMAC_SECRET` matches Zammad
+- the request uses `X-Hub-Signature`
+- the proxy does not modify the body after Zammad signs it
 
 ## Why do I get `503 webhook_auth_not_configured`?
 
-No webhook secret is configured and unsigned mode is disabled.
-
-Fix:
-- set `ZAMMAD__WEBHOOK_HMAC_SECRET`, or
+The service is running in fail-closed webhook mode without a configured webhook
+secret. Set `ZAMMAD__WEBHOOK_HMAC_SECRET`.
 
 ## Why do I get `400 missing_delivery_id`?
 
-`hardening.webhook.require_delivery_id=true` is enabled but `X-Zammad-Delivery` was not sent.
-
-## Why was the ticket marked `pdf:error` with Permanent classification?
-
-Common causes:
-- missing/invalid ticket fields (`archive_path`, `archive_user_mode`, `archive_user` for `fixed` mode)
-- storage path policy violations
-- signing configuration/material errors
-
-Permanent failures remove the trigger tag. Re-add it after fixing root cause.
+`hardening.webhook.require_delivery_id=true` is enabled and the request did not
+include `X-Zammad-Delivery`.
 
 ## Why is a ticket stuck with `pdf:processing`?
 
-Usually process interruption during job execution.
+The process may have stopped during background work, or a worker failed before
+final tag cleanup.
 
-Recovery:
-1. remove `pdf:processing`
-2. ensure trigger tag is present
-3. trigger a new ticket update/macro
+Do this:
 
-## Why are duplicate deliveries skipped?
+1. Check logs and `/jobs/history`.
+2. Remove stale `pdf:processing` if the job is no longer running.
+3. Fix the underlying failure.
+4. Trigger a fresh webhook or use `POST /retry/{ticket_id}`.
 
-Delivery dedupe is active for `workflow.delivery_id_ttl_seconds`.
+## Why did the ticket get `pdf:error`?
 
-To process again:
-- trigger a new Zammad event (new delivery ID), or
-- reduce TTL
+The internal note should include a scrubbed error message and classification.
+Common causes:
 
-## Why does storage write fail with permissions errors?
+- storage root missing or not writable
+- path policy rejected the archive path
+- Zammad API token lacks permissions
+- PDF rendering limit exceeded
+- signing PFX path/password invalid
+- TSA endpoint unreachable or rejected the timestamp request
 
-Check:
-- correct `STORAGE__ROOT`
-- mount read/write mode
-- UID/GID mapping for runtime user (`10001`)
-- share ACLs and free space/quota
-
-See [`07-storage.md`](07-storage.md).
-
-## Why does signing fail?
+## Why does storage fail on CIFS/SMB?
 
 Check:
-- `SIGNING_ENABLED=true`
-- PFX exists at `SIGNING_PFX_PATH`
-- correct `SIGNING_PFX_PASSWORD`
-- certificate validity period
 
-See [`06-signing-and-timestamp.md`](06-signing-and-timestamp.md).
+- the mount is active and read-write
+- the container UID/GID can create directories and files
+- free space and quota
+- path prefix and segment policy
+- `GET /healthz?deep=true`
 
-## Why does timestamping fail?
+## Can I run multiple service replicas?
 
-Check:
-- `TSA_URL`
-- `TSA_CA_BUNDLE_PATH` (if private CA)
-- `TSA_USER` + `TSA_PASS` when auth is required
-- outbound connectivity and TLS trust
+Only with care. The default dedupe, history, and in-flight locks are
+process-local. Multiple replicas can process the same ticket concurrently unless
+you add external coordination at the deployment layer.
 
-## Why do large tickets fail to render?
+## Where should secrets live?
 
-`pdf.max_articles` (default `250`) may be exceeded.
-
-Options:
-- increase `PDF_MAX_ARTICLES`
-- set `PDF_MAX_ARTICLES=0` (disable cap)
+Use environment variables, deployment secret stores, or files outside the
+repository. Do not commit `.env`, PFX files, private keys, API tokens, or
+generated archive output.

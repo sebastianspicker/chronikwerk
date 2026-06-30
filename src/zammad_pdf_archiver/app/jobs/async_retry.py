@@ -24,9 +24,10 @@ async def async_retry(  # noqa: UP047 - Codacy Pylint runs under Python 3.11.
     for attempt in range(max_retries + 1):
         try:
             return await coro_factory()
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             last_exc = exc
             if attempt < max_retries:
                 await asyncio.sleep(backoff_base * (backoff_factor**attempt))
-    assert last_exc is not None
+    if last_exc is None:
+        raise ValueError("max_retries must be >= 0")
     raise last_exc

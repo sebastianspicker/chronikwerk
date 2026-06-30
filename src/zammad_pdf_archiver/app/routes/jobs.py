@@ -8,7 +8,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.get("/history")
-async def job_history(
+def job_history(
     limit: int = 100,
     ticket_id: int | None = None,
 ) -> dict[str, object]:

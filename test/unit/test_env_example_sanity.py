@@ -15,7 +15,7 @@ def _parse_env_example(repo_root: Path) -> dict[str, str]:
     except PermissionError:
         import pytest
         pytest.skip("PermissionError reading .env.example (system locked)")
-        
+
     for raw_line in lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from test.support.settings_factory import make_settings
+from zammad_pdf_archiver.app.jobs.shutdown import clear_shutting_down
 from zammad_pdf_archiver.app.server import create_app, lifespan
 
 
@@ -32,3 +33,4 @@ def test_lifespan_waits_for_inprocess_tasks(tmp_path, monkeypatch) -> None:
     asyncio.run(run())
 
     assert called == ["wait", "close"]
+    clear_shutting_down()

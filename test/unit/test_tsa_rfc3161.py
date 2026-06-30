@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Self
 
 import httpx
 import pytest
@@ -100,7 +100,7 @@ def test_tsa_http_client_respects_transport_trust_env(
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             captured["trust_env"] = kwargs.get("trust_env")
 
-        async def __aenter__(self) -> _DummyAsyncClient:
+        async def __aenter__(self) -> Self:
             return self
 
         async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
@@ -224,7 +224,7 @@ def test_tsa_ca_bundle_path_is_used_as_verify(
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             captured["verify"] = kwargs.get("verify")
 
-        async def __aenter__(self) -> _DummyClient:
+        async def __aenter__(self) -> Self:
             return self
 
         async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:

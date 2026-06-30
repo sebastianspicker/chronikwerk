@@ -15,6 +15,7 @@ def test_redact_settings_dict_redacts_explicit_secret_keys() -> None:
         "ZAMMAD__WEBHOOK_HMAC_SECRET": "hmac",
         "PFX_PASSWORD": "pfx",
         "TSA_PASS": "tsa",
+        "REDIS_URL": "redis://:pass@redis:6379/0",
         "nested": {
             "api_token": "tok2",
             "webhook_hmac_secret": "hmac2",
@@ -29,6 +30,7 @@ def test_redact_settings_dict_redacts_explicit_secret_keys() -> None:
     assert out["ZAMMAD__WEBHOOK_HMAC_SECRET"] == REDACTED_VALUE
     assert out["PFX_PASSWORD"] == REDACTED_VALUE
     assert out["TSA_PASS"] == REDACTED_VALUE
+    assert out["REDIS_URL"] == REDACTED_VALUE
     assert out["nested"]["api_token"] == REDACTED_VALUE
     assert out["nested"]["webhook_hmac_secret"] == REDACTED_VALUE
     assert out["nested"]["pfx_password"] == REDACTED_VALUE
@@ -56,5 +58,3 @@ def test_scrub_secrets_in_text_redacts_common_credential_patterns() -> None:
     assert "apisecret123" not in out
     assert "querysecret456" not in out
     assert REDACTED_VALUE in out
-
-

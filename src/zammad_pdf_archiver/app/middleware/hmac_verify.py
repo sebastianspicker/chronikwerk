@@ -169,7 +169,10 @@ class HmacVerifyMiddleware:
         scope: Scope,
         send: Send,
     ) -> list[bytes] | None:
-        assert self._secret is not None
+        if self._secret is None:
+            await drain_stream(receive)
+            await _service_misconfigured()(scope, receive, send)
+            return None
         mac = hmac.new(self._secret, digestmod=digest_ctor)
         chunks, disconnected = await _read_body(receive, on_chunk=mac.update)
         if disconnected:

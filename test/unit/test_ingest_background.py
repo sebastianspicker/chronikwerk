@@ -43,6 +43,6 @@ def test_ingest_does_not_block_on_processing(tmp_path, monkeypatch) -> None:
 
     # If /ingest awaited the job, this would time out.
     asyncio.run(asyncio.wait_for(_call(), timeout=0.2))
-    # We don't strictly assert called == [] here because asyncio.create_task 
-    # might have started the task before _call returned. 
+    # We don't strictly assert called == [] here because asyncio.create_task
+    # might have started the task before _call returned.
     # The lack of timeout is the primary proof of non-blocking behavior.

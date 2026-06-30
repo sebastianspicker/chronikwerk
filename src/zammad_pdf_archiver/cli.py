@@ -5,13 +5,9 @@ import argparse
 import json
 import sys
 
-import structlog
-
 from zammad_pdf_archiver.config.load import load_settings
 from zammad_pdf_archiver.config.redact import redact_settings_dict
 from zammad_pdf_archiver.config.validate import ConfigValidationError
-
-log = structlog.get_logger(__name__)
 
 
 def _missing_config_path_from_error(error: ConfigValidationError) -> str | None:
@@ -42,7 +38,7 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
         return 1
 
 
-def cmd_dump_config(args: argparse.Namespace) -> int:
+def cmd_dump_config(_args: argparse.Namespace) -> int:
     """Dump current configuration JSON with secrets redacted."""
     try:
         settings = load_settings()

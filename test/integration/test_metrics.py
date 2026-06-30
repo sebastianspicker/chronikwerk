@@ -9,18 +9,20 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
-from test.support.process_ticket_helpers import fake_store_ticket_files, successful_render
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
+from zammad_pdf_archiver.app.jobs.ticket_storage import StorageResult
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.state_machine import TRIGGER_TAG
+
+_TEST_WEBHOOK_SECRET = "test-webhook-secret"
 
 
 def _test_settings(storage_root: str) -> Settings:
     return make_settings(
         storage_root,
-        secret="metrics-test-secret",
+        secret=_TEST_WEBHOOK_SECRET,
         overrides={"observability": {"metrics_enabled": True}},
     )
 
@@ -82,9 +84,13 @@ def _ingest_body() -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
-def _signature(body: bytes) -> str:
-    digest = hmac.new(b"metrics-test-secret", body, hashlib.sha256).hexdigest()
-    return f"sha256={digest}"
+def _signed_ingest_headers(body: bytes) -> dict[str, str]:
+    digest = hmac.new(_TEST_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "X-Hub-Signature": f"sha256={digest}",
+        "X-Zammad-Delivery": "delivery-metrics-20260207-0001",
+    }
 
 
 def test_metrics_endpoint_returns_prometheus_text(tmp_path) -> None:
@@ -128,28 +134,31 @@ def test_metrics_requires_bearer_when_configured(tmp_path) -> None:
 
 
 def test_ingest_success_increments_processed_total(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(process_ticket_module, "build_and_render_pdf", successful_render)
-    monkeypatch.setattr(
-        process_ticket_module,
-        "store_ticket_files",
-        fake_store_ticket_files(tmp_path),
-    )
     app = create_app(_test_settings(str(tmp_path)))
     client = TestClient(app)
 
     before = _metric_value(client.get("/metrics").text, "processed_total")
     body = _ingest_body()
 
+    async def render_and_store_stub(**_kwargs) -> StorageResult:
+        target = tmp_path / "archive" / "Ticket-20240123.pdf"
+        return StorageResult(
+            target_path=target,
+            sidecar_path=target.with_suffix(".pdf.json"),
+            sha256_hex="0" * 64,
+            size_bytes=4,
+        )
+
+    monkeypatch.setattr(
+        process_ticket_module, "_render_and_store_ticket", render_and_store_stub
+    )
+
     with respx.mock:
         _register_ingest_routes()
         resp = client.post(
             "/ingest",
             content=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-Zammad-Delivery": "delivery-metrics-20260207-0001",
-                "X-Hub-Signature": _signature(body),
-            },
+            headers=_signed_ingest_headers(body),
         )
 
     assert resp.status_code == 202

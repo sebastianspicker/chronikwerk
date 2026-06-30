@@ -101,7 +101,7 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
     def _parse_tsa_response(response: httpx.Response) -> tsp.TimeStampResp:
         try:
             return tsp.TimeStampResp.load(response.content)
-        except Exception as exc:  # noqa: BLE001 - parse errors are not retryable
+        except (TypeError, ValueError) as exc:
             raise PermanentError("RFC3161 TSA response is not a valid TimeStampResp") from exc
 
     @staticmethod
@@ -113,7 +113,7 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
             status_string = ""
             try:
                 status_string = status_info["status_string"].native or ""
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 pass
             raise PermanentError(
                 f"RFC3161 TSA rejected the request: status={status_value!r}"

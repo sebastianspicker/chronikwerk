@@ -8,21 +8,15 @@ from pydantic import SecretStr
 
 REDACTED_VALUE = "[redacted]"
 
-_EXPLICIT_SENSITIVE_KEYS = frozenset(
-    {
-        # Explicit env-var style keys (can appear in logs or config dumps).
-        "zammad_api_token",
-        "webhook_hmac_secret",
-        "pfx_password",
-        "tsa_pass",
-        "metrics_bearer_token",
-        # Common config-key style names.
-        "api_token",
-        "key_password",
-            }
+_SENSITIVE_KEY_FRAGMENTS = (
+    "password",
+    "token",
+    "secret",
+    "authorization",
+    "api_key",
+    "apikey",
+    "redis_url",
 )
-
-_SENSITIVE_KEY_FRAGMENTS = ("password", "token", "secret", "authorization", "api_key", "apikey")
 
 _AUTHZ_SCHEME_RE = re.compile(r"(?i)\b(authorization)\s*[:=]\s*(bearer|token|basic)\s+([^\s,;]+)")
 _ZAMMAD_TOKEN_TOKEN_RE = re.compile(r"(?i)\bToken\s+token=([^\s,;]+)")
@@ -43,7 +37,8 @@ _JSON_STYLE_SECRET_RE = re.compile(
 )
 # Bug #23: env-var style lines (e.g. ZAMMAD__API_TOKEN=..., SIGNING_PFX_PASSWORD=...).
 _ENV_VAR_SECRET_RE = re.compile(
-    r"(?im)^([A-Za-z_][A-Za-z0-9_]*(?:API[_-]?TOKEN|TOKEN|PASSWORD|SECRET|PASSWD|PFX_PASS|TSA_PASS)\s*=\s*)([^\s#]+)"
+    r"(?im)^([A-Za-z_][A-Za-z0-9_]*(?:API[_-]?TOKEN|TOKEN|PASSWORD|SECRET|"
+    r"PASSWD|PFX_PASS|TSA_PASS)\s*=\s*)([^\s#]+)"
 )
 # Bug #42: api_key/apikey in free-form key=value (explicit pattern).
 _API_KEY_KV_RE = re.compile(r"(?i)\b(api[_-]?key|apikey)\s*[:=]\s*([^\s,;]+)")
@@ -91,8 +86,6 @@ def scrub_secrets_in_text(text: str) -> str:
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.strip().lower()
-    if normalized in _EXPLICIT_SENSITIVE_KEYS:
-        return True
     if normalized.endswith("_pass"):
         return True
     return any(fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS)

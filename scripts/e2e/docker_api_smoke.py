@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import socket
 import subprocess
 import sys
@@ -142,8 +143,12 @@ def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
     command = list(args)
     if not command or command[0] != "docker":
         raise E2EFailure("internal error: only docker commands are supported")
-    return subprocess.run(
-        ["docker", *command[1:]],
+    docker = shutil.which("docker")
+    if docker is None:
+        raise E2EFailure("startup phase: docker executable not found")
+    # Docker path is resolved and args are fixed by this script.
+    return subprocess.run(  # nosec B603
+        [docker, *command[1:]],
         capture_output=True,
         text=True,
         check=False,
@@ -192,7 +197,7 @@ def _wait_http_ok(client: httpx.Client, label: str, url: str, *, timeout_s: floa
             if response.status_code == 200:
                 return
             last_error = f"HTTP {response.status_code}"
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             last_error = str(exc)
         time.sleep(1.0)
     raise E2EFailure(f"readiness phase: {label} not ready at {url}: {last_error}")
@@ -209,7 +214,7 @@ def _request_json(
     response = client.request(method, url, headers=headers, json=json_body)
     try:
         return response.status_code, response.json()
-    except Exception:
+    except json.JSONDecodeError:
         return response.status_code, {"raw": response.text}
 
 
@@ -308,8 +313,8 @@ ticket_ids = []
 for path in sidecars:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        continue
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            continue
     raw_ticket_id = payload.get("ticket_id")
     if raw_ticket_id is not None:
         ticket_ids.append(int(raw_ticket_id))

@@ -4,13 +4,11 @@ import tempfile
 from datetime import UTC, datetime
 from importlib import metadata
 
-import structlog
 from fastapi import APIRouter, Request
 
 from zammad_pdf_archiver.config.settings import Settings
 
 router = APIRouter()
-log = structlog.get_logger(__name__)
 
 
 def _service_version() -> str:
@@ -30,7 +28,7 @@ def _check_storage(settings: Settings) -> dict[str, object]:
         return {"writable": False, "reason": str(exc)[:200]}
 
 
-def _deep_check_healthy(name: str, result: object) -> bool | None:
+def _deep_check_healthy(_name: str, result: object) -> bool | None:
     if not isinstance(result, dict):
         return None
     if "available" in result:

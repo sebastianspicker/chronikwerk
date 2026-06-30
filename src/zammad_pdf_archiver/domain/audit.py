@@ -1,3 +1,4 @@
+# pylint: disable=import-outside-toplevel
 from __future__ import annotations
 
 import sys
@@ -29,15 +30,9 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
             if cert is None:
                 return None
             return cert.fingerprint(hashes.SHA256()).hex()
-    except Exception:
+    except (ImportError, OSError, TypeError, ValueError):
         return None
     return None
-
-
-def _get_fingerprint(signing_settings: SigningSettings) -> str | None:
-    if not signing_settings.enabled:
-        return None
-    return _extract_cert_fingerprint(signing_settings)
 
 
 @dataclass(frozen=True)
@@ -60,7 +55,11 @@ def build_audit_record(
     """Build a JSON-serialisable audit record for a successfully archived ticket."""
     signing_enabled = signing_settings.enabled if signing_settings else False
     tsa_used = signing_settings.timestamp.enabled if signing_settings else False
-    cert_fingerprint = _get_fingerprint(signing_settings) if signing_settings else None
+    cert_fingerprint = (
+        _extract_cert_fingerprint(signing_settings)
+        if signing_settings is not None and signing_settings.enabled
+        else None
+    )
 
     signing: dict[str, Any] = {"enabled": signing_enabled, "tsa_used": tsa_used}
     if cert_fingerprint:

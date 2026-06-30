@@ -15,7 +15,7 @@ def test_prod_compose_env_file_is_optional() -> None:
     service = compose["services"]["zammad-pdf-archiver"]
 
     env_file = service["env_file"]
-    assert env_file == [{"path": "${ARCHIVER_ENV_FILE:-.env}", "required": False}]
+    assert env_file == [{"path": ".env", "required": False}]
 
 
 def test_dev_compose_env_file_is_optional() -> None:
