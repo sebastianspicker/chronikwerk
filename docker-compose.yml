@@ -22,26 +22,26 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${PUBLISH_PORT:-${SERVER_PORT:-8080}}:${SERVER_PORT:-8080}"
+      - "${SERVER_PORT:-8080}:${SERVER_PORT:-8080}"
     env_file:
       # Docker Compose >= 2.24.0 required for `path` + `required`.
-      - path: "${ARCHIVER_ENV_FILE:-.env}"
+      - path: .env
         required: false
     environment:
       # Sane defaults -- override in .env or host environment.
       SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"
       SERVER_PORT: "${SERVER_PORT:-8080}"
       STORAGE__ROOT: "${STORAGE__ROOT:-/mnt/archive}"
-      SIGNING_PFX_PATH: "${SIGNING_PFX_PATH:-/run/secrets/signing.pfx}"
+      SIGNING__PFX_PATH: "${SIGNING__PFX_PATH:-/run/secrets/signing.pfx}"
     volumes:
       # Config file (optional). Set CONFIG_PATH=./config/config.yaml in .env to enable.
       - ./config:/app/config:ro
 
       # Archive storage: bind-mount the host path where PDFs should be written.
-      # The host path is typically a CIFS/SMB mount (see scripts/ops/mount-cifs.sh).
+      # The host path is typically a CIFS/SMB mount managed by the host OS.
       - "${STORAGE__ROOT:-/mnt/archive}:${STORAGE__ROOT:-/mnt/archive}:rw"
 
-      # Signing material (uncomment when SIGNING_ENABLED=true):
+    # Signing material (uncomment when SIGNING__ENABLED=true):
       # - /etc/zammad-archiver/secrets/signing.pfx:/run/secrets/signing.pfx:ro
 
     # Security hardening: read-only root filesystem, no privilege escalation.

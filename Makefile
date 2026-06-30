@@ -1,4 +1,8 @@
-.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build verify ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
+.PHONY: dev lint format typecheck test test-fast test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build verify ci dev-setup clean
+
+define pytest_guarded
+	@set -e; python -m pytest -q $(1) || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+endef
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -25,31 +29,28 @@ typecheck:
 	python -m mypy src test
 
 test:
-	@set -e; python -m pytest -q || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	$(call pytest_guarded,)
 
 test-fast:
-	@set -e; python -m pytest -q test/static test/unit || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	$(call pytest_guarded,test/static test/unit)
 
 test-unit:
-	@set -e; python -m pytest -q test/unit || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	$(call pytest_guarded,test/unit)
 
 test-int:
-	@set -e; python -m pytest -q test/integration || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	$(call pytest_guarded,test/integration)
 
 test-nfr:
-	@set -e; python -m pytest -q test/nfr || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	$(call pytest_guarded,test/nfr)
 
 test-all:
-	@set -e; python -m pytest -q || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	$(call pytest_guarded,)
 
 test-e2e:
 	python scripts/e2e/docker_api_smoke.py
 
-test-cov:
-	python -m pytest --cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=85
-
 docs-check:
-	@for p in README.md docs/01-architecture.md docs/02-zammad-setup.md docs/03-data-model.md docs/04-path-policy.md docs/05-pdf-rendering.md docs/06-signing-and-timestamp.md docs/07-storage.md docs/08-operations.md docs/09-security.md docs/api.md docs/config-reference.md docs/deploy.md docs/faq.md docs/release-checklist.md; do \
+	@for p in README.md $$(find docs -name '*.md' -type f | sort); do \
 		test -f $$p || (echo "Missing docs: $$p" && exit 1); \
 	done; \
 	echo "docs-check: OK"
@@ -70,7 +71,7 @@ verify: qa build
 ci: lint typecheck test
 
 clean:
-	rm -rf build dist .eggs *.egg-info .pytest_cache .coverage htmlcov .mypy_cache
+	rm -rf build dist .eggs *.egg-info .pytest_cache .coverage .coverage_html htmlcov .mypy_cache
 	rm -rf .ruff_cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name '*.py[co]' -delete 2>/dev/null || true

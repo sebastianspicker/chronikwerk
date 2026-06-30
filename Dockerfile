@@ -11,8 +11,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
 
-RUN python -m pip install --no-cache-dir -U pip \
-  && python -m pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir .
 
 
 FROM python:3.12-slim AS runtime
