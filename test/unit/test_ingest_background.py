@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Route import follows app setup so the test patches the live background task.
+# pylint: disable=import-outside-toplevel,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
 
 from starlette.requests import Request
@@ -7,11 +11,6 @@ from starlette.requests import Request
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.routes.ingest import IngestPayload
 from zammad_pdf_archiver.app.server import create_app
-from zammad_pdf_archiver.config.settings import Settings
-
-
-def _test_settings(storage_root: str) -> Settings:
-    return make_settings(storage_root)
 
 
 def test_ingest_does_not_block_on_processing(tmp_path, monkeypatch) -> None:
@@ -30,7 +29,7 @@ def test_ingest_does_not_block_on_processing(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(ingest_route, "process_ticket", _slow_process_ticket)
 
-    app = create_app(_test_settings(str(tmp_path)))
+    app = create_app(make_settings(str(tmp_path)))
     scope = {
         "type": "http",
         "method": "POST",
@@ -48,6 +47,6 @@ def test_ingest_does_not_block_on_processing(tmp_path, monkeypatch) -> None:
 
     # If /ingest awaited the job, this would time out.
     asyncio.run(asyncio.wait_for(_call(), timeout=0.2))
-    # We don't strictly assert called == [] here because asyncio.create_task 
-    # might have started the task before _call returned. 
+    # We don't strictly assert called == [] here because asyncio.create_task
+    # might have started the task before _call returned.
     # The lack of timeout is the primary proof of non-blocking behavior.

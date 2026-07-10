@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from pyhanko.sign.timestamps.common_utils import set_tsp_headers
 
 from zammad_pdf_archiver.adapters.http_util import timeouts_for
 from zammad_pdf_archiver.config.settings import SigningSettings
+from zammad_pdf_archiver.config.transport import PolicyEnforcingAsyncTransport
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 
@@ -20,9 +22,17 @@ class _TsaConfig:
     ca_bundle_path: Path | None
     auth: tuple[str, str] | None
     trust_env: bool
+    allow_insecure_http: bool = False
+    allow_private_networks: bool = False
 
 
-def _load_tsa_config(signing: SigningSettings, *, trust_env: bool = False) -> _TsaConfig:
+def _load_tsa_config(
+    signing: SigningSettings,
+    *,
+    trust_env: bool = False,
+    allow_insecure_http: bool = False,
+    allow_private_networks: bool = False,
+) -> _TsaConfig:
     rfc3161 = signing.timestamp.rfc3161
 
     tsa_url = rfc3161.tsa_url
@@ -51,39 +61,54 @@ def _load_tsa_config(signing: SigningSettings, *, trust_env: bool = False) -> _T
         ca_bundle_path=ca_bundle_path,
         auth=auth,
         trust_env=trust_env,
+        allow_insecure_http=allow_insecure_http,
+        allow_private_networks=allow_private_networks,
     )
 
 
-class _HttpxRFC3161TimeStamper(TimeStamper):
+class _HttpxRFC3161TimeStamper(TimeStamper):  # pylint: disable=too-few-public-methods
     def __init__(self, config: _TsaConfig):
+        """Implement the   init   operation."""
         super().__init__()
         self._config = config
 
-    async def async_request_tsa_response(self, req: tsp.TimeStampReq) -> tsp.TimeStampResp:
-        headers = set_tsp_headers({})
+    def _verify_value(self) -> bool | str:
         verify: bool | str = True
         if self._config.ca_bundle_path is not None:
             verify = str(self._config.ca_bundle_path)
+        return verify
 
+    async def _post_tsa_request(self, req: tsp.TimeStampReq) -> httpx.Response:
         try:
+            limits = httpx.Limits(max_connections=2, max_keepalive_connections=1)
+            transport = PolicyEnforcingAsyncTransport(
+                allow_insecure_http=self._config.allow_insecure_http,
+                allow_private_networks=self._config.allow_private_networks,
+                verify=self._verify_value(),
+                trust_env=self._config.trust_env,
+                limits=limits,
+            )
             auth: tuple[str | bytes, str | bytes] | None = self._config.auth
 
             async with httpx.AsyncClient(
                 timeout=timeouts_for(self._config.timeout_seconds),
-                limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
-                verify=verify,
+                limits=limits,
+                verify=self._verify_value(),
                 trust_env=self._config.trust_env,
                 follow_redirects=False,
                 auth=auth,
+                transport=transport,
             ) as client:
-                response = await client.post(
+                return await client.post(
                     self._config.url,
                     content=req.dump(),
-                    headers=headers,
+                    headers=set_tsp_headers({}),
                 )
         except httpx.RequestError as exc:
             raise TransientError("Error communicating with RFC3161 TSA") from exc
 
+    @staticmethod
+    def _validate_http_response(response: httpx.Response) -> None:
         if 500 <= response.status_code <= 599:
             raise TransientError(f"RFC3161 TSA returned HTTP {response.status_code}")
 
@@ -94,27 +119,31 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
         if content_type.lower() != "application/timestamp-reply":
             raise PermanentError("RFC3161 TSA response is malformed (unexpected Content-Type)")
 
+    @staticmethod
+    def _parse_tsa_response(response: httpx.Response) -> tsp.TimeStampResp:
         try:
-            tsa_resp = tsp.TimeStampResp.load(response.content)
-        except Exception as exc:  # noqa: BLE001 - parse errors are not retryable
+            return tsp.TimeStampResp.load(response.content)
+        except (TypeError, ValueError) as exc:
             raise PermanentError("RFC3161 TSA response is not a valid TimeStampResp") from exc
 
-        # Validate the TSA response status before returning.
+    @staticmethod
+    def _validate_tsa_status(tsa_resp: tsp.TimeStampResp) -> None:
         status_info = tsa_resp["status"]
         status_value = status_info["status"].native
-        _ACCEPTED_STATUSES = {"granted", "granted_with_mods"}
-        if status_value not in _ACCEPTED_STATUSES:
+        accepted_statuses = {"granted", "granted_with_mods"}
+        if status_value not in accepted_statuses:
             status_string = ""
             try:
                 status_string = status_info["status_string"].native or ""
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 pass
             raise PermanentError(
                 f"RFC3161 TSA rejected the request: status={status_value!r}"
                 f"{f' ({status_string})' if status_string else ''}"
             )
 
-        # Verify that the nonce in the response matches the one we sent.
+    @staticmethod
+    def _validate_nonce(req: tsp.TimeStampReq, tsa_resp: tsp.TimeStampResp) -> None:
         req_nonce = req["nonce"].native if req["nonce"].contents is not None else None
         tst_info = tsa_resp["time_stamp_token"]["content"]["encap_content_info"]["content"].parsed
         resp_nonce = tst_info["nonce"].native if tst_info["nonce"].contents is not None else None
@@ -123,10 +152,23 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
                 f"RFC3161 TSA response nonce mismatch: expected {req_nonce}, got {resp_nonce}"
             )
 
+    async def async_request_tsa_response(self, req: tsp.TimeStampReq) -> tsp.TimeStampResp:
+        """Implement the async request tsa response operation."""
+        response = await self._post_tsa_request(req)
+        self._validate_http_response(response)
+        tsa_resp = self._parse_tsa_response(response)
+        self._validate_tsa_status(tsa_resp)
+        self._validate_nonce(req, tsa_resp)
         return tsa_resp
 
 
-def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> TimeStamper:
+def build_timestamper(
+    signing: SigningSettings,
+    *,
+    trust_env: bool = False,
+    allow_insecure_http: bool = False,
+    allow_private_networks: bool = False,
+) -> TimeStamper:
     """
     Build a pyHanko-compatible RFC3161 timestamper.
 
@@ -136,5 +178,10 @@ def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> T
       - PermanentError for misconfiguration or non-retryable TSA responses.
       - TransientError for network issues and HTTP 5xx responses.
     """
-    config = _load_tsa_config(signing, trust_env=trust_env)
+    config = _load_tsa_config(
+        signing,
+        trust_env=trust_env,
+        allow_insecure_http=allow_insecure_http,
+        allow_private_networks=allow_private_networks,
+    )
     return _HttpxRFC3161TimeStamper(config)

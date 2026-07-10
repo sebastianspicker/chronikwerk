@@ -21,6 +21,14 @@ assignees: ""
 - OS:
 - Python:
 - Deployment: (docker/systemd/other)
+- Archiver version/commit:
+- Zammad version:
+
+## Impact
+
+- Affected endpoint/job/operation:
+- Expected status/tag/storage result:
+- Actual status/tag/storage result:
 
 ## Logs / Output
 
@@ -31,4 +39,3 @@ paste relevant logs here
 ## Additional context
 
 <!-- Anything else that helps -->
-

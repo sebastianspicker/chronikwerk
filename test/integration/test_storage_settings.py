@@ -15,11 +15,12 @@ from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.config.settings import Settings
 
 
-def _settings(storage_root: str, *, fsync: bool = True, atomic_write: bool = True) -> Settings:
+def _settings(storage_root: str, *, fsync: bool = True) -> Settings:
     return Settings.from_mapping(
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": storage_root, "fsync": fsync, "atomic_write": atomic_write},
+            "storage": {"root": storage_root, "fsync": fsync},
+            "hardening": {"transport": {"allow_private_networks": True}},
         }
     )
 
@@ -72,7 +73,7 @@ def _expected_pdf_path(
     fixed_now: datetime,
 ) -> Path:
     filename = build_filename_from_pattern(
-        settings.storage.path_policy.filename_pattern,
+        settings.storage.filename_pattern,
         ticket_number=ticket_number,
         timestamp_utc=fixed_now.date().isoformat(),
     )
@@ -82,7 +83,7 @@ def _expected_pdf_path(
 def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = _settings(str(tmp_path), fsync=False)
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     def _fsync(_: int) -> None:
         raise AssertionError("os.fsync must not be called when storage.fsync=false")
@@ -93,31 +94,6 @@ def test_storage_fsync_can_be_disabled(tmp_path: Path, monkeypatch: pytest.Monke
     with respx.mock:
         _mock_happy_zammad(ticket_id=123)
         asyncio.run(process_ticket("delivery-fsync-off-1", payload, settings))
-
-    expected_pdf = _expected_pdf_path(
-        tmp_path, settings=settings, ticket_number="20240123", fixed_now=fixed_now
-    )
-    assert expected_pdf.exists()
-
-
-def test_storage_atomic_write_can_be_disabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    settings = _settings(str(tmp_path), atomic_write=False)
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
-
-    import tempfile
-
-    def _mkstemp(*args, **kwargs):  # noqa: ANN001 - test shim
-        raise AssertionError("tempfile.mkstemp must not be called when storage.atomic_write=false")
-
-    monkeypatch.setattr(tempfile, "mkstemp", _mkstemp)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-atomic-off-1"}
-    with respx.mock:
-        _mock_happy_zammad(ticket_id=123)
-        asyncio.run(process_ticket("delivery-atomic-off-1", payload, settings))
 
     expected_pdf = _expected_pdf_path(
         tmp_path, settings=settings, ticket_number="20240123", fixed_now=fixed_now

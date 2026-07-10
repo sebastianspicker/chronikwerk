@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Imports occur after app construction to patch the lifecycle under test.
+# pylint: disable=import-outside-toplevel,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from collections.abc import Generator
 
 import pytest
@@ -37,8 +41,8 @@ def test_global_exception_handler_returns_consistent_api_error(tmp_path) -> None
     assert response.headers.get("X-Request-Id") == "req-boom-1"
 
 
-def test_lifespan_with_settings_no_redis(tmp_path) -> None:
-    """lifespan runs through startup/shutdown when settings has no redis_url."""
+def test_lifespan_with_settings(tmp_path) -> None:
+    """lifespan runs through startup/shutdown with settings."""
     settings = make_settings(str(tmp_path))
 
     from fastapi import FastAPI

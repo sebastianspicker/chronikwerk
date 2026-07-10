@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import os
@@ -5,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from zammad_pdf_archiver.config.settings import Settings
@@ -21,11 +21,6 @@ def _default_config_path_if_present() -> Path | None:
     candidate = Path("config/config.yaml")
     return candidate if candidate.exists() else None
 
-
-def _load_dotenv_if_present() -> None:
-    dotenv_path = Path(".env")
-    if dotenv_path.is_file():
-        load_dotenv(dotenv_path=dotenv_path, override=False)
 
 
 def _resolve_config_path(config_path: str | Path | None) -> tuple[Path | None, bool]:
@@ -60,9 +55,7 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
 
 
 def load_settings(*, config_path: str | Path | None = None) -> Settings:
-    """Load settings from YAML config, env vars, and .env, then validate."""
-    _load_dotenv_if_present()
-
+    """Load settings using env > YAML/init > dotenv > file secrets > defaults."""
     path, explicit = _resolve_config_path(config_path)
     yaml_data: dict[str, Any] = {}
 
@@ -93,9 +86,9 @@ def load_settings(*, config_path: str | Path | None = None) -> Settings:
 
 
 _HINTS: dict[str, str] = {
-    "zammad.base_url": "Set `ZAMMAD_BASE_URL` (or YAML `zammad.base_url`).",
-    "zammad.api_token": "Set `ZAMMAD_API_TOKEN` (or YAML `zammad.api_token`).",
-    "storage.root": "Set `STORAGE_ROOT` (or YAML `storage.root`).",
+    "zammad.base_url": "Set `ZAMMAD__BASE_URL` (or YAML `zammad.base_url`).",
+    "zammad.api_token": "Set `ZAMMAD__API_TOKEN` (or YAML `zammad.api_token`).",
+    "storage.root": "Set `STORAGE__ROOT` (or YAML `storage.root`).",
 }
 
 

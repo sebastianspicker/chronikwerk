@@ -14,6 +14,10 @@ assignees: ""
 
 <!-- What would you like to see? -->
 
+## Operator impact
+
+<!-- Does this change API behavior, storage layout, tags, security posture, or deployment? -->
+
 ## Alternatives considered
 
 <!-- Optional -->
@@ -21,4 +25,3 @@ assignees: ""
 ## Additional context
 
 <!-- Optional -->
-

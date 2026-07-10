@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import io
@@ -16,11 +17,8 @@ def _scrub_event_dict(_: Any, __: str, event_dict: dict[str, Any]) -> dict[str, 
     return redact_settings_dict(event_dict)
 
 
-def _resolve_log_format(json_logs_default: bool) -> str:
-    raw = (os.environ.get("LOG_FORMAT") or "").strip().lower()
-    if raw in {"json", "human"}:
-        return raw
-    return "json" if json_logs_default else "human"
+def _resolve_log_format() -> str:
+    return "human"
 
 
 def _resolve_log_level(log_level_default: str) -> str:
@@ -43,22 +41,8 @@ def _redacted_exception_formatter(sio: Any, exc_info: Any) -> None:
     sio.write(scrub_secrets_in_text(rendered.getvalue()))
 
 
-def configure_logging(
-    *,
-    log_level: str = "INFO",
-    json_logs: bool = False,
-    log_format: str | None = None,
-) -> None:
-    """
-    Minimal structlog + stdlib logging configuration.
-
-    LOG_FORMAT=human|json can override `json_logs`.
-    """
-    resolved_level = _resolve_log_level(log_level).upper()
-    configured_format = _coerce_log_format(log_format)
-    resolved_format = configured_format or _resolve_log_format(json_logs)
-
-    shared_processors: list[Any] = [
+def _shared_processors(resolved_format: str) -> list[Any]:
+    processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -66,21 +50,18 @@ def configure_logging(
         _scrub_event_dict,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
     ]
-
     if resolved_format == "json":
-        shared_processors.insert(4, structlog.processors.format_exc_info)
+        processors.insert(4, structlog.processors.format_exc_info)
+    return processors
 
-    renderer: Any
+
+def _renderer(resolved_format: str) -> Any:
     if resolved_format == "json":
-        renderer = structlog.processors.JSONRenderer()
-    else:
-        renderer = structlog.dev.ConsoleRenderer(exception_formatter=_redacted_exception_formatter)
+        return structlog.processors.JSONRenderer()
+    return structlog.dev.ConsoleRenderer(exception_formatter=_redacted_exception_formatter)
 
-    formatter = ProcessorFormatter(
-        processor=renderer,
-        foreign_pre_chain=shared_processors,
-    )
 
+def _configure_root_logger(*, formatter: ProcessorFormatter, resolved_level: str) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 
@@ -88,6 +69,8 @@ def configure_logging(
     root.handlers = [handler]
     root.setLevel(resolved_level)
 
+
+def _configure_noisy_loggers() -> None:
     for noisy in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(noisy)
         logger.handlers = []
@@ -96,6 +79,30 @@ def configure_logging(
     # WeasyPrint triggers verbose fontTools INFO logs during subsetting.
     # Keep app logs operationally useful by default.
     logging.getLogger("fontTools").setLevel(logging.WARNING)
+
+
+def configure_logging(
+    *,
+    log_level: str = "INFO",
+    log_format: str | None = None,
+) -> None:
+    """
+    Minimal structlog + stdlib logging configuration.
+
+    `log_format` may be "human" or "json".
+    """
+    resolved_level = _resolve_log_level(log_level).upper()
+    configured_format = _coerce_log_format(log_format)
+    resolved_format = configured_format or _resolve_log_format()
+
+    shared_processors = _shared_processors(resolved_format)
+    formatter = ProcessorFormatter(
+        processor=_renderer(resolved_format),
+        foreign_pre_chain=shared_processors,
+    )
+
+    _configure_root_logger(formatter=formatter, resolved_level=resolved_level)
+    _configure_noisy_loggers()
 
     structlog.configure(
         processors=[

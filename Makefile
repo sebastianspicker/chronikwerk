@@ -1,4 +1,4 @@
-.PHONY: dev lint format typecheck test test-fast test-cov test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa build verify ci dev-setup clean demo-up demo-seed demo-shots demo-down demo-reset demo-all
+.PHONY: dev lint format typecheck test test-fast test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa codacy-local build coverage-test config-check clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -25,31 +25,37 @@ typecheck:
 	python -m mypy src test
 
 test:
-	@set -e; python -m pytest -q || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	python -m pytest -q
 
 test-fast:
-	@set -e; python -m pytest -q test/static test/unit || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	python -m pytest -q test/static test/unit
 
 test-unit:
-	@set -e; python -m pytest -q test/unit || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	python -m pytest -q test/unit
 
 test-int:
-	@set -e; python -m pytest -q test/integration || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	python -m pytest -q test/integration
 
 test-nfr:
-	@set -e; python -m pytest -q test/nfr || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	python -m pytest -q test/nfr
 
 test-all:
-	@set -e; python -m pytest -q || (test $$? -eq 5 && echo 'No tests collected (bootstrap stage)' && exit 0)
+	python -m pytest -q
+
+coverage-test:
+	python -m pytest -q test/static test/unit test/integration test/nfr \
+		--cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-fail-under=85
+
+config-check:
+	python -m pytest -q test/unit/test_config_schema_sync.py test/unit/test_env_example_sanity.py
 
 test-e2e:
-	python scripts/e2e/docker_api_smoke.py
-
-test-cov:
-	python -m pytest --cov=src/zammad_pdf_archiver --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=85
+	python scripts/e2e/docker_api_smoke.py \
+		--compose-file infra/e2e/docker-compose.yml \
+		--dataset infra/e2e/dataset.json
 
 docs-check:
-	@for p in README.md docs/01-architecture.md docs/08-operations.md docs/api.md docs/config-reference.md docs/PRD.md; do \
+	@for p in README.md $$(find docs -name '*.md' -type f | sort); do \
 		test -f $$p || (echo "Missing docs: $$p" && exit 1); \
 	done; \
 	echo "docs-check: OK"
@@ -60,36 +66,36 @@ docker-smoke:
 qa: lint smoke
 	python -m ruff check src --select C901
 	python -m mypy . --config-file pyproject.toml
-	python -m pytest -q test/static test/unit test/integration test/nfr
+	$(MAKE) coverage-test
+
+codacy-local:
+	bash scripts/ci/run_local_codacy.sh
 
 build:
 	python -m build
 
-verify: qa build
+clean-wheel-smoke: build
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	python -m venv "$$tmp/venv"; \
+	"$$tmp/venv/bin/python" -m pip install --no-cache-dir dist/*.whl; \
+	"$$tmp/venv/bin/python" -c 'from zammad_pdf_archiver.app.server import create_app; print(create_app)'
 
-ci: lint typecheck test
+production-image-smoke:
+	bash scripts/ci/production_image_smoke.sh
+
+verify-core: lint
+	python -m ruff check src --select C901
+	python -m mypy . --config-file pyproject.toml
+	$(MAKE) coverage-test
+	$(MAKE) config-check
+	$(MAKE) smoke docs-check build clean-wheel-smoke
+
+verify: verify-core production-image-smoke test-e2e
+
+ci: verify
 
 clean:
-	rm -rf build dist .eggs *.egg-info .pytest_cache .coverage htmlcov .mypy_cache
+	rm -rf build dist .eggs *.egg-info .pytest_cache .coverage .coverage_html htmlcov .mypy_cache
 	rm -rf .ruff_cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name '*.py[co]' -delete 2>/dev/null || true
-
-demo-up:
-	docker compose -f docker-compose.demo.yml up -d --build
-	docker compose -f docker-compose.demo.yml ps
-
-demo-seed:
-	python scripts/demo/seed_demo_data.py
-
-demo-shots:
-	@python scripts/demo/capture_screenshots.py --check-only >/dev/null 2>&1 || (echo "Playwright setup missing. Run: python -m playwright install chromium" && exit 1)
-	python scripts/demo/capture_screenshots.py
-
-demo-reset:
-	python -c "import urllib.request; req=urllib.request.Request('http://127.0.0.1:18090/__demo/reset', method='POST', data=b''); print(urllib.request.urlopen(req, timeout=5).read().decode('utf-8'))"
-
-demo-down:
-	docker compose -f docker-compose.demo.yml down -v --remove-orphans
-
-demo-all: demo-up demo-seed demo-shots

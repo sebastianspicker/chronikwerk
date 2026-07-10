@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# json is imported with the error-path fixture to keep the serialization case explicit.
+# pylint: disable=import-outside-toplevel,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,12 +13,12 @@ from fastapi import Request
 from starlette.datastructures import State
 
 from test.support.settings_factory import make_settings
-from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_auth
+from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_token
 from zammad_pdf_archiver.config.settings import Settings
 
 
 def _make_request(state_settings: Settings | None = None, include_settings: bool = True) -> Request:
-    """Build a minimal Starlette Request with app.state.settings set."""
+    """Build a Starlette Request with app.state.settings set."""
     app_state = State()
     if include_settings:
         app_state.settings = state_settings
@@ -76,36 +80,34 @@ def test_settings_or_503_raises_503_when_no_state_attr() -> None:
 
 
 # ---------------------------------------------------------------------------
-# verify_bearer_auth
+# verify_bearer_token
 # ---------------------------------------------------------------------------
 
 
-def test_verify_bearer_auth_raises_503_when_no_token_configured(tmp_path) -> None:
-    """When no admin.bearer_token is configured, verify_bearer_auth raises 503."""
-    # Default make_settings produces no admin.bearer_token
+def test_verify_bearer_token_raises_503_when_no_token_configured(tmp_path) -> None:
     s = make_settings(str(tmp_path))
     req = _make_authed_request("any-token")
 
     with pytest.raises(Exception) as exc_info:
-        verify_bearer_auth(req, s)
+        verify_bearer_token(req, s.retry_bearer_token, missing_detail="retry_token_not_configured")
     assert exc_info.value.status_code == 503  # type: ignore[attr-defined]
 
 
-def test_verify_bearer_auth_raises_401_for_wrong_token(tmp_path) -> None:
-    s = make_settings(str(tmp_path), overrides={"admin": {"bearer_token": "correct-token"}})
+def test_verify_bearer_token_raises_401_for_wrong_token(tmp_path) -> None:
+    s = make_settings(str(tmp_path), overrides={"retry_bearer_token": "correct-token"})
     req = _make_authed_request("wrong-token")
 
     with pytest.raises(Exception) as exc_info:
-        verify_bearer_auth(req, s)
+        verify_bearer_token(req, s.retry_bearer_token, missing_detail="retry_token_not_configured")
     assert exc_info.value.status_code == 401  # type: ignore[attr-defined]
 
 
-def test_verify_bearer_auth_succeeds_for_correct_token(tmp_path) -> None:
-    s = make_settings(str(tmp_path), overrides={"admin": {"bearer_token": "my-secret"}})
+def test_verify_bearer_token_succeeds_for_correct_token(tmp_path) -> None:
+    s = make_settings(str(tmp_path), overrides={"retry_bearer_token": "my-secret"})
     req = _make_authed_request("my-secret")
 
     # Should not raise
-    verify_bearer_auth(req, s)
+    verify_bearer_token(req, s.retry_bearer_token, missing_detail="retry_token_not_configured")
 
 
 # ---------------------------------------------------------------------------
@@ -121,14 +123,14 @@ def test_api_error_basic() -> None:
 def test_api_error_with_hint() -> None:
     resp = api_error(400, "Bad input", hint="Check the payload")
     import json
-    body = json.loads(resp.body)
+    body = json.loads(bytes(resp.body))
     assert "Check the payload" in body.get("hint", "")
 
 
 def test_api_error_with_request_id() -> None:
     resp = api_error(422, "Validation failed", request_id="req-abc")
     import json
-    body = json.loads(resp.body)
+    body = json.loads(bytes(resp.body))
     assert body.get("request_id") == "req-abc"
 
 

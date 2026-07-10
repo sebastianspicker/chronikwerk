@@ -1,9 +1,10 @@
+"""Project module."""
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal, NoReturn, TypeVar
+from typing import Any, Literal, NoReturn
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
@@ -17,8 +18,11 @@ from zammad_pdf_archiver.adapters.zammad.errors import (
     ServerError,
 )
 from zammad_pdf_archiver.adapters.zammad.models import Article, TagList, Ticket
-
-_T = TypeVar("_T")
+from zammad_pdf_archiver.config.transport import (
+    PolicyEnforcingAsyncTransport,
+    validate_url_policy,
+    validate_url_policy_async,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +37,14 @@ class _RetryPolicy:
         return self.backoff_base_seconds * (2**attempt)
 
 
+@dataclass(frozen=True, slots=True)
+class _ZammadRuntimeOptions:
+    retry_policy: _RetryPolicy | None = None
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    http_client: httpx.AsyncClient | None = None
+    allow_private_networks: bool = False
+
+
 class AsyncZammadClient:
     """Async HTTP client for the Zammad REST API with retry and error mapping."""
 
@@ -44,10 +56,11 @@ class AsyncZammadClient:
         timeout_seconds: float = 10.0,
         verify_tls: bool = True,
         trust_env: bool = False,
-        retry_policy: _RetryPolicy | None = None,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        http_client: httpx.AsyncClient | None = None,
+        allow_insecure_http: bool = False,
+        allow_private_networks: bool = False,
+        _runtime: _ZammadRuntimeOptions | None = None,
     ) -> None:
+        """Implement the   init   operation."""
         url = httpx.URL(base_url)
         if not url.scheme or not url.host:
             raise ValueError("base_url must include scheme and host, e.g. https://zammad.example")
@@ -56,26 +69,48 @@ class AsyncZammadClient:
         base_path = url.path.rstrip("/") + "/"
         self._base_url = url.copy_with(path=base_path)
 
-        self._sleep = sleep
-        self._retry = retry_policy or _RetryPolicy()
-
-        self._owns_http_client = http_client is None
-        self._http = http_client or httpx.AsyncClient(
-            base_url=self._base_url,
-            headers={
-                "Authorization": f"Token token={api_token}",
-                "Accept": "application/json",
-            },
-            timeout=timeouts_for(timeout_seconds),
-            limits=httpx.Limits(
-                max_connections=10,
-                max_keepalive_connections=5,
-                keepalive_expiry=30.0,
-            ),
-            verify=verify_tls,
-            trust_env=trust_env,
-            follow_redirects=False,
+        runtime = _runtime or _ZammadRuntimeOptions()
+        self._sleep = runtime.sleep
+        self._retry = runtime.retry_policy or _RetryPolicy()
+        self._allow_insecure_http = allow_insecure_http
+        # An injected runtime may explicitly opt into private test fixtures;
+        # production-owned clients use the safe constructor default.
+        self._allow_private_networks = allow_private_networks or runtime.allow_private_networks
+        validate_url_policy(
+            base_url,
+            allow_insecure_http=allow_insecure_http,
+            allow_private_networks=allow_private_networks,
         )
+
+        self._owns_http_client = runtime.http_client is None
+        limits = httpx.Limits(
+            max_connections=10,
+            max_keepalive_connections=5,
+            keepalive_expiry=30.0,
+        )
+        if runtime.http_client is not None:
+            self._http = runtime.http_client
+        else:
+            transport = PolicyEnforcingAsyncTransport(
+                allow_insecure_http=allow_insecure_http,
+                allow_private_networks=self._allow_private_networks,
+                verify=verify_tls,
+                trust_env=trust_env,
+                limits=limits,
+            )
+            self._http = httpx.AsyncClient(
+                base_url=self._base_url,
+                headers={
+                    "Authorization": f"Token token={api_token}",
+                    "Accept": "application/json",
+                },
+                timeout=timeouts_for(timeout_seconds),
+                limits=limits,
+                verify=verify_tls,
+                trust_env=trust_env,
+                follow_redirects=False,
+                transport=transport,
+            )
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if it was created by this instance."""
@@ -83,6 +118,7 @@ class AsyncZammadClient:
             await self._http.aclose()
 
     async def __aenter__(self) -> AsyncZammadClient:
+        """Enter the asynchronous client context."""
         return self
 
     async def __aexit__(
@@ -91,6 +127,7 @@ class AsyncZammadClient:
         exc: BaseException | None,
         tb: Any,
     ) -> None:
+        """Close the asynchronous client context."""
         await self.aclose()
 
     async def get_ticket(self, ticket_id: int) -> Ticket:
@@ -151,6 +188,7 @@ class AsyncZammadClient:
                 "content_type": "text/html",
                 "internal": True,
             },
+            max_retries=0,
         )
         return Article.model_validate(resp)
 
@@ -160,15 +198,6 @@ class AsyncZammadClient:
         items = TypeAdapter(list[dict[str, Any]]).validate_python(resp)
         return [Article.model_validate(item) for item in items]
 
-    async def get_attachment_content(
-        self, ticket_id: int, article_id: int, attachment_id: int
-    ) -> bytes:
-        """Download attachment binary.
-        GET /api/v1/ticket_attachment/{ticket}/{article}/{attachment}."""
-        path = f"api/v1/ticket_attachment/{ticket_id}/{article_id}/{attachment_id}"
-        response = await self._request("GET", path, headers={"Accept": "*/*"})
-        return response.content
-
     async def _request_json(
         self,
         method: Literal["GET", "POST"],
@@ -176,8 +205,11 @@ class AsyncZammadClient:
         *,
         params: dict[str, str] | None = None,
         json: Any | None = None,
+        max_retries: int | None = None,
     ) -> Any:
-        response = await self._request(method, path, params=params, json=json)
+        response = await self._request(
+            method, path, params=params, json=json, max_retries=max_retries
+        )
         try:
             return response.json()
         except ValueError as exc:  # pragma: no cover
@@ -194,13 +226,21 @@ class AsyncZammadClient:
         params: dict[str, str] | None = None,
         json: Any | None = None,
         headers: dict[str, str] | None = None,
+        max_retries: int | None = None,
     ) -> httpx.Response:
         # Total attempts = 1 initial + max_retries
-        max_attempts = self._retry.max_retries + 1
+        retries = self._retry.max_retries if max_retries is None else max(0, max_retries)
+        max_attempts = retries + 1
         retry_count = 0
 
         while True:
             try:
+                if not self._owns_http_client:
+                    await validate_url_policy_async(
+                        str(self._base_url),
+                        allow_insecure_http=self._allow_insecure_http,
+                        allow_private_networks=self._allow_private_networks,
+                    )
                 response = await self._http.request(
                     method, path, params=params, json=json, headers=headers
                 )
@@ -208,6 +248,7 @@ class AsyncZammadClient:
                 retry_count = await self._retry_after_timeout_or_transport(
                     retry_count=retry_count,
                     max_attempts=max_attempts,
+                    max_retries=retries,
                     exc=exc,
                     timeout_path=path,
                 )
@@ -216,6 +257,7 @@ class AsyncZammadClient:
                 retry_count = await self._retry_after_timeout_or_transport(
                     retry_count=retry_count,
                     max_attempts=max_attempts,
+                    max_retries=retries,
                     exc=exc,
                 )
                 continue
@@ -224,6 +266,7 @@ class AsyncZammadClient:
                 response,
                 retry_count=retry_count,
                 max_attempts=max_attempts,
+                max_retries=retries,
             )
             if retry_delay is not None:
                 await self._sleep(retry_delay)
@@ -240,10 +283,11 @@ class AsyncZammadClient:
         *,
         retry_count: int,
         max_attempts: int,
+        max_retries: int,
         exc: Exception,
         timeout_path: str | None = None,
     ) -> int:
-        if retry_count >= self._retry.max_retries:
+        if retry_count >= max_retries:
             if isinstance(exc, httpx.TimeoutException):
                 path = timeout_path or "<unknown>"
                 raise ServerError(
@@ -259,16 +303,17 @@ class AsyncZammadClient:
         *,
         retry_count: int,
         max_attempts: int,
+        max_retries: int,
     ) -> float | None:
         status = response.status_code
         if status >= 500:
-            if retry_count >= self._retry.max_retries:
+            if retry_count >= max_retries:
                 raise ServerError(
                     f"Zammad server error (status={status}) after {max_attempts} attempts"
                 )
             return self._retry.backoff_seconds(retry_count)
         if status == 429:
-            if retry_count >= self._retry.max_retries:
+            if retry_count >= max_retries:
                 raise RateLimitError(
                     f"Zammad rate limit (status=429) after {max_attempts} attempts"
                 )

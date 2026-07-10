@@ -106,6 +106,18 @@ def test_zero_retries() -> None:
     asyncio.run(run())
 
 
+def test_negative_retries_rejected() -> None:
+    async def run() -> None:
+        op = AsyncMock()
+
+        with pytest.raises(ValueError, match="max_retries must be >= 0"):
+            await async_retry(op, max_retries=-1)
+
+        op.assert_not_called()
+
+    asyncio.run(run())
+
+
 def test_custom_backoff() -> None:
     """Custom backoff_base and backoff_factor values work correctly."""
 

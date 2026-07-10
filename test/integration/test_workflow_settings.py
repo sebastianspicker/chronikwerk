@@ -19,6 +19,7 @@ def _settings(storage_root: str, *, workflow: dict | None = None) -> Settings:
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
             "storage": {"root": storage_root},
+            "hardening": {"transport": {"allow_private_networks": True}},
             "workflow": workflow or {},
         }
     )
@@ -85,7 +86,7 @@ def _mock_tag_routes() -> tuple[respx.Route, respx.Route]:
 def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"trigger_tag": "pdf:archive"})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-1"}
 
@@ -119,7 +120,7 @@ def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
 
         date_iso = fixed_now.date().isoformat()
         expected_filename = build_filename_from_pattern(
-            settings.storage.path_policy.filename_pattern,
+            settings.storage.filename_pattern,
             ticket_number="20240123",
             timestamp_utc=date_iso,
         )
@@ -130,7 +131,7 @@ def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
 def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"require_tag": False})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-2"}
 
@@ -156,7 +157,7 @@ def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
 
         date_iso = fixed_now.date().isoformat()
         expected_filename = build_filename_from_pattern(
-            settings.storage.path_policy.filename_pattern,
+            settings.storage.filename_pattern,
             ticket_number="20240123",
             timestamp_utc=date_iso,
         )
@@ -167,7 +168,7 @@ def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
 def test_workflow_acknowledge_on_success_can_be_disabled(tmp_path, monkeypatch) -> None:
     settings = _settings(str(tmp_path), workflow={"acknowledge_on_success": False})
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(process_ticket_module, "_now_utc", lambda: fixed_now)
+    monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
 
     payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-3"}
 

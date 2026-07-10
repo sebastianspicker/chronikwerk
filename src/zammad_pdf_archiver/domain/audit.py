@@ -1,27 +1,16 @@
+# pylint: disable=import-outside-toplevel
+"""Project module."""
 from __future__ import annotations
 
-import hashlib
 import sys
+from dataclasses import dataclass
 from datetime import datetime
-from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+from zammad_pdf_archiver._version import __version__
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.time_utils import format_timestamp_utc
-
-
-def compute_sha256(data: bytes) -> str:
-    if not isinstance(data, (bytes, bytearray)):
-        raise TypeError("data must be bytes")
-    return hashlib.sha256(data).hexdigest()
-
-
-def _safe_get_service_version(dist_name: str) -> str | None:
-    try:
-        return metadata.version(dist_name)
-    except Exception:
-        return None
 
 
 def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
@@ -29,7 +18,6 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
     Best-effort extraction of a signing certificate fingerprint (SHA-256 hex).
     """
     try:
-        from cryptography import x509
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.serialization import pkcs12
 
@@ -43,62 +31,55 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
             if cert is None:
                 return None
             return cert.fingerprint(hashes.SHA256()).hex()
-
-        cert_path = signing_settings.pades.cert_path
-        if cert_path is not None:
-            raw = Path(cert_path).read_bytes()
-            if raw.lstrip().startswith(b"-----BEGIN"):
-                cert = x509.load_pem_x509_certificate(raw)
-            else:
-                cert = x509.load_der_x509_certificate(raw)
-            return cert.fingerprint(hashes.SHA256()).hex()
-    except Exception:
+    except (ImportError, OSError, TypeError, ValueError):
         return None
     return None
 
 
-def _get_fingerprint(signing_settings: SigningSettings) -> str | None:
-    if not signing_settings.enabled:
-        return None
-    return _extract_cert_fingerprint(signing_settings)
+@dataclass(frozen=True)
+class AuditRecordInput:
+    """Implement the AuditRecordInput operation."""
+    ticket_id: int
+    ticket_number: str
+    title: str | None
+    created_at: datetime
+    storage_path: str
+    sha256: str
 
 
 def build_audit_record(
+    record: AuditRecordInput,
     *,
-    ticket_id: int,
-    ticket_number: str,
-    title: str | None,
-    created_at: datetime,
-    storage_path: str,
-    sha256: str,
     signing_settings: SigningSettings | None = None,
     service_name: str = "zammad-pdf-archiver",
-    service_dist_name: str = "zammad-pdf-archiver",
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-serialisable audit record for a successfully archived ticket."""
     signing_enabled = signing_settings.enabled if signing_settings else False
     tsa_used = signing_settings.timestamp.enabled if signing_settings else False
-    cert_fingerprint = _get_fingerprint(signing_settings) if signing_settings else None
+    cert_fingerprint = (
+        _extract_cert_fingerprint(signing_settings)
+        if signing_settings is not None and signing_settings.enabled
+        else None
+    )
 
     signing: dict[str, Any] = {"enabled": signing_enabled, "tsa_used": tsa_used}
     if cert_fingerprint:
         signing["cert_fingerprint"] = cert_fingerprint
 
-    version = _safe_get_service_version(service_dist_name)
     service: dict[str, Any] = {
         "name": service_name,
-        "version": version or "unknown",
+        "version": __version__,
         "python": sys.version.split(" ", 1)[0],
     }
 
     out: dict[str, Any] = {
-        "ticket_id": int(ticket_id),
-        "ticket_number": str(ticket_number),
-        "title": (title or "").strip(),
-        "created_at": format_timestamp_utc(created_at),
-        "storage_path": str(storage_path),
-        "sha256": str(sha256),
+        "ticket_id": int(record.ticket_id),
+        "ticket_number": str(record.ticket_number),
+        "title": (record.title or "").strip(),
+        "created_at": format_timestamp_utc(record.created_at),
+        "storage_path": str(record.storage_path),
+        "sha256": str(record.sha256),
         "signing": signing,
         "service": service,
     }

@@ -35,7 +35,7 @@ class TestErrorCodeAndHint:
 
     def test_archive_path_empty_all_segments(self) -> None:
         exc = ValueError("all segments were empty after strip")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "empty_archive_path"
 
     def test_archive_path_must_be_string(self) -> None:
@@ -46,39 +46,27 @@ class TestErrorCodeAndHint:
 
     def test_archive_path_indexed_type(self) -> None:
         exc = TypeError("archive_path[2] must be a string, got int")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "invalid_archive_path"
-
-    def test_path_not_allowed(self) -> None:
-        exc = ValueError("allow_prefixes: path '/evil' not allowed")
-        code, hint = error_code_and_hint(exc)
-        assert code == "path_not_allowed"
-        assert "allow_prefixes" in hint.lower()
-
-    def test_allow_prefixes_empty(self) -> None:
-        exc = ValueError("allow_prefixes is empty")
-        code, hint = error_code_and_hint(exc)
-        assert code == "allow_prefixes_empty"
-        assert "allow_prefixes" in hint.lower()
 
     def test_missing_owner_login(self) -> None:
         exc = ValueError("owner.login is required")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "missing_user_login"
 
     def test_missing_updated_by_login(self) -> None:
         exc = ValueError("updated_by.login is required")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "missing_user_login"
 
     def test_missing_archive_user(self) -> None:
         exc = ValueError("archive_user is required in fixed mode")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "missing_archive_user"
 
     def test_missing_archive_user_mode(self) -> None:
         exc = ValueError("archive_user_mode is invalid")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "missing_archive_user"
 
     def test_invalid_filename_pattern(self) -> None:
@@ -89,27 +77,27 @@ class TestErrorCodeAndHint:
 
     def test_invalid_filename_segment(self) -> None:
         exc = ValueError("filename segment cannot be blank")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "invalid_filename"
 
     def test_invalid_filename_must_not(self) -> None:
         exc = ValueError("filename must not contain slashes")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "invalid_filename"
 
     def test_path_segment_validation(self) -> None:
         exc = ValueError("path segment must not be empty")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "path_validation"
 
     def test_path_separators_validation(self) -> None:
         exc = ValueError("path separators not allowed in segments")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "path_validation"
 
     def test_dot_segments_validation(self) -> None:
         exc = ValueError("dot segments are forbidden in path")
-        code, hint = error_code_and_hint(exc)
+        code, _ = error_code_and_hint(exc)
         assert code == "path_validation"
 
     def test_generic_fallback(self) -> None:

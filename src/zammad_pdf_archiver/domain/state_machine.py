@@ -1,33 +1,13 @@
+"""Project module."""
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Protocol
+from typing import Any
 
 TRIGGER_TAG = "pdf:sign"
 PROCESSING_TAG = "pdf:processing"
 DONE_TAG = "pdf:signed"
 ERROR_TAG = "pdf:error"
-
-# Race condition warning for multi-instance deployments:
-#
-# The tag-based state machine (should_process -> apply_processing -> apply_done/apply_error)
-# is NOT atomic.  Between the should_process() check and the apply_processing() tag write,
-# another instance may read the same tags and also decide to process the ticket.  This can
-# lead to duplicate processing.
-#
-# In single-instance deployments the in-process ticket lock is sufficient.  In multi-instance
-# deployments you MUST use a distributed lock / idempotency backend (Redis) to prevent
-# duplicate work.  Specifically, configure:
-#   - idempotency_backend = "redis"
-#   - execution_backend  = "redis_queue"
-#
-# Without Redis-backed coordination, two instances can race on the tag check and both enter
-# the processing pipeline for the same ticket.
-
-
-class TicketTagger(Protocol):
-    async def add_tag(self, ticket_id: int, tag: str) -> None: ...
-    async def remove_tag(self, ticket_id: int, tag: str) -> None: ...
 
 
 def should_process(
@@ -36,7 +16,7 @@ def should_process(
     trigger_tag: str = TRIGGER_TAG,
     require_trigger_tag: bool = True,
 ) -> bool:
-    """Return True if the ticket's tags indicate it should be processed."""
+    """Implement the should process operation."""
     tag_set = set(tags or [])
     if DONE_TAG in tag_set:
         return False
@@ -46,13 +26,13 @@ def should_process(
 
 
 async def apply_processing(
-    client: TicketTagger,
+    client: Any,
     ticket_id: int,
     *,
     trigger_tag: str = TRIGGER_TAG,
     force_reprocess: bool = False,
 ) -> None:
-    """Idempotent tag transition: any state -> processing."""
+    """Implement the apply processing operation."""
     if force_reprocess:
         await client.remove_tag(ticket_id, DONE_TAG)
     await client.remove_tag(ticket_id, ERROR_TAG)
@@ -60,10 +40,8 @@ async def apply_processing(
     await client.add_tag(ticket_id, PROCESSING_TAG)
 
 
-async def apply_done(
-    client: TicketTagger, ticket_id: int, *, trigger_tag: str = TRIGGER_TAG
-) -> None:
-    """Idempotent tag transition: any state -> done."""
+async def apply_done(client: Any, ticket_id: int, *, trigger_tag: str = TRIGGER_TAG) -> None:
+    """Implement the apply done operation."""
     await client.remove_tag(ticket_id, PROCESSING_TAG)
     await client.remove_tag(ticket_id, ERROR_TAG)
     await client.remove_tag(ticket_id, trigger_tag)
@@ -71,13 +49,13 @@ async def apply_done(
 
 
 async def apply_error(
-    client: TicketTagger,
+    client: Any,
     ticket_id: int,
     *,
     keep_trigger: bool = True,
     trigger_tag: str = TRIGGER_TAG,
 ) -> None:
-    """Idempotent tag transition: any state -> error."""
+    """Implement the apply error operation."""
     await client.remove_tag(ticket_id, PROCESSING_TAG)
     await client.remove_tag(ticket_id, DONE_TAG)
     if keep_trigger:

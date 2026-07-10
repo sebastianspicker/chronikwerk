@@ -20,6 +20,7 @@ htmlcov/
 .venv/
 venv/
 pip-wheel-metadata/
+uv.lock
 
 # Environment / secrets
 .env
@@ -29,6 +30,21 @@ pip-wheel-metadata/
 .python-version
 .direnv/
 
+# Local YAML configuration and signing material
+config/config.yaml
+config/*.yaml
+!config/config.example.yaml
+config/*.yml
+!config/config.example.yml
+config/*.local.yaml
+config/*.local.yml
+config/*.override.yaml
+config/*.override.yml
+*.pfx
+*.p12
+*.pem
+*.key
+
 # OS
 .DS_Store
 Thumbs.db
@@ -36,6 +52,16 @@ Thumbs.db
 # Local runtime artifacts
 *.log
 coverage.json
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.dump
+*.backup
+*.bak
+*.orig
+*.rej
 
 # IDEs
 .idea/
@@ -43,10 +69,39 @@ coverage.json
 .cursor/
 .kilo/
 
-# AI development artifacts (local use)
+# Local/private data and generated demonstrations
+/archive/
+/data/
+/exports/
+/output/
+private/
+examples/demo/
+docs/assets/demo/
+
+# Local audit, analysis, and planning artifacts
 audit/
 docs/audit/
+docs/archive/
+docs/agent/
+docs/source-audit/
 plans/
+/deprecated/
+reports/
+.jscpd/
+*.sarif
+*-local.json
+*-local.sarif
+codacy.json
+codacy-*.json
+RELEASE_EVIDENCE_*.md
+CODEBASE_AUDIT_REPORT_*.md
+REMEDIATION_PLAN_*.md
+docs/*-ledger.md
+docs/*-status.md
+docs/*-status-ledger.md
+docs/*-remediation-status.md
+
+# Local agent and harness state
 progress.md
 .claude/
 .codex/
@@ -57,6 +112,4 @@ AGENTS.md
 AUDIT.md
 HARNESS_PRINCIPLES.md
 code_review.md
-docs/agent/
-docs/source-audit/
 scripts/topology_inventory.sh

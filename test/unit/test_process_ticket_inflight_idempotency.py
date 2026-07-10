@@ -1,125 +1,44 @@
 from __future__ import annotations
 
+# Tests deliberately exercise private idempotency note helpers.
+# pylint: disable=protected-access
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
-from zammad_pdf_archiver.adapters.zammad.models import TagList
+from test.support.process_ticket_helpers import (
+    InflightRetryProcessTicketClient,
+    fake_store_ticket_files,
+    flaky_then_successful_render,
+    process_ticket_payload,
+    process_ticket_settings,
+)
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
-from zammad_pdf_archiver.config.settings import Settings
-from zammad_pdf_archiver.domain.errors import TransientError
-
-
-def _settings(storage_root: Path) -> Settings:
-    return Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": str(storage_root)},
-            "hardening": {
-                "webhook": {
-                    "allow_unsigned": True,
-                    "allow_unsigned_when_no_secret": True,
-                }
-            },
-        }
-    )
 
 
 def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
     monkeypatch, tmp_path: Path
 ) -> None:
     ticket_stores.reset_for_tests()
-
-    class _FakeClient:
-        _tags: set[str] = {"pdf:sign"}
-        _success_notes = 0
-        _error_notes = 0
-
-        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
-            pass
-
-        async def __aenter__(self) -> _FakeClient:
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
-            return None
-
-        async def get_ticket(self, ticket_id: int) -> SimpleNamespace:
-            return SimpleNamespace(
-                id=ticket_id,
-                number="12345",
-                title="idempotency",
-                owner=SimpleNamespace(login="owner.user"),
-                updated_by=SimpleNamespace(login="agent.user"),
-                preferences=SimpleNamespace(
-                    custom_fields={
-                        "archive_path": "Support > Team",
-                        "archive_user_mode": "owner",
-                    }
-                ),
-            )
-
-        async def list_tags(self, ticket_id: int) -> TagList:  # noqa: ARG002
-            await asyncio.sleep(0.05)
-            return TagList(sorted(type(self)._tags))
-
-        async def remove_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
-            type(self)._tags.discard(tag)
-
-        async def add_tag(self, ticket_id: int, tag: str) -> None:  # noqa: ARG002
-            type(self)._tags.add(tag)
-
-        async def list_articles(self, ticket_id: int) -> list[SimpleNamespace]:  # noqa: ARG002
-            return []
-
-        async def create_internal_article(
-            self, ticket_id: int, subject: str, body_html: str  # noqa: ARG002
-        ) -> SimpleNamespace:
-            if "archiver error" in subject:
-                type(self)._error_notes += 1
-            if "PDF archived" in subject:
-                type(self)._success_notes += 1
-            return SimpleNamespace(id=type(self)._error_notes + type(self)._success_notes)
+    InflightRetryProcessTicketClient.reset()
 
     monkeypatch.setattr(
         "zammad_pdf_archiver.app.jobs.process_ticket.AsyncZammadClient",
-        _FakeClient,
+        InflightRetryProcessTicketClient,
     )
-
-    calls = {"n": 0}
-
-    async def _flaky_build_and_render_pdf(
-        client, ticket, tags, ticket_id: int, settings  # noqa: ANN001, ARG001
-    ) -> SimpleNamespace:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise TransientError("transient-render-failure")
-        return SimpleNamespace(
-            pdf_bytes=b"%PDF-1.7\n%%EOF\n",
-            snapshot=SimpleNamespace(ticket=ticket),
-        )
-
-    def _fake_store_ticket_files(*args, **kwargs) -> SimpleNamespace:  # noqa: ANN002, ANN003
-        target_path = tmp_path / "archived.pdf"
-        return SimpleNamespace(
-            target_path=target_path,
-            sidecar_path=target_path.with_suffix(".pdf.json"),
-            sha256_hex="deadbeef",
-            size_bytes=42,
-        )
-
     monkeypatch.setattr(
         "zammad_pdf_archiver.app.jobs.process_ticket.build_and_render_pdf",
-        _flaky_build_and_render_pdf,
+        flaky_then_successful_render(),
     )
     monkeypatch.setattr(
         "zammad_pdf_archiver.app.jobs.process_ticket.store_ticket_files",
-        _fake_store_ticket_files,
+        fake_store_ticket_files(tmp_path),
     )
 
-    settings = _settings(tmp_path)
-    payload = {"ticket": {"id": 321}}
+    settings = process_ticket_settings(tmp_path)
+    payload = process_ticket_payload()
 
     async def _run_concurrent_once() -> None:
         await asyncio.gather(
@@ -133,5 +52,5 @@ def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
     asyncio.run(process_ticket("d-2", payload, settings))
 
     # Expected: first run writes one error note; retry run succeeds and writes one success note.
-    assert _FakeClient._error_notes == 1
-    assert _FakeClient._success_notes == 1
+    assert InflightRetryProcessTicketClient._error_notes == 1
+    assert InflightRetryProcessTicketClient._success_notes == 1

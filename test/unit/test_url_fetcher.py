@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# The private fetcher is imported only inside the focused contract tests.
+# pylint: disable=import-outside-toplevel,too-few-public-methods
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -39,6 +43,7 @@ def _patch_weasyprint_urls():
             self.allowed_protocols = allowed_protocols
 
         def fetch(self, url, headers=None):
+            del headers
             return URLFetcherResponse(url=url, body=b"data-content", status=200)
 
     mock_module = MagicMock()

@@ -1,3 +1,4 @@
+"""Project module."""
 from html import escape
 
 import structlog
@@ -13,6 +14,53 @@ from zammad_pdf_archiver.config.redact import scrub_secrets_in_text
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 log = structlog.get_logger(__name__)
+
+_ErrorHintRule = tuple[tuple[str, ...], tuple[str, ...], str, str]
+
+_ERROR_HINT_RULES: tuple[_ErrorHintRule, ...] = (
+    (
+        ("archive_path", "missing"),
+        (),
+        "missing_archive_path",
+        "Set custom_fields.archive_path on the ticket.",
+    ),
+    (
+        (),
+        ("archive_path must not be empty", "all segments were empty"),
+        "empty_archive_path",
+        "Set archive_path to at least one non-empty segment.",
+    ),
+    (
+        (),
+        ("archive_path must be a string", "archive_path["),
+        "invalid_archive_path",
+        "Use a string or list of strings for archive_path.",
+    ),
+    (
+        (),
+        ("owner.login", "updated_by.login"),
+        "missing_user_login",
+        "Ensure ticket has owner/updated_by with login.",
+    ),
+    (
+        (),
+        ("archive_user", "archive_user_mode"),
+        "missing_archive_user",
+        "Set custom_fields.archive_user for fixed mode.",
+    ),
+    (
+        ("filename",),
+        ("pattern", "segment", "must not"),
+        "invalid_filename",
+        "Check filename_pattern and path policy (no ., .., separators).",
+    ),
+    (
+        (),
+        ("path segment", "path separators", "dot segments"),
+        "path_validation",
+        "Check archive_path segments (no ., .., empty, or separators).",
+    ),
+)
 
 
 def _html_field_list(heading: str, fields: list[tuple[str, str]]) -> str:
@@ -53,30 +101,11 @@ def success_note_html(
 def error_code_and_hint(exc: BaseException) -> tuple[str, str]:
     """Return (stable_code, short_hint) for permanent failures (Bug #7)."""
     msg = str(exc).strip().lower()
-    if "archive_path" in msg and "missing" in msg:
-        return ("missing_archive_path", "Set custom_fields.archive_path on the ticket.")
-    if "archive_path must not be empty" in msg or "all segments were empty" in msg:
-        return ("empty_archive_path", "Set archive_path to at least one non-empty segment.")
-    if "archive_path must be a string" in msg or "archive_path[" in msg:
-        return ("invalid_archive_path", "Use a string or list of strings for archive_path.")
-    if "allow_prefixes" in msg and "not allowed" in msg:
-        return ("path_not_allowed", "Check allow_prefixes; archive_path must match a prefix.")
-    if "allow_prefixes is empty" in msg:
-        return (
-            "allow_prefixes_empty",
-            "Configure at least one allow_prefixes entry or leave unset.",
-        )
-    if "owner.login" in msg or "updated_by.login" in msg:
-        return ("missing_user_login", "Ensure ticket has owner/updated_by with login.")
-    if "archive_user" in msg or "archive_user_mode" in msg:
-        return ("missing_archive_user", "Set custom_fields.archive_user for fixed mode.")
-    if "filename" in msg and ("pattern" in msg or "segment" in msg or "must not" in msg):
-        return (
-            "invalid_filename",
-            "Check filename_pattern and path policy (no ., .., separators).",
-        )
-    if "path segment" in msg or "path separators" in msg or "dot segments" in msg:
-        return ("path_validation", "Check archive_path segments (no ., .., empty, or separators).")
+    for required_terms, optional_terms, code, hint in _ERROR_HINT_RULES:
+        if all(term in msg for term in required_terms) and (
+            not optional_terms or any(term in msg for term in optional_terms)
+        ):
+            return (code, hint)
     return ("permanent_error", "")
 
 
@@ -112,6 +141,7 @@ def error_note_html(
 
 
 def concise_exc_message(exc: BaseException) -> str:
+    """Implement the concise exc message operation."""
     text = f"{exc.__class__.__name__}: {exc}"
     text = text.strip()
     text = scrub_secrets_in_text(text)
@@ -128,28 +158,34 @@ def action_hint(exc: BaseException, *, classified: TransientError | PermanentErr
         )
 
     # PermanentError: aim for a concrete operator action.
-    if isinstance(exc, AuthError):
-        return "Fix Zammad API token/permissions (HTTP 401/403), then reapply the pdf:sign macro."
-    if isinstance(exc, NotFoundError):
-        return (
+    for error_type, hint in (
+        (
+            AuthError,
+            "Fix Zammad API token/permissions (HTTP 401/403), then reapply the pdf:sign macro.",
+        ),
+        (
+            NotFoundError,
             "Ticket/resource not found in Zammad. Verify the ticket still exists, then reapply "
-            "pdf:sign."
-        )
-    if isinstance(exc, (ServerError, RateLimitError)):
-        return (
+            "pdf:sign.",
+        ),
+        (
+            (ServerError, RateLimitError),
             "Upstream Zammad error was treated as permanent by policy. "
-            "If the issue is resolved, reapply the pdf:sign macro to reprocess."
-        )
-    if isinstance(exc, PermissionError):
-        return (
+            "If the issue is resolved, reapply the pdf:sign macro to reprocess.",
+        ),
+        (
+            PermissionError,
             "Storage permission denied. Check network share mount options, ownership, and ACLs, "
-            "then reapply the pdf:sign macro."
-        )
-    if isinstance(exc, (ValueError, TypeError)):
-        return (
+            "then reapply the pdf:sign macro.",
+        ),
+        (
+            (ValueError, TypeError),
             "Fix ticket fields / path policy validation, then reapply the pdf:sign macro "
-            "(and optionally remove pdf:error for clarity)."
-        )
+            "(and optionally remove pdf:error for clarity).",
+        ),
+    ):
+        if isinstance(exc, error_type):
+            return hint
     return (
         "Non-retryable failure by policy. Fix the underlying issue and reapply the pdf:sign macro "
         "(and optionally remove pdf:error)."

@@ -22,4 +22,3 @@ def test_nfr7_dockerfile_exists() -> None:
     assert dockerfile.is_file(), "Dockerfile required for deployment"
     content = dockerfile.read_text()
     assert "python" in content.lower() or "uvicorn" in content.lower()
-    assert 'uv pip install --no-cache-dir ".[redis]"' in content

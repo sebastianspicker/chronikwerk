@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# Pylint classifies the in-repository test package as standard-library code.
+# Keep the third-party pytest import adjacent to its fixture usage instead.
+# pylint: disable=wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import os
 import socket
 import sys
@@ -7,16 +12,18 @@ from pathlib import Path
 
 import pytest
 
+from test.support.credentials import fake_credential
+
 
 def pytest_configure() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     src_path = repo_root / "src"
     sys.path.insert(0, str(src_path))
-    
+
     # Set required env vars for Settings validation during test collection
-    os.environ["ZAMMAD_BASE_URL"] = "http://localhost:8080"
-    os.environ["ZAMMAD_API_TOKEN"] = "fake-token"
-    os.environ["STORAGE_ROOT"] = "/tmp/zammad-pdf-archiver-test"
+    os.environ["ZAMMAD__BASE_URL"] = "http://localhost:8080"
+    os.environ["ZAMMAD__API_TOKEN"] = fake_credential("api-token")
+    os.environ["STORAGE__ROOT"] = str(repo_root / ".test-storage")
 
 
 @pytest.fixture(autouse=True)

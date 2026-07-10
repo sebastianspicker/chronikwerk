@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# The shutdown tests inspect the module-private task registry as their contract.
+# pylint: disable=protected-access
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
 
 from zammad_pdf_archiver.app.jobs import shutdown as shutdown_module
@@ -109,9 +113,13 @@ def test_wait_for_tasks_timeout() -> None:
 
     async def _run() -> None:
         stalled = asyncio.Event()
+        cancelled = asyncio.Event()
 
         async def _never_finish() -> None:
-            await stalled.wait()  # will never be set
+            try:
+                await stalled.wait()  # will never be set
+            finally:
+                cancelled.set()
 
         task = asyncio.create_task(_never_finish())
         shutdown_module.track_task(task)
@@ -122,6 +130,7 @@ def test_wait_for_tasks_timeout() -> None:
         # After timeout the task must be cancelled and removed from tracking.
         assert task.cancelled()
         assert task not in shutdown_module._TASKS  # noqa: SLF001
+        assert cancelled.is_set()
 
     shutdown_module._TASKS.clear()  # noqa: SLF001
     try:

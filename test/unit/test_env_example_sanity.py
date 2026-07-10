@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# pytest is imported only by the platform-specific test branch.
+# pylint: disable=import-outside-toplevel
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from pathlib import Path
 
 
@@ -15,7 +19,7 @@ def _parse_env_example(repo_root: Path) -> dict[str, str]:
     except PermissionError:
         import pytest
         pytest.skip("PermissionError reading .env.example (system locked)")
-        
+
     for raw_line in lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -39,7 +43,4 @@ def test_env_example_uses_canonical_zammad_base_url_var() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     env = _parse_env_example(repo_root)
 
-    # The service supports legacy aliases, but the example should be canonical.
-    assert "ZAMMAD_BASE_URL" in env
-    assert "ZAMMAD_URL" not in env
-
+    assert "ZAMMAD__BASE_URL" in env

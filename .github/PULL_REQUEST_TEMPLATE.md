@@ -8,12 +8,12 @@
 
 ## Testing
 
-- [ ] `make lint`
-- [ ] `make test`
+- [ ] `make qa`
+- [ ] `make docs-check`
 
 ## Checklist
 
 - [ ] Docs updated (if applicable)
+- [ ] Public docs and local-only files are in the correct lanes
 - [ ] No secrets added
 - [ ] Ops/Security impact documented (if applicable)
-

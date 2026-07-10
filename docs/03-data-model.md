@@ -1,54 +1,62 @@
-# 03 – Data Model
+# 03 - Data Model
 
-This document describes the runtime data objects that matter for rendering, signing/timestamping, and
-storage/audit output.
+This page describes the data objects that matter for rendering, storage, and
+audit output.
 
-## Snapshot (render input)
+## Snapshot
 
-The renderer operates on a strict “snapshot” object:
-- it is built from Zammad API data
-- it is the single source of truth for HTML templates
-- it keeps attachments as **metadata** in the snapshot/PDF by default; optional **attachment binary inclusion** (configurable) can store binary content in the snapshot and write files to storage (see [config-reference](config-reference.md) `pdf.include_attachment_binary`)
+The renderer consumes a normalized snapshot built from Zammad ticket, article,
+tag, and user data.
 
-Example (human-friendly):
-- [`examples/ticket-snapshot.sample.json`](../examples/ticket-snapshot.sample.json)
+Example:
 
-The core fields used by the shipped templates are documented in [`05-pdf-rendering.md`](05-pdf-rendering.md).
+- [examples/ticket-snapshot.sample.json](../examples/ticket-snapshot.sample.json)
 
-### Path-related fields
+Core template fields:
 
-The following fields drive output placement (see [`04-path-policy.md`](04-path-policy.md)):
-- `ticket.custom_fields.archive_path` (string split on `>` or list of strings)
-- `ticket.custom_fields.archive_user_mode` (`owner` | `current_agent` | `fixed`)
-- (only for `fixed`) `ticket.custom_fields.archive_user`
+- `ticket.id`
+- `ticket.number`
+- `ticket.title`
+- `ticket.created_at`
+- `ticket.updated_at`
+- `ticket.customer`
+- `ticket.owner`
+- `ticket.tags`
+- `ticket.custom_fields`
+- `articles[]`
 
-## Audit sidecar JSON (storage metadata)
+Each article may include attachment metadata (`filename`, `size`, content type,
+and identifiers). Attachment binary content is intentionally not persisted by
+the storage layer; the metadata is rendered in the PDF only.
 
-For every archived PDF, the service writes an audit record next to it:
+## Path Fields
 
-`<pdf-filename>.json`
+Path placement is derived from ticket custom fields:
 
-Purpose:
-- provide a machine-readable record of what was written and when
-- store the SHA-256 checksum for integrity checks
-- store signing/timestamp flags and (best-effort) signer certificate fingerprint
+- `ticket.custom_fields.archive_path`
+- `ticket.custom_fields.archive_user_mode`
+- `ticket.custom_fields.archive_user` when mode is `fixed`
 
-Fields (current):
-- `ticket_id` (int)
-- `ticket_number` (string)
-- `title` (string; empty string if missing)
-- `created_at` (UTC timestamp when the archive record was created)
-- `storage_path` (full path where the PDF was written)
-- `sha256` (hex)
-- `signing`:
-  - `enabled` (bool)
-  - `tsa_used` (bool)
-  - `cert_fingerprint` (string; optional SHA-256 hex of signer certificate)
-- `service`:
-  - `name`
-  - `version` (may be `"unknown"` in non-packaged deployments)
-  - `python` (runtime Python version)
+See [04 - Path Policy](04-path-policy.md).
 
-Operational note:
-- The PDF signature validation scripts (`scripts/ops/verify-pdf.sh`) validate the embedded signature and
-  timestamp token (if present). The audit sidecar checksum validates the on-disk file integrity.
+## Audit Sidecar
+
+For every archived PDF, the service writes a JSON sidecar next to the PDF:
+
+```text
+Ticket-123_20260207T120000Z.pdf
+Ticket-123_20260207T120000Z.pdf.json
+```
+
+The sidecar records:
+
+- ticket ID and number
+- title
+- archive timestamp
+- storage path
+- SHA-256 checksum
+- signing/timestamp status
+- service metadata
+
+The sidecar is for operational audit and integrity checks; it is not a durable
+database.

@@ -20,8 +20,6 @@ def make_settings(
     storage_root: str,
     *,
     secret: str | None = None,
-    allow_unsigned: bool = True,
-    allow_unsigned_when_no_secret: bool = True,
     require_delivery_id: bool = False,
     overrides: dict[str, Any] | None = None,
 ) -> Settings:
@@ -30,10 +28,11 @@ def make_settings(
         "storage": {"root": storage_root},
         "hardening": {
             "webhook": {
-                "allow_unsigned": allow_unsigned,
-                "allow_unsigned_when_no_secret": allow_unsigned_when_no_secret,
                 "require_delivery_id": require_delivery_id,
-            }
+            },
+            # Test fixtures use non-resolvable example hosts and opt into the
+            # explicit internal-network override.
+            "transport": {"allow_private_networks": True},
         },
     }
     if secret is not None:
@@ -41,4 +40,3 @@ def make_settings(
     if overrides:
         data = _deep_merge(data, overrides)
     return Settings.from_mapping(data)
-

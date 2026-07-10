@@ -1,105 +1,86 @@
 from __future__ import annotations
 
-import json
+# The validator is imported after the schema fixture is prepared.
+# pylint: disable=import-outside-toplevel,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
+import re
 from pathlib import Path
+from typing import Any
 
 import yaml
+from pydantic import BaseModel
+
+from test.support.credentials import fake_credential
+from zammad_pdf_archiver.config.settings import Settings
 
 
-def _load_schema(repo_root: Path) -> dict:
-    return json.loads((repo_root / "config" / "config.schema.json").read_text(encoding="utf-8"))
+def test_config_example_is_valid_yaml() -> None:
+    yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
 
 
-def _load_example(repo_root: Path) -> dict:
-    raw = yaml.safe_load((repo_root / "config" / "config.example.yaml").read_text(encoding="utf-8"))
-    assert isinstance(raw, dict)
-    return raw
+def _model_paths(model: type[BaseModel], prefix: str = "") -> set[str]:
+    paths: set[str] = set()
+    for name, field in model.model_fields.items():
+        path = f"{prefix}.{name}" if prefix else name
+        annotation: Any = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            paths.update(_model_paths(annotation, path))
+        else:
+            paths.add(path)
+    return paths
 
 
-def test_config_schema_includes_runtime_settings_extensions() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    schema = _load_schema(repo_root)
-    props = schema["properties"]
-
-    workflow_props = props["workflow"]["properties"]
-    assert "execution_backend" in workflow_props
-    assert "idempotency_backend" in workflow_props
-    assert "redis_url" in workflow_props
-    assert "queue_stream" in workflow_props
-    assert "queue_group" in workflow_props
-    assert "queue_read_block_ms" in workflow_props
-    assert "queue_read_count" in workflow_props
-    assert "queue_retry_max_attempts" in workflow_props
-    assert "queue_retry_backoff_seconds" in workflow_props
-    assert "queue_dlq_stream" in workflow_props
-    assert "history_stream" in workflow_props
-    assert "history_retention_maxlen" in workflow_props
-
-    fields_props = props["fields"]["properties"]
-    assert "archive_user" in fields_props
-
-    pdf_props = props["pdf"]["properties"]
-    assert "article_limit_mode" in pdf_props
-    assert "include_attachment_binary" in pdf_props
-    assert "max_attachment_bytes_per_file" in pdf_props
-    assert "max_total_attachment_bytes" in pdf_props
-
-    obs_props = props["observability"]["properties"]
-    assert "metrics_bearer_token" in obs_props
-    assert "healthz_omit_version" in obs_props
-
-    webhook_props = props["hardening"]["properties"]["webhook"]["properties"]
-    assert "allow_unsigned_when_no_secret" in webhook_props
-
-    rate_limit_props = props["hardening"]["properties"]["rate_limit"]["properties"]
-    assert "client_key_header" in rate_limit_props
-
-    transport_props = props["hardening"]["properties"]["transport"]["properties"]
-    assert "allow_local_upstreams" in transport_props
-
-    admin_props = props["admin"]["properties"]
-    assert "enabled" in admin_props
-    assert "bearer_token" in admin_props
-    assert "history_limit" in admin_props
+def _yaml_paths(value: Any, prefix: str = "") -> set[str]:
+    if not isinstance(value, dict):
+        return {prefix}
+    paths: set[str] = set()
+    for key, child in value.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        paths.update(_yaml_paths(child, path))
+    return paths
 
 
-def test_config_example_contains_supported_keys() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    config = _load_example(repo_root)
+def _env_key_paths() -> set[str]:
+    return {path.upper().replace(".", "__") for path in _model_paths(Settings)}
 
-    assert "workflow" in config and isinstance(config["workflow"], dict)
-    assert "execution_backend" in config["workflow"]
-    assert "idempotency_backend" in config["workflow"]
-    assert "redis_url" in config["workflow"]
-    assert "queue_stream" in config["workflow"]
-    assert "queue_group" in config["workflow"]
-    assert "queue_read_block_ms" in config["workflow"]
-    assert "queue_read_count" in config["workflow"]
-    assert "queue_retry_max_attempts" in config["workflow"]
-    assert "queue_retry_backoff_seconds" in config["workflow"]
-    assert "queue_dlq_stream" in config["workflow"]
-    assert "history_stream" in config["workflow"]
-    assert "history_retention_maxlen" in config["workflow"]
 
-    assert "fields" in config and isinstance(config["fields"], dict)
-    assert "archive_user" in config["fields"]
+def test_config_example_constructs_and_validates(tmp_path: Path) -> None:
+    data = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    data["storage"]["root"] = str(tmp_path)
+    data["zammad"]["base_url"] = "https://zammad.example.local"
+    data["zammad"]["api_token"] = fake_credential("api-token")
+    data["zammad"]["webhook_hmac_secret"] = fake_credential("webhook")
+    settings = Settings.from_mapping(data)
+    from zammad_pdf_archiver.config.validate import validate_settings
 
-    assert "pdf" in config and isinstance(config["pdf"], dict)
-    assert "article_limit_mode" in config["pdf"]
-    assert "include_attachment_binary" in config["pdf"]
-    assert "max_attachment_bytes_per_file" in config["pdf"]
-    assert "max_total_attachment_bytes" in config["pdf"]
+    validate_settings(settings)
 
-    assert "observability" in config and isinstance(config["observability"], dict)
-    assert "metrics_bearer_token" in config["observability"]
-    assert "healthz_omit_version" in config["observability"]
 
-    assert "hardening" in config and isinstance(config["hardening"], dict)
-    assert "allow_unsigned_when_no_secret" in config["hardening"]["webhook"]
-    assert "client_key_header" in config["hardening"]["rate_limit"]
-    assert "allow_local_upstreams" in config["hardening"]["transport"]
+def test_accessible_config_key_inventory_has_no_unknown_keys() -> None:
+    known_paths = _model_paths(Settings)
+    yaml_data = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+    assert _yaml_paths(yaml_data) <= known_paths
 
-    assert "admin" in config and isinstance(config["admin"], dict)
-    assert "enabled" in config["admin"]
-    assert "bearer_token" in config["admin"]
-    assert "history_limit" in config["admin"]
+    systemd_text = Path("infra/systemd/zammad-archiver.env").read_text(encoding="utf-8")
+    systemd_keys = {
+        line.split("=", 1)[0].strip()
+        for line in systemd_text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "=" in line
+    }
+    assert systemd_keys - {"ARCHIVER_ENV_FILE", "CONFIG_PATH"} <= _env_key_paths()
+
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    compose_keys = set(compose["services"]["zammad-pdf-archiver"]["environment"])
+    assert compose_keys <= _env_key_paths()
+
+    documented_rows = set(
+        re.findall(
+            r"\| `([^`]+)` \| [^|]+ \| `([A-Z][A-Z0-9_]+)` \|",
+            Path("docs/config-reference.md").read_text(encoding="utf-8"),
+        )
+    )
+    documented_paths = {row[0] for row in documented_rows}
+    documented_env = {row[1] for row in documented_rows}
+    assert documented_env <= _env_key_paths()
+    assert known_paths <= documented_paths

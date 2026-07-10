@@ -1,12 +1,7 @@
+"""Project module."""
 from __future__ import annotations
 
-from prometheus_client import (
-    CONTENT_TYPE_LATEST,
-    REGISTRY,
-    Counter,
-    Histogram,
-    generate_latest,
-)
+from prometheus_client import Counter, Gauge, Histogram
 
 processed_total = Counter(
     "processed_total",
@@ -35,31 +30,15 @@ total_seconds = Histogram(
     "Seconds spent processing a ticket end-to-end.",
 )
 
-queue_enqueued_total = Counter(
-    "queue_enqueued_total",
-    "Number of jobs enqueued to the durable queue.",
+admission_pending = Gauge(
+    "admission_pending",
+    "Number of admitted ticket jobs waiting for a running slot.",
 )
-queue_processed_total = Counter(
-    "queue_processed_total",
-    "Number of queued jobs processed successfully.",
+admission_running = Gauge(
+    "admission_running",
+    "Number of ticket jobs currently running.",
 )
-queue_retried_total = Counter(
-    "queue_retried_total",
-    "Number of queued jobs re-scheduled for retry.",
+admission_rejected_total = Counter(
+    "admission_rejected_total",
+    "Number of ticket jobs rejected because admission capacity was exhausted.",
 )
-queue_failed_total = Counter(
-    "queue_failed_total",
-    "Number of queued jobs that failed to process in a worker.",
-)
-queue_dlq_total = Counter(
-    "queue_dlq_total",
-    "Number of queued jobs moved to dead-letter queue.",
-)
-ticket_lock_redis_failures_total = Counter(
-    "ticket_lock_redis_failures_total",
-    "Number of Redis distributed lock failures when acquiring ticket locks.",
-)
-
-
-def render_latest(*, registry=REGISTRY) -> tuple[bytes, str]:
-    return generate_latest(registry), CONTENT_TYPE_LATEST

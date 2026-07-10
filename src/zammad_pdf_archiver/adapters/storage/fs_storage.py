@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import os
@@ -26,7 +27,7 @@ def _fsync_dir_best_effort(dir_path: Path) -> None:
     try:
         os.fsync(fd)
     except OSError:
-        pass
+        return
     finally:
         os.close(fd)
 
@@ -61,21 +62,58 @@ def write_bytes(target_path: Path, data: bytes, *, storage_root: Path, fsync: bo
         _fsync_dir_best_effort(parent)
 
 
+def write_atomic_bytes(
+    target_path: Path,
+    data: bytes,
+    *,
+    storage_root: Path,
+    fsync: bool = True,
+) -> None:
+    """Durably replace *target_path* without exposing a partially written file."""
+    target, parent = _validate_and_prepare(target_path, storage_root)
+    fd: int | None = None
+    tmp_path: Path | None = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=f".{target.name}.tmp-")
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "wb") as stream:
+            fd = None
+            stream.write(data)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o640)
+            if fsync:
+                os.fsync(stream.fileno())
+        os.replace(tmp_path, target)
+        tmp_path = None
+        if fsync:
+            _fsync_dir_best_effort(parent)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
     """
     Reject target_dir if it traverses a symlink under root (best-effort).
     Note: TOCTOU race is possible (symlink created between check and write).
     """
-    root_resolved = Path(root).resolve(strict=False)
-    dir_resolved = Path(target_dir).resolve(strict=False)
+    root_path = Path(root).absolute()
+    dir_path = Path(target_dir).absolute()
+    root_resolved = root_path.resolve(strict=False)
+    dir_resolved = dir_path.resolve(strict=False)
     ensure_within_root(root_resolved, dir_resolved)
 
     try:
-        relative = dir_resolved.relative_to(root_resolved)
-    except Exception as exc:  # pragma: no cover
+        relative = dir_path.relative_to(root_path)
+    except Exception as exc:  # pragma: no cover  # pylint: disable=broad-exception-caught
         raise ValueError("target path escapes root") from exc
 
-    current = root_resolved
+    current = root_path
     for part in relative.parts:
         current = current / part
         try:
@@ -84,71 +122,6 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
         except OSError as exc:
             # If the path is unreadable, treat it as unsafe.
             raise ValueError("target path validation failed (unreadable component)") from exc
-
-
-def write_atomic_bytes(
-    target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True
-) -> None:
-    """Write data atomically to target_path via a temp file and os.replace within storage_root."""
-    target, parent = _validate_and_prepare(target_path, storage_root)
-
-    tmp_path: Path | None = None
-    fd: int | None = None
-
-    try:
-        fd, tmp_name = tempfile.mkstemp(dir=str(parent), prefix=".tmp-")
-        tmp_path = Path(tmp_name)
-        _write_tmp_file(fd, data, fsync=fsync)
-        fd = None
-
-        _replace_tmp_with_target(tmp_path, target)
-
-        if fsync:
-            _fsync_dir_best_effort(parent)
-    except Exception:
-        _safe_close(fd)
-        _safe_unlink(tmp_path)
-        raise
-
-
-def _write_tmp_file(fd: int, data: bytes, *, fsync: bool) -> None:
-    """Write data to the temp fd with correct permissions, optionally fsyncing."""
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-        f.flush()
-        # Bug #21: set mode on fd before replace so target gets correct permissions.
-        os.fchmod(f.fileno(), 0o640)
-        if fsync:
-            os.fsync(f.fileno())
-
-
-def _replace_tmp_with_target(tmp_path: Path, target: Path) -> None:
-    """Atomically replace target with the temp file; cleans up the temp on failure."""
-    try:
-        os.replace(tmp_path, target)
-    except Exception:
-        _safe_unlink(tmp_path)
-        raise
-
-
-def _safe_close(fd: int | None) -> None:
-    """Close a file descriptor if non-None, swallowing OSError."""
-    if fd is None:
-        return
-    try:
-        os.close(fd)
-    except OSError:
-        pass
-
-
-def _safe_unlink(path: Path | None) -> None:
-    """Remove a file if non-None, swallowing FileNotFoundError and OSError."""
-    if path is None:
-        return
-    try:
-        path.unlink()
-    except (FileNotFoundError, OSError):
-        pass
 
 
 def move_file_within_root(
@@ -173,4 +146,29 @@ def move_file_within_root(
     os.replace(src, dst)
 
     if fsync:
+        if src.parent != dst.parent:
+            _fsync_dir_best_effort(src.parent)
         _fsync_dir_best_effort(dst.parent)
+
+
+def remove_file_within_root(
+    path: Path,
+    *,
+    storage_root: Path,
+    fsync: bool = True,
+    missing_ok: bool = False,
+) -> None:
+    """Remove a non-symlink file under *storage_root* and persist the directory entry."""
+    path = Path(path)
+    ensure_within_root(storage_root, path)
+    _reject_symlinks_under_root(storage_root, path.parent)
+    if path.is_symlink():
+        raise ValueError("refusing to remove symlink under storage root")
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        if not missing_ok:
+            raise
+        return
+    if fsync:
+        _fsync_dir_best_effort(path.parent)

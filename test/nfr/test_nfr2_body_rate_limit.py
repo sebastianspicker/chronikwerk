@@ -1,9 +1,16 @@
 """NFR2: Enforce request body size limit and token-bucket rate limiting on ingest."""
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+# pylint: disable=import-outside-toplevel
 
+# ruff: noqa: I001
+from test.support.process_ticket_helpers import (
+    TEST_WEBHOOK_SECRET,
+    noop_process_ticket,
+    post_signed_json,
+)
 from test.support.settings_factory import make_settings
+from fastapi.testclient import TestClient
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 
@@ -23,6 +30,7 @@ def _settings_body_limit(storage_root: str, max_bytes: int) -> Settings:
 def _settings_rate_limit(storage_root: str) -> Settings:
     return make_settings(
         storage_root,
+        secret=TEST_WEBHOOK_SECRET,
         overrides={
             "hardening": {
                 "rate_limit": {"enabled": True, "rps": 0, "burst": 2},
@@ -47,17 +55,14 @@ def test_nfr2_body_over_limit_returns_413(tmp_path) -> None:
 
 def test_nfr2_rate_limit_returns_429(tmp_path, monkeypatch) -> None:
     """NFR2: Ingest over rate limit must be rejected with 429."""
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:  # noqa: ANN001, ARG001
-        return None
-
     app = create_app(_settings_rate_limit(str(tmp_path)))
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
 
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    monkeypatch.setattr(ingest_route, "process_ticket", noop_process_ticket)
     client = TestClient(app)
     payload = {"ticket": {"id": 1}}
-    assert client.post("/ingest", json=payload).status_code == 202
-    assert client.post("/ingest", json=payload).status_code == 202
-    resp = client.post("/ingest", json=payload)
+    assert post_signed_json(client, "/ingest", payload).status_code == 202
+    assert post_signed_json(client, "/ingest", payload).status_code == 202
+    resp = post_signed_json(client, "/ingest", payload)
     assert resp.status_code == 429
     assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}

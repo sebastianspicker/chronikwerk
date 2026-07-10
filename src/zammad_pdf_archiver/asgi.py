@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 from zammad_pdf_archiver.app.server import create_app
@@ -8,7 +9,6 @@ settings = load_settings()  # pragma: no cover
 configure_logging(  # pragma: no cover
     log_level=settings.observability.log_level,
     log_format=settings.observability.log_format,
-    json_logs=settings.observability.json_logs,
 )
 
 app = create_app(settings)  # pragma: no cover

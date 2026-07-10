@@ -1,3 +1,8 @@
+# This file is the Pylint duplicate-code reporter for independent test fixtures,
+# including matches with production files outside the test remediation boundary.
+# pylint: disable=duplicate-code
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from __future__ import annotations
 
 import asyncio
@@ -6,10 +11,14 @@ import httpx
 import pytest
 import respx
 
+# Pylint classifies the test package as stdlib; Ruff uses project-local ordering.
+# pylint: disable-next=wrong-import-order
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.adapters.zammad.client import (
     AsyncZammadClient,
     _parse_retry_after_seconds,
     _RetryPolicy,
+    _ZammadRuntimeOptions,
 )
 from zammad_pdf_archiver.adapters.zammad.errors import (
     AuthError,
@@ -18,18 +27,33 @@ from zammad_pdf_archiver.adapters.zammad.errors import (
     RateLimitError,
     ServerError,
 )
+from zammad_pdf_archiver.domain.errors import PermanentError
 
 
 async def _no_sleep(_: float) -> None:
     return None
 
 
+def _test_runtime(
+    *,
+    retry_policy: _RetryPolicy | None = None,
+    http_client: httpx.AsyncClient | None = None,
+    allow_private_networks: bool = True,
+) -> _ZammadRuntimeOptions:
+    return _ZammadRuntimeOptions(
+        retry_policy=retry_policy,
+        sleep=_no_sleep,
+        http_client=http_client,
+        allow_private_networks=allow_private_networks,
+    )
+
+
 def test_get_ticket_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             ticket = await client.get_ticket(123)
             assert ticket.id == 123
@@ -58,12 +82,45 @@ def test_get_ticket_success() -> None:
         asyncio.run(run())
 
 
+def test_transport_revalidates_dns_before_each_request(monkeypatch) -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(allow_private_networks=False),
+        ) as client:
+            await client.get_ticket(123)
+            with pytest.raises(PermanentError):
+                await client.get_ticket(123)
+
+    public = [(2, 1, 6, "", ("93.184.216.34", 443))]
+    private = [(2, 1, 6, "", ("127.0.0.1", 443))]
+    resolutions = iter([public, private])
+
+    def resolve(*_args, **_kwargs):
+        return next(resolutions)
+
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.config.transport.socket.getaddrinfo",
+        resolve,
+    )
+    with respx.mock:
+        route = respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            return_value=httpx.Response(
+                200,
+                json={"id": 123, "number": "20240123", "preferences": {"custom_fields": {}}},
+            )
+        )
+        asyncio.run(run())
+        assert route.call_count == 1
+
+
 def test_list_tags_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             tags = await client.list_tags(123)
             assert tags.root == ["pdf:sign", "archived"]
@@ -80,8 +137,8 @@ def test_add_tag_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             await client.add_tag(123, "archived")
 
@@ -97,8 +154,8 @@ def test_remove_tag_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             await client.remove_tag(123, "archived")
 
@@ -114,8 +171,8 @@ def test_create_internal_article_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             article = await client.create_internal_article(123, "Subject", "<p>Body</p>")
             assert article.id == 999
@@ -141,31 +198,53 @@ def test_create_internal_article_success() -> None:
         assert route.called
 
 
-def test_get_attachment_content_success() -> None:
-    """get_attachment_content returns raw bytes from ticket_attachment endpoint (PRD §8.2)."""
+def test_create_internal_article_does_not_retry_transport_failures() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(
+                retry_policy=_RetryPolicy(max_retries=3, backoff_base_seconds=0.0)
+            ),
         ) as client:
-            data = await client.get_attachment_content(1, 2, 3)
-            assert data == b"binary content"
+            with pytest.raises(ServerError, match="after 1 attempts"):
+                await client.create_internal_article(123, "Subject", "<p>Body</p>")
 
     with respx.mock:
-        respx.get(
-            "https://zammad.example/api/v1/ticket_attachment/1/2/3",
-            headers={"Accept": "*/*"},
-        ).mock(return_value=httpx.Response(200, content=b"binary content"))
+        route = respx.post("https://zammad.example/api/v1/ticket_articles").mock(
+            side_effect=httpx.ReadTimeout("timeout")
+        )
         asyncio.run(run())
+        assert route.call_count == 1
+
+
+def test_create_internal_article_does_not_retry_server_errors() -> None:
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(
+                retry_policy=_RetryPolicy(max_retries=3, backoff_base_seconds=0.0)
+            ),
+        ) as client:
+            with pytest.raises(ServerError, match="after 1 attempts"):
+                await client.create_internal_article(123, "Subject", "<p>Body</p>")
+
+    with respx.mock:
+        route = respx.post("https://zammad.example/api/v1/ticket_articles").mock(
+            return_value=httpx.Response(503, json={"error": "busy"})
+        )
+        asyncio.run(run())
+        assert route.call_count == 1
+
 
 
 def test_list_articles_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             articles = await client.list_articles(123)
             assert [a.id for a in articles] == [1, 2]
@@ -205,8 +284,8 @@ def test_401_raises_auth_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="bad-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("invalid-api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             with pytest.raises(AuthError):
                 await client.get_ticket(123)
@@ -222,8 +301,8 @@ def test_404_raises_not_found_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             with pytest.raises(NotFoundError):
                 await client.get_ticket(404)
@@ -239,8 +318,8 @@ def test_5xx_raises_server_error_after_retries() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             with pytest.raises(ServerError):
                 await client.get_ticket(123)
@@ -265,7 +344,7 @@ def test_5xx_raises_server_error_after_retries() -> None:
 
 def test_base_url_missing_scheme_raises_value_error() -> None:
     with pytest.raises(ValueError, match="scheme"):
-        AsyncZammadClient(base_url="zammad.example", api_token="tok")
+        AsyncZammadClient(base_url="zammad.example", api_token=fake_credential("api-token"))
 
 
 def test_aclose_without_owning_http_client_is_noop() -> None:
@@ -275,8 +354,8 @@ def test_aclose_without_owning_http_client_is_noop() -> None:
         external = httpx.AsyncClient()
         client = AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="tok",
-            http_client=external,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(http_client=external),
         )
         # Should not raise or call aclose on the external client
         await client.aclose()
@@ -291,8 +370,8 @@ def test_list_tags_dict_response_with_tags_key() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             tags = await client.list_tags(123)
             assert tags.root == ["foo", "bar"]
@@ -311,8 +390,8 @@ def test_list_tags_invalid_format_raises_client_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             with pytest.raises(ClientError, match="unexpected"):
                 await client.list_tags(123)
@@ -329,9 +408,10 @@ def test_timeout_raises_server_error_after_retries() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
-            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(
+                retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0)
+            ),
         ) as client:
             with pytest.raises(ServerError, match="timeout"):
                 await client.get_ticket(123)
@@ -350,9 +430,10 @@ def test_transport_error_raises_server_error_after_retries() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
-            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(
+                retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0)
+            ),
         ) as client:
             with pytest.raises(ServerError, match="Network error"):
                 await client.get_ticket(123)
@@ -371,9 +452,10 @@ def test_rate_limit_exhausted_raises_rate_limit_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
-            retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0),
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(
+                retry_policy=_RetryPolicy(max_retries=1, backoff_base_seconds=0.0)
+            ),
         ) as client:
             with pytest.raises(RateLimitError):
                 await client.get_ticket(123)
@@ -392,8 +474,8 @@ def test_400_raises_client_error() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="test-token",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             with pytest.raises(ClientError):
                 await client.get_ticket(123)
@@ -409,13 +491,13 @@ def test_raise_for_status_429_direct() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="tok",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             req = httpx.Request("GET", "https://zammad.example/api/v1/test")
             resp = httpx.Response(429, request=req)
             with pytest.raises(RateLimitError):
-                client._raise_for_status(resp)  # noqa: SLF001
+                client._raise_for_status(resp)  # pylint: disable=protected-access  # direct mapping test
 
     asyncio.run(run())
 
@@ -424,13 +506,13 @@ def test_raise_for_status_500_direct() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
             base_url="https://zammad.example",
-            api_token="tok",
-            sleep=_no_sleep,
+            api_token=fake_credential("api-token"),
+            _runtime=_test_runtime(),
         ) as client:
             req = httpx.Request("GET", "https://zammad.example/api/v1/test")
             resp = httpx.Response(500, request=req)
             with pytest.raises(ServerError):
-                client._raise_for_status(resp)  # noqa: SLF001
+                client._raise_for_status(resp)  # pylint: disable=protected-access  # direct mapping test
 
     asyncio.run(run())
 

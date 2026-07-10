@@ -5,13 +5,13 @@ import tomllib
 from pathlib import Path
 
 
-def test_nfr10_no_redis_or_celery_in_dependencies() -> None:
-    """NFR10: No Redis/Celery/RabbitMQ as required runtime deps (optional allowed)."""
+def test_nfr10_no_broker_dependencies() -> None:
+    """NFR10: No broker dependencies."""
     repo_root = Path(__file__).resolve().parents[2]
     pyproject = repo_root / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
     deps = data.get("project", {}).get("dependencies", [])
-    forbidden = ("redis", "celery", "rabbitmq", "pika", "kombu")
+    forbidden = ("celery", "rabbitmq", "pika", "kombu")
     for dep in deps:
         dep_lower = dep.lower()
         for word in forbidden:

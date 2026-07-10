@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import re
@@ -7,6 +8,20 @@ from pathlib import Path
 _ALLOWED_SEGMENT_RE = re.compile(r"[A-Za-z0-9._-]")
 _WHITESPACE_RE = re.compile(r"\s+")
 _MULTI_UNDERSCORE_RE = re.compile(r"_+")
+
+
+def _asciiish_char(ch: str) -> str:
+    if unicodedata.category(ch) == "Mn":
+        return ""
+    if ord(ch) < 128:
+        return ch
+    return "_"
+
+
+def _safe_segment_char(ch: str) -> str:
+    if _ALLOWED_SEGMENT_RE.fullmatch(ch) is not None:
+        return ch
+    return "_"
 
 
 def sanitize_segment(seg: str) -> str:
@@ -28,26 +43,11 @@ def sanitize_segment(seg: str) -> str:
     # and replace other non-ASCII characters with "_" (so segments never become empty
     # just because they contain e.g. CJK/emoji).
     normalized = unicodedata.normalize("NFKD", seg)
-    asciiish_chars: list[str] = []
-    for ch in normalized:
-        if unicodedata.category(ch) == "Mn":
-            continue
-        if ord(ch) < 128:
-            asciiish_chars.append(ch)
-        else:
-            asciiish_chars.append("_")
-    normalized = "".join(asciiish_chars)
+    normalized = "".join(_asciiish_char(ch) for ch in normalized)
 
     normalized = _WHITESPACE_RE.sub("_", normalized)
 
-    out_chars: list[str] = []
-    for ch in normalized:
-        if _ALLOWED_SEGMENT_RE.fullmatch(ch) is not None:
-            out_chars.append(ch)
-        else:
-            out_chars.append("_")
-
-    out = "".join(out_chars)
+    out = "".join(_safe_segment_char(ch) for ch in normalized)
     out = _MULTI_UNDERSCORE_RE.sub("_", out)
     if seg and not out:
         out = "_"
@@ -60,6 +60,7 @@ def validate_segments(
     max_depth: int = 10,
     max_length: int = 64,
 ) -> list[str]:
+    """Implement the validate segments operation."""
     if max_depth <= 0:
         raise ValueError("max_depth must be > 0")
     if max_length <= 0:

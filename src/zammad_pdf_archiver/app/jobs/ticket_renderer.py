@@ -1,9 +1,7 @@
-"""Build normalized snapshots from Zammad tickets and render them to PDF."""
-
+"""Build normalized snapshots from Zammad tickets and render them as PDFs."""
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -11,10 +9,7 @@ import structlog
 
 from zammad_pdf_archiver.adapters.pdf.render_pdf import render_pdf
 from zammad_pdf_archiver.adapters.signing.sign_pdf import sign_pdf
-from zammad_pdf_archiver.adapters.snapshot.build_snapshot import (
-    build_snapshot,
-    enrich_attachment_content,
-)
+from zammad_pdf_archiver.adapters.snapshot.build_snapshot import build_snapshot
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 from zammad_pdf_archiver.observability.metrics import render_seconds, sign_seconds
 
@@ -26,32 +21,16 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
-@dataclass(frozen=True)
-class RenderResult:
-    pdf_bytes: bytes
-    snapshot: Snapshot
-
-
-async def build_and_render_pdf(
-    client: AsyncZammadClient,
-    ticket: Ticket,
-    tags: TagList,
+def _cap_articles_if_configured(
+    snapshot: Snapshot,
+    *,
     ticket_id: int,
     settings: Settings,
-) -> RenderResult:
-    """Fetch ticket data, render to PDF, and optionally sign/timestamp."""
-    snapshot = await build_snapshot(
-        client,
-        ticket_id,
-        ticket=ticket,
-        tags=tags,
-    )
-
+) -> Snapshot:
     max_articles = settings.pdf.max_articles
     if (
         settings.pdf.article_limit_mode == "cap_and_continue"
-        and max_articles > 0
-        and len(snapshot.articles) > max_articles
+        and 0 < max_articles < len(snapshot.articles)
     ):
         log.warning(
             "process_ticket.article_limit_capped",
@@ -59,39 +38,45 @@ async def build_and_render_pdf(
             total=len(snapshot.articles),
             cap=max_articles,
         )
-        snapshot = Snapshot(
-            ticket=snapshot.ticket,
-            articles=snapshot.articles[:max_articles],
-        )
+        return snapshot.model_copy(update={"articles": snapshot.articles[:max_articles]})
+    return snapshot
 
-    snapshot = await enrich_attachment_content(
+
+async def build_and_render_pdf(
+    *,
+    client: AsyncZammadClient,
+    ticket_id: int,
+    ticket: Ticket,
+    tags: TagList,
+    settings: Settings,
+) -> tuple[bytes, Snapshot]:
+    """Implement the build and render pdf operation."""
+    snapshot = await build_snapshot(client, ticket_id, ticket=ticket, tags=tags)
+    snapshot = _cap_articles_if_configured(
         snapshot,
-        client,
-        include_attachment_binary=settings.pdf.include_attachment_binary,
-        max_attachment_bytes_per_file=settings.pdf.max_attachment_bytes_per_file,
-        max_total_attachment_bytes=settings.pdf.max_total_attachment_bytes,
+        ticket_id=ticket_id,
+        settings=settings,
     )
 
-    render_start = perf_counter()
-    pdf_bytes = render_pdf(
+    render_started = perf_counter()
+    pdf_bytes = await render_pdf(
         snapshot,
-        settings.pdf.template,
         max_articles=settings.pdf.max_articles,
         locale=settings.pdf.locale,
         timezone=settings.pdf.timezone,
-        templates_root=settings.pdf.templates_root,
     )
-    render_seconds.observe(perf_counter() - render_start)
+    render_seconds.observe(perf_counter() - render_started)
 
     if settings.signing.enabled:
-        sign_start = perf_counter()
-        # pyHanko's synchronous signing helper uses asyncio.run() internally.
-        # Offload to a worker thread to avoid:
-        # "asyncio.run() cannot be called from a running event loop".
-        trust_env = settings.hardening.transport.trust_env
+        sign_started = perf_counter()
         pdf_bytes = await asyncio.to_thread(
-            sign_pdf, pdf_bytes, settings.signing, trust_env=trust_env
+            sign_pdf,
+            pdf_bytes,
+            signing=settings.signing,
+            trust_env=settings.hardening.transport.trust_env,
+            allow_insecure_http=settings.hardening.transport.allow_insecure_http,
+            allow_private_networks=settings.hardening.transport.allow_private_networks,
         )
-        sign_seconds.observe(perf_counter() - sign_start)
+        sign_seconds.observe(perf_counter() - sign_started)
 
-    return RenderResult(pdf_bytes=pdf_bytes, snapshot=snapshot)
+    return pdf_bytes, snapshot

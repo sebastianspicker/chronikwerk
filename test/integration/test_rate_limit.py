@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+# Route/private helper imports occur inside tests to avoid shared rate-limit state.
+# pylint: disable=import-outside-toplevel,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from fastapi.testclient import TestClient
 
+from test.support.process_ticket_helpers import (
+    TEST_WEBHOOK_SECRET,
+    noop_process_ticket,
+    post_signed_json,
+)
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
@@ -10,6 +19,7 @@ from zammad_pdf_archiver.config.settings import Settings
 def _test_settings(storage_root: str) -> Settings:
     return make_settings(
         storage_root,
+        secret=TEST_WEBHOOK_SECRET,
         overrides={
             "hardening": {
                 "rate_limit": {"enabled": True, "rps": 0, "burst": 2},
@@ -20,40 +30,34 @@ def _test_settings(storage_root: str) -> Settings:
 
 
 def test_rate_limit_triggers_on_ingest(tmp_path, monkeypatch) -> None:
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:  # noqa: ANN001, ARG001
-        return None
-
     app = create_app(_test_settings(str(tmp_path)))
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
 
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    monkeypatch.setattr(ingest_route, "process_ticket", noop_process_ticket)
     client = TestClient(app)
 
     payload = {"ticket": {"id": 1}}
-    assert client.post("/ingest", json=payload).status_code == 202
-    assert client.post("/ingest", json=payload).status_code == 202
+    assert post_signed_json(client, "/ingest", payload).status_code == 202
+    assert post_signed_json(client, "/ingest", payload).status_code == 202
 
-    resp = client.post("/ingest", json=payload)
+    resp = post_signed_json(client, "/ingest", payload)
     assert resp.status_code == 429
     assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}
     assert resp.headers.get("X-Request-Id")
 
 
 def test_rate_limit_triggers_on_ingest_batch(tmp_path, monkeypatch) -> None:
-    async def _stub_process_ticket(delivery_id, payload, settings) -> None:  # noqa: ANN001, ARG001
-        return None
-
     app = create_app(_test_settings(str(tmp_path)))
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
 
-    monkeypatch.setattr(ingest_route, "process_ticket", _stub_process_ticket)
+    monkeypatch.setattr(ingest_route, "process_ticket", noop_process_ticket)
     client = TestClient(app)
 
     payload = [{"ticket": {"id": 1}}]
-    assert client.post("/ingest/batch", json=payload).status_code == 202
-    assert client.post("/ingest/batch", json=payload).status_code == 202
+    assert post_signed_json(client, "/ingest/batch", payload).status_code == 202
+    assert post_signed_json(client, "/ingest/batch", payload).status_code == 202
 
-    resp = client.post("/ingest/batch", json=payload)
+    resp = post_signed_json(client, "/ingest/batch", payload)
     assert resp.status_code == 429
     assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}
     assert resp.headers.get("X-Request-Id")

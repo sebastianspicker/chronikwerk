@@ -20,6 +20,5 @@ High-level layout:
   - `snapshot/` – snapshot builder
 - `src/zammad_pdf_archiver/domain/` – domain logic (path policy, audit sidecar schema, idempotency, state machine)
 - `src/zammad_pdf_archiver/config/` – settings model and config loading/validation
-- `src/zammad_pdf_archiver/templates/` – Jinja2 PDF templates (default, minimal, compact)
 
 Operator docs live in `docs/` (start with `docs/08-operations.md`).
