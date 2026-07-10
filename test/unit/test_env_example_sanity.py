@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# pytest is imported only by the platform-specific test branch.
+# pylint: disable=import-outside-toplevel
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from pathlib import Path
 
 
@@ -15,7 +19,7 @@ def _parse_env_example(repo_root: Path) -> dict[str, str]:
     except PermissionError:
         import pytest
         pytest.skip("PermissionError reading .env.example (system locked)")
-        
+
     for raw_line in lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):

@@ -19,6 +19,7 @@ def _settings(storage_root: str, *, workflow: dict | None = None) -> Settings:
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
             "storage": {"root": storage_root},
+            "hardening": {"transport": {"allow_private_networks": True}},
             "workflow": workflow or {},
         }
     )

@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import os
@@ -54,7 +55,7 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
 
 
 def load_settings(*, config_path: str | Path | None = None) -> Settings:
-    """Load settings from YAML config, env vars, and .env, then validate."""
+    """Load settings using env > YAML/init > dotenv > file secrets > defaults."""
     path, explicit = _resolve_config_path(config_path)
     yaml_data: dict[str, Any] = {}
 

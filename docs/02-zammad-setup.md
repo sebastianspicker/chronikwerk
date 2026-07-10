@@ -1,143 +1,84 @@
 # 02 - Zammad Setup
 
-This guide describes the Zammad-side configuration required to use `zammad-pdf-archiver` safely.
+This guide covers Zammad-side setup for sending archive requests to the service.
 
-```mermaid
-flowchart TD
-  A["Create custom fields"] --> B["Core Workflow validation"]
-  B --> C["Agent macro adds trigger tag"]
-  C --> D["Trigger calls /ingest webhook"]
-  D --> E{"Archiver service"}
-  E --> F["In-process worker"]
-  F --> H["Ticket note + final tags"]
-  G --> H
-```
-
-## 1. Prerequisites
+## Prerequisites
 
 - Zammad admin access.
-- Reachable archiver endpoint, for example: `https://archiver.example.com/ingest`.
-- Archiver service configured with one of:
-  - `ZAMMAD__WEBHOOK_HMAC_SECRET` (recommended)
+- Reachable archiver endpoint, for example
+  `https://archiver.example.com/ingest`.
+- `ZAMMAD__WEBHOOK_HMAC_SECRET` configured in the archiver.
 
-## 2. Create Ticket Custom Fields
+## Custom Fields
 
-Required by archiver logic:
-- `archive_path`
-- `archive_user_mode`
+Create ticket fields matching the configured archiver field names.
 
-Required when `archive_user_mode=fixed`:
-- `archive_user`
+| Technical name | Required | Notes |
+| --- | --- | --- |
+| `archive_path` | yes | Target path under `storage.root`; prefer controlled values. |
+| `archive_user_mode` | yes | `owner`, `current_agent`, or `fixed`. |
+| `archive_user` | conditional | Required only for `archive_user_mode=fixed`. |
+| `archive_request` | optional | Useful for Zammad-side workflow conditions. |
 
-Optional helper field for Zammad-side gating:
-- `archive_request` (boolean)
+Admin path: `Admin -> Objects -> Ticket`.
 
-Important mapping notes:
-- `archive_path`, `archive_user_mode`, and `archive_user` field names are configurable in archiver settings.
+## Core Workflow Rules
 
-Suggested field definitions:
+Recommended validation:
 
-| Technical name | Type | Required | Notes |
-|---|---|---|---|
-| `archive_path` | Tree/select/text | yes | Prefer controlled values over free text |
-| `archive_user_mode` | Single select | yes | Allowed: `owner`, `current_agent`, `fixed` |
-| `archive_user` | User/text | conditional | Required only for `fixed` mode |
-| `archive_request` | Boolean | optional | Useful for workflow/trigger filters |
+1. When `archive_request=true`, require `archive_path` and
+   `archive_user_mode`.
+2. When `archive_user_mode=fixed`, require `archive_user`.
 
-Admin path:
-1. `Admin -> Objects -> Ticket`
-2. Add fields with exact technical names.
-3. Ensure visibility for relevant roles/groups.
+Admin path: `Admin -> Core Workflows`.
 
-## 3. Add Core Workflow Validation Rules
+## Agent Macro
 
-Recommended rules:
+Create a macro that:
 
-1. If `archive_request=true`, require `archive_path` and `archive_user_mode`.
-2. If `archive_request=true` and `archive_user_mode=fixed`, require `archive_user`.
+- adds the trigger tag, default `pdf:sign`
+- optionally sets `archive_request=true`
 
-Admin path:
-1. `Admin -> Core Workflows`
-2. Create and save the rules.
-3. Validate with an agent account.
+Admin path: `Admin -> Manage -> Macros`.
 
-## 4. Create Agent Macro
+## Webhook
 
-Create a macro that requests archiving.
+Create a Zammad webhook targeting:
 
-Admin path:
-1. `Admin -> Manage -> Macros`
-2. Example name: `Archive (sign PDF)`
-3. Actions:
-  - add tag `pdf:sign` (or your configured trigger tag)
-  - optionally set `archive_request=true`
-4. Save and assign to agent roles.
+```text
+https://archiver.example.com/ingest
+```
 
-## 5. Configure Webhook
+Configure the same HMAC secret as `ZAMMAD__WEBHOOK_HMAC_SECRET`.
 
-Admin path:
-1. `Admin -> Webhooks` (or `Admin -> Integrations -> Webhooks`, version-dependent)
-2. Create webhook:
-  - URL: `https://archiver.example.com/ingest`
-  - Method: `POST`
-  - Content-Type: `application/json`
-  - Enable HMAC signing if available
+## Trigger
 
-If HMAC is enabled:
-- Generate secret: `openssl rand -hex 32`
-- Set same secret in Zammad and archiver (`ZAMMAD__WEBHOOK_HMAC_SECRET`)
+Create a trigger that sends the webhook when the archive macro updates a
+ticket. Include enough payload data for the service to resolve `ticket.id`.
 
-## 6. Create Trigger
+## Smoke Test
 
-Create a trigger that calls the webhook.
+1. Fill `archive_path` and `archive_user_mode`.
+2. Apply the archive macro.
+3. Confirm Zammad receives HTTP `202`.
+4. Confirm temporary `pdf:processing`.
+5. Confirm final `pdf:signed` or `pdf:error`.
+6. Confirm the internal archiver note.
 
-Minimum safe condition:
-- ticket has trigger tag (`pdf:sign` by default)
+## Common Issues
 
-Recommended additional condition:
-- `archive_request=true`
+### `403 forbidden`
 
-Action:
-- call webhook created in step 5.
-
-## 7. End-to-End Smoke Test
-
-1. Open a test ticket.
-2. Fill required fields:
-  - `archive_path`
-  - `archive_user_mode`
-  - `archive_user` (if mode is `fixed`)
-3. Apply macro.
-4. Confirm webhook returns HTTP `202` in Zammad.
-5. Confirm ticket transitions:
-  - temporary `pdf:processing`
-  - final `pdf:signed` on success or `pdf:error` on failure
-6. Confirm internal note from archiver is added.
-
-## 8. Common Setup Issues
-
-### `403 forbidden` from `/ingest`
-
-- HMAC secret mismatch.
-- Wrong signature header format.
-- Body altered by proxy after signing.
+HMAC secret mismatch, wrong signature header, or body transformation by a proxy.
 
 ### `400 missing_delivery_id`
 
-Cause:
-- archiver has `hardening.webhook.require_delivery_id=true`
-- webhook request did not include `X-Zammad-Delivery`
+The service requires `X-Zammad-Delivery`, but Zammad did not send it.
 
 ### Trigger does not fire
 
-Check:
-- macro actually adds trigger tag
-- trigger conditions match updated ticket state
-- workflow rules are not blocking updates
+Check macro tag changes, trigger conditions, and workflow validation rules.
 
 ### Ticket ends in `pdf:error`
 
-Zammad setup may be correct; failure can be downstream.
-See:
-- [`07-storage.md`](07-storage.md)
-- [`08-operations.md`](08-operations.md)
+Zammad setup may be correct; inspect storage, signing, TSA, and service logs.

@@ -1,103 +1,67 @@
 # 04 - Path Policy
 
-This document defines how archive paths are parsed, validated, sanitized, and constrained under `storage.root`.
+Archive paths are parsed from ticket fields, sanitized, and confined under
+`storage.root`.
 
-## 1. Input Fields
+## Input Fields
 
-### `custom_fields.archive_path` (required)
+### `archive_path`
 
 Accepted formats:
-- string with `>` separators, for example: `Customers > ACME GmbH > 2026`
-- list of strings, for example: `[
-  "Customers", "ACME GmbH", "2026"
-]`
 
-After trimming empty fragments, at least one segment must remain.
+- string with `>` separators, for example `Customers > ACME GmbH > 2026`
+- list of strings, for example `["Customers", "ACME GmbH", "2026"]`
 
-### `custom_fields.archive_user_mode` (optional, default `owner`)
+Empty fragments are ignored, but at least one segment must remain.
 
-Defines the first directory segment (`archive user`):
-- `owner` -> `ticket.owner.login`
-- `current_agent` -> webhook `payload.user.login`, fallback `ticket.updated_by.login`
-- `fixed` -> `custom_fields.archive_user`
+### `archive_user_mode`
 
-## 2. Segment Validation Rules
+Controls the user directory segment:
 
-Applied to raw segments before sanitization:
-- type must be string
-- segment must not be empty
-- segment must not be `.` or `..`
-- segment must not contain `/`, `\\`, or NUL byte
-- max segment length: `64`
-- max depth for `archive_path`: `10`
+- `owner`: `ticket.owner.login`
+- `current_agent`: webhook user login, falling back to `ticket.updated_by.login`
+- `fixed`: `archive_user`
 
-Any violation causes a permanent processing failure.
+## Validation
 
-## 3. Sanitization Rules
+Each segment must:
 
-After validation, each segment is sanitized deterministically:
-- Unicode normalization: NFKD
+- be a string
+- be non-empty after trimming
+- not be `.` or `..`
+- not contain `/`, `\`, or NUL
+- be at most 64 characters
+
+The archive path is limited to 10 segments. Violations are permanent processing
+failures.
+
+## Sanitization
+
+After validation, segments are sanitized deterministically:
+
+- Unicode normalized with NFKD
 - combining marks removed
 - whitespace collapsed to `_`
-- allowed characters: `[A-Za-z0-9._-]`
-- all other characters replaced with `_`
+- only `A-Za-z0-9._-` kept
+- other characters replaced with `_`
 - repeated underscores collapsed
 
 Examples:
-- `Müller` -> `Muller`
-- `Sales Team / EMEA` -> `Sales_Team_EMEA`
-- `客户` -> `_`
-- `🤷` -> `_`
-- fullwidth dot traversal attempt `．．` -> rejected (normalizes to `..` then fails validation)
 
-## 4. Root Containment and Prefix Policy
+| Input | Output |
+| --- | --- |
+| `Müller` | `Muller` |
+| `Sales Team EMEA` | `Sales_Team_EMEA` |
+| `客户` | `_` |
 
-### Root containment
+## Root Confinement
 
-Resolved target path must remain under `storage.root`.
-If a target escapes root, write is rejected.
+The final resolved path must stay under `storage.root`. Escape attempts fail the
+job before writing.
 
-## 5. Filename Policy
+Example output:
 
-Filename template key:
-- `storage.filename_pattern`
-
-Default:
-- `Ticket-{ticket_number}_{timestamp_utc}.pdf`
-
-Supported placeholders:
-- `{ticket_number}`
-- `{timestamp_utc}` (date string provided by job: `YYYY-MM-DD`)
-- `{date_utc}` (alias)
-
-Validation constraints:
-- single segment only (no path separators)
-- max length `255`
-- no NUL bytes
-
-## 6. Final Output Layout
-
-Given `storage.root=/mnt/archive`:
-
-`/mnt/archive/<archive_user>/<archive_path...>/<filename>.pdf`
-
-Audit sidecar:
-
-`/mnt/archive/<archive_user>/<archive_path...>/<filename>.pdf.json`
-
-## 7. Worked Example
-
-Inputs:
-- `archive_user_mode=owner`
-- `ticket.owner.login=john.doe@example.local`
-- `archive_path=Customers > ACME GmbH > 2026`
-- `ticket_number=123456`
-- date: `2026-02-07`
-
-Outputs:
-- user dir: `john.doe_example.local`
-- path: `Customers/ACME_GmbH/2026`
-- PDF:
-  `/mnt/archive/john.doe_example.local/Customers/ACME_GmbH/2026/Ticket-123456_2026-02-07.pdf`
-- sidecar:
-  `/mnt/archive/john.doe_example.local/Customers/ACME_GmbH/2026/Ticket-123456_2026-02-07.pdf.json`
+```text
+/mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_20260207T120000Z.pdf
+/mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_20260207T120000Z.pdf.json
+```

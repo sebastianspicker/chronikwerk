@@ -20,6 +20,7 @@ def _settings(storage_root: str, *, fsync: bool = True) -> Settings:
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
             "storage": {"root": storage_root, "fsync": fsync},
+            "hardening": {"transport": {"allow_private_networks": True}},
         }
     )
 

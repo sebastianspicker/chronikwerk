@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+# Optional signing imports remain local so unrelated audit tests collect without them.
+# pylint: disable=import-outside-toplevel,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import SecretStr
 
+from test.support.credentials import fake_credential
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record
 
@@ -93,9 +98,13 @@ def _cert_fingerprint_from_pfx(path: Path, password: str) -> str:
 
 def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password="secret")
+    _write_test_pfx(pfx_path, password=fake_credential("secret"))
 
-    signing = SigningSettings(enabled=True, pfx_path=pfx_path, pfx_password=SecretStr("secret"))
+    signing = SigningSettings(
+        enabled=True,
+        pfx_path=pfx_path,
+        pfx_password=SecretStr(fake_credential("secret")),
+    )
     audit = build_audit_record(
         _audit_input(
             ticket_id=1,
@@ -107,7 +116,7 @@ def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -
         signing_settings=signing,
     )
 
-    expected = _cert_fingerprint_from_pfx(pfx_path, password="secret")
+    expected = _cert_fingerprint_from_pfx(pfx_path, password=fake_credential("secret"))
     assert audit["signing"]["enabled"] is True
     assert audit["signing"]["cert_fingerprint"] == expected
 

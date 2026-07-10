@@ -1,3 +1,6 @@
+"""Project module."""
+# Pydantic snapshot schemas intentionally expose fields rather than public methods.
+# pylint: disable=too-few-public-methods
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,6 +15,7 @@ class _SnapshotModel(BaseModel):
 
 
 class PartyRef(_SnapshotModel):
+    """Implement the PartyRef operation."""
     id: int | None = None
     login: str | None = None
     email: str | None = None
@@ -19,6 +23,7 @@ class PartyRef(_SnapshotModel):
 
 
 class TicketMeta(_SnapshotModel):
+    """Implement the TicketMeta operation."""
     id: int
     number: str
     title: str | None = None
@@ -31,6 +36,7 @@ class TicketMeta(_SnapshotModel):
 
 
 class AttachmentMeta(_SnapshotModel):
+    """Implement the AttachmentMeta operation."""
     article_id: int
     attachment_id: int | None = None
     filename: str | None = None
@@ -39,6 +45,7 @@ class AttachmentMeta(_SnapshotModel):
 
 
 class Article(_SnapshotModel):
+    """Implement the Article operation."""
     id: int
     created_at: datetime | None = None
     internal: bool = False
@@ -50,5 +57,6 @@ class Article(_SnapshotModel):
 
 
 class Snapshot(_SnapshotModel):
+    """Implement the Snapshot operation."""
     ticket: TicketMeta
     articles: list[Article]

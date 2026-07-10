@@ -21,6 +21,7 @@ def settings_or_503(request: Request) -> Settings:
 
 
 def bearer_auth_matches(request: Request, token: SecretStr) -> bool:
+    """Implement the bearer auth matches operation."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer ") or len(auth) < 8:
         return False
@@ -38,6 +39,7 @@ def verify_bearer_token(
     *,
     missing_detail: str,
 ) -> None:
+    """Implement the verify bearer token operation."""
     if token is None or not token.get_secret_value():
         raise HTTPException(status_code=503, detail=missing_detail)
     if not bearer_auth_matches(request, token):

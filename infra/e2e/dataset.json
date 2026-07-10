@@ -1,0 +1,6 @@
+{
+  "seed_plan": [
+    {"ticket_id": 1101, "expected_status": "processed"},
+    {"ticket_id": 1104, "expected_status": "skipped_not_triggered"}
+  ]
+}

@@ -8,8 +8,6 @@
   --external: #165b1a;
   --internal-bg: #fef2f2;
   --external-bg: #f0fdf4;
-  --brand-color: #0b57d0;
-  --brand-logo-height: 24px;
 }
 
 body {
@@ -132,26 +130,6 @@ body {
   padding-top: 10px;
   font-size: 10px;
   color: var(--muted);
-}
-
-.brand-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 2px solid var(--brand-color);
-}
-
-.brand-logo {
-  max-height: var(--brand-logo-height);
-  width: auto;
-}
-
-.brand-text {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--brand-color);
 }
 
 @media print {

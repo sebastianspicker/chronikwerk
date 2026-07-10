@@ -46,8 +46,10 @@ jobs:
 
       - name: Determine whether to push
         id: push
+        env:
+          GHCR_PUSH_ENABLED: ${{ secrets.GHCR_TOKEN != '' }}
         run: |
-          enabled="${{ secrets.GHCR_TOKEN != '' }}"
+          enabled="${GHCR_PUSH_ENABLED}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == *"-rc."* ]]; then
             enabled="false"
           fi

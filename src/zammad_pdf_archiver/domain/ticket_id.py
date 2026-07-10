@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 from typing import Any
@@ -19,6 +20,7 @@ def _coerce_ticket_id_string(value: str) -> int | None:
 
 
 def coerce_ticket_id(value: Any) -> int | None:
+    """Implement the coerce ticket id operation."""
     if isinstance(value, bool) or value is None:
         return None
 

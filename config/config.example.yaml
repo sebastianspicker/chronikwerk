@@ -55,6 +55,8 @@ observability:
   log_format: "json"
   metrics_enabled: false
   metrics_bearer_token: null
+  history_enabled: false
+  history_bearer_token: null
   healthz_omit_version: false
 
 retry_bearer_token: null
@@ -72,3 +74,10 @@ hardening:
     require_delivery_id: false
   transport:
     trust_env: false
+    allow_insecure_http: false
+    allow_private_networks: false
+
+admission:
+  max_pending: 100
+  max_running: 4
+  shutdown_timeout_seconds: 5.0

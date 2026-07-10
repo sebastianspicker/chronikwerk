@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import hashlib
@@ -95,6 +96,7 @@ def _replay_receive(chunks: list[bytes]) -> Receive:
     idx = 0
 
     async def receive() -> Message:
+        """Implement the receive operation."""
         nonlocal idx
         if idx >= len(chunks):
             return {"type": "http.request", "body": b"", "more_body": False}
@@ -106,8 +108,10 @@ def _replay_receive(chunks: list[bytes]) -> Receive:
     return receive
 
 
-class HmacVerifyMiddleware:
+class HmacVerifyMiddleware:  # pylint: disable=too-few-public-methods
+    """Implement the HmacVerifyMiddleware operation."""
     def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
+        """Implement the   init   operation."""
         self.app = app
         self._secret = _secret_bytes(settings)
         self._require_delivery_id = (
@@ -165,11 +169,15 @@ class HmacVerifyMiddleware:
         self,
         signature: bytes,
         digest_ctor: type,
+        *,
         receive: Receive,
         scope: Scope,
         send: Send,
     ) -> list[bytes] | None:
-        assert self._secret is not None
+        if self._secret is None:
+            await drain_stream(receive)
+            await _service_misconfigured()(scope, receive, send)
+            return None
         mac = hmac.new(self._secret, digestmod=digest_ctor)
         chunks, disconnected = await _read_body(receive, on_chunk=mac.update)
         if disconnected:
@@ -183,6 +191,7 @@ class HmacVerifyMiddleware:
         return chunks
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Verify webhook signatures before dispatching requests."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -202,7 +211,13 @@ class HmacVerifyMiddleware:
             return
 
         signature, digest_ctor, _algo_name = parsed
-        chunks = await self._verify_body_signature(signature, digest_ctor, receive, scope, send)
+        chunks = await self._verify_body_signature(
+            signature,
+            digest_ctor,
+            receive=receive,
+            scope=scope,
+            send=send,
+        )
         if chunks is None:
             return
 

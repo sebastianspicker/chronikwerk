@@ -1,23 +1,24 @@
+"""Project module."""
 import asyncio
+from threading import Event
 
-_SHUTTING_DOWN = False
+_SHUTTING_DOWN = Event()
 _TASKS: set[asyncio.Task] = set()
 
 
 def is_shutting_down() -> bool:
     """Return True if the application is in the process of shutting down."""
-    return _SHUTTING_DOWN
+    return _SHUTTING_DOWN.is_set()
 
 
 def set_shutting_down() -> None:
     """Mark the application as shutting down to stop new work from being accepted."""
-    global _SHUTTING_DOWN
-    _SHUTTING_DOWN = True
+    _SHUTTING_DOWN.set()
 
 
 def clear_shutting_down() -> None:
-    global _SHUTTING_DOWN
-    _SHUTTING_DOWN = False
+    """Implement the clear shutting down operation."""
+    _SHUTTING_DOWN.clear()
 
 
 def track_task(task: asyncio.Task) -> None:
@@ -41,6 +42,7 @@ async def _await_or_cancel_tasks(loop_tasks: set[asyncio.Task], *, timeout: floa
     except TimeoutError:
         for task in loop_tasks:
             task.cancel()
+        await asyncio.gather(*loop_tasks, return_exceptions=True)
     finally:
         _TASKS.difference_update(loop_tasks)
 

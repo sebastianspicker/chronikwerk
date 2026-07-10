@@ -1,6 +1,7 @@
+"""Project module."""
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 processed_total = Counter(
     "processed_total",
@@ -27,4 +28,17 @@ sign_seconds = Histogram(
 total_seconds = Histogram(
     "total_seconds",
     "Seconds spent processing a ticket end-to-end.",
+)
+
+admission_pending = Gauge(
+    "admission_pending",
+    "Number of admitted ticket jobs waiting for a running slot.",
+)
+admission_running = Gauge(
+    "admission_running",
+    "Number of ticket jobs currently running.",
+)
+admission_rejected_total = Counter(
+    "admission_rejected_total",
+    "Number of ticket jobs rejected because admission capacity was exhausted.",
 )

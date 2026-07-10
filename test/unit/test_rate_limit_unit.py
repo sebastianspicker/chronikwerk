@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+# Local imports deliberately isolate rate-limit middleware state between tests.
+# pylint: disable=import-outside-toplevel,protected-access
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
+import tempfile
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -163,7 +169,7 @@ def _make_settings_with_rate_limit(*, enabled: bool, rps: float, burst: int) -> 
     return Settings.from_mapping(
         {
             "zammad": {"base_url": "https://z.test", "api_token": "tok"},
-            "storage": {"root": "/tmp/test-ratelimit"},
+            "storage": {"root": str(Path(tempfile.gettempdir()) / "zammad-rate-limit-test")},
             "hardening": {
                 "rate_limit": {"enabled": enabled, "rps": rps, "burst": burst},
             },
@@ -189,15 +195,11 @@ def test_bucket_eviction_when_max_entries_exceeded() -> None:
 
 
 def test_client_key_from_scope_unknown_when_no_client() -> None:
-    from zammad_pdf_archiver.app.middleware.rate_limit import _client_key_from_scope
-
     scope = {"type": "http", "path": "/", "headers": []}
     assert _client_key_from_scope(scope) == "unknown"
 
 
 def test_client_key_from_header_comma_split() -> None:
-    from zammad_pdf_archiver.app.middleware.rate_limit import _client_key_from_header
-
     scope = {
         "type": "http",
         "path": "/",
@@ -208,8 +210,6 @@ def test_client_key_from_header_comma_split() -> None:
 
 
 def test_client_key_from_header_whitespace_falls_back_to_scope() -> None:
-    from zammad_pdf_archiver.app.middleware.rate_limit import _client_key_from_header
-
     scope = {
         "type": "http",
         "path": "/",
@@ -228,9 +228,8 @@ def test_rate_limit_middleware_returns_429_when_exhausted(tmp_path) -> None:
     from starlette.testclient import TestClient
 
     from test.support.settings_factory import make_settings
-    from zammad_pdf_archiver.app.middleware.rate_limit import RateLimitMiddleware
 
-    async def ingest_endpoint(request: Request) -> Response:
+    async def ingest_endpoint(_request: Request) -> Response:
         return Response("ok", status_code=200)
 
     starlette_app = Starlette(routes=[Route("/ingest", ingest_endpoint, methods=["POST"])])
@@ -256,9 +255,8 @@ def test_rate_limit_middleware_none_limiter_passes_through(tmp_path) -> None:
     from starlette.testclient import TestClient
 
     from test.support.settings_factory import make_settings
-    from zammad_pdf_archiver.app.middleware.rate_limit import RateLimitMiddleware
 
-    async def ingest_endpoint(request: Request) -> Response:
+    async def ingest_endpoint(_request: Request) -> Response:
         return Response("ok", status_code=200)
 
     app = Starlette(routes=[Route("/ingest", ingest_endpoint, methods=["POST"])])

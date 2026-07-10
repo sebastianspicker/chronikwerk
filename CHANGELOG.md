@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Freeze the supported deployment/runtime contract: one process-local service,
+  attachment metadata only, sanitized rich HTML, SHA-256-only webhook HMAC,
+  authenticated job history, and one production image with signing support.
+- Document that graceful shutdown drains admitted work while a process crash may
+  lose accepted background work.
+
 ## [0.2.0-rc.2] - 2026-04-09
 
 ### Added

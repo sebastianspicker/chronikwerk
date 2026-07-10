@@ -1,14 +1,16 @@
 """NFR2: Enforce request body size limit and token-bucket rate limiting on ingest."""
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+# pylint: disable=import-outside-toplevel
 
+# ruff: noqa: I001
 from test.support.process_ticket_helpers import (
     TEST_WEBHOOK_SECRET,
     noop_process_ticket,
     post_signed_json,
 )
 from test.support.settings_factory import make_settings
+from fastapi.testclient import TestClient
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Directly verifies the private in-flight note guard under concurrent work.
+# pylint: disable=protected-access
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
 from pathlib import Path
 

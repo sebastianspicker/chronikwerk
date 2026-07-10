@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -50,7 +51,6 @@ from zammad_pdf_archiver.domain.state_machine import (
     should_process,
 )
 from zammad_pdf_archiver.domain.ticket_id import extract_ticket_id
-from zammad_pdf_archiver.domain.ticket_utils import ticket_custom_fields
 from zammad_pdf_archiver.domain.time_utils import format_timestamp_utc, now_utc
 from zammad_pdf_archiver.observability.metrics import (
     failed_total,
@@ -74,13 +74,14 @@ class _TicketJobContext:
 
 @dataclass(frozen=True)
 class ProcessTicketResult:
+    """Implement the ProcessTicketResult operation."""
     status: str
     ticket_id: int | None
     classification: str | None = None
     message: str = ""
 
 
-async def _record_history(
+def _record_history(
     ctx: _TicketJobContext,
     *,
     status: str,
@@ -96,7 +97,7 @@ async def _record_history(
             delivery_id=ctx.delivery_id,
             request_id=ctx.request_id,
         )
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         log.debug("process_ticket.history_record_failed", status=status, ticket_id=ctx.ticket_id)
 
 
@@ -118,7 +119,7 @@ async def process_ticket(
             delivery_id=delivery_id,
             request_id=request_id,
         )
-        await _record_history(stub_ctx, status="skipped_no_ticket_id")
+        _record_history(stub_ctx, status="skipped_no_ticket_id")
         return ProcessTicketResult(status="skipped_no_ticket_id", ticket_id=None)
 
     request_id = (
@@ -175,7 +176,7 @@ async def _skip_in_flight(ctx: _TicketJobContext) -> ProcessTicketResult:
         delivery_id=ctx.delivery_id,
     )
     skipped_total.labels(reason="in_flight").inc()
-    await _record_history(ctx, status="skipped_in_flight")
+    _record_history(ctx, status="skipped_in_flight")
     return ProcessTicketResult(status="skipped_in_flight", ticket_id=ctx.ticket_id)
 
 
@@ -192,7 +193,7 @@ async def _claim_delivery_or_skip(ctx: _TicketJobContext) -> ProcessTicketResult
         delivery_id=ctx.delivery_id,
     )
     skipped_total.labels(reason="idempotency").inc()
-    await _record_history(ctx, status="skipped_idempotency")
+    _record_history(ctx, status="skipped_idempotency")
     return ProcessTicketResult(status="skipped_idempotency", ticket_id=ctx.ticket_id)
 
 
@@ -213,6 +214,8 @@ async def _process_ticket_with_client(
         timeout_seconds=settings.zammad.timeout_seconds,
         verify_tls=settings.zammad.verify_tls,
         trust_env=settings.hardening.transport.trust_env,
+        allow_insecure_http=settings.hardening.transport.allow_insecure_http,
+        allow_private_networks=settings.hardening.transport.allow_private_networks,
     ) as client:
         observe_total = True
         total_start = perf_counter()
@@ -226,10 +229,7 @@ async def _process_ticket_with_client(
                 force_reprocess=force_reprocess,
             )
             return result
-        except asyncio.CancelledError:
-            # Cancellation during shutdown should not mutate ticket state.
-            raise
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             return await _handle_ticket_pipeline_exception(
                 client=client,
                 ctx=ctx,
@@ -305,7 +305,12 @@ def _resolve_storage_paths(
     now: datetime,
 ) -> tuple[Path, Path]:
     settings = ctx.settings
-    custom_fields = ticket_custom_fields(ticket)
+    custom_fields = (
+        ticket.preferences.custom_fields
+        if ticket.preferences is not None
+        and isinstance(ticket.preferences.custom_fields, dict)
+        else {}
+    )
     username = determine_username(
         ticket=ticket,
         payload=payload,
@@ -346,7 +351,8 @@ async def _render_and_store_ticket(
         settings=ctx.settings,
     )
     target_path, sidecar_path = storage_paths
-    return store_ticket_files(
+    return await asyncio.to_thread(
+        store_ticket_files,
         pdf_bytes=pdf_bytes,
         snapshot=snapshot,
         target_path=target_path,
@@ -365,6 +371,28 @@ async def _finalize_success(
     now: datetime,
     storage_result: StorageResult,
 ) -> None:
+    try:
+        await async_retry(
+            lambda: apply_done(client, ctx.ticket_id, trigger_tag=trigger_tag),
+            max_retries=3,
+            backoff_base=0.5,
+            backoff_factor=2.0,
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        # The PDF and audit sidecar are durable at this point, but the ticket
+        # state is not.  Re-raise so the existing failure path can remove the
+        # processing tag, record a failure, and avoid a false processed signal.
+        log.exception(
+            "process_ticket.finalization_failed_after_storage",
+            ticket_id=ctx.ticket_id,
+            storage_succeeded=True,
+            storage_path=str(storage_result.target_path),
+            sidecar_path=str(storage_result.sidecar_path),
+            size_bytes=storage_result.size_bytes,
+            sha256_hex=storage_result.sha256_hex,
+        )
+        raise
+
     if ctx.settings.workflow.acknowledge_on_success:
         await client.create_internal_article(
             ctx.ticket_id,
@@ -380,18 +408,9 @@ async def _finalize_success(
                 timestamp_utc=format_timestamp_utc(now),
             ),
         )
-    try:
-        await async_retry(
-            lambda: apply_done(client, ctx.ticket_id, trigger_tag=trigger_tag),
-            max_retries=3,
-            backoff_base=0.5,
-            backoff_factor=2.0,
-        )
-    except Exception:
-        log.exception("process_ticket.apply_done_failed", ticket_id=ctx.ticket_id)
 
     processed_total.inc()
-    await _record_history(ctx, status="processed")
+    _record_history(ctx, status="processed")
     log.info(
         "process_ticket.done",
         ticket_id=ctx.ticket_id,
@@ -412,7 +431,7 @@ async def _skip_not_triggered(
         tags=tags,
     )
     skipped_total.labels(reason="not_triggered").inc()
-    await _record_history(ctx, status="skipped_not_triggered")
+    _record_history(ctx, status="skipped_not_triggered")
     return ProcessTicketResult(
         status="skipped_not_triggered",
         ticket_id=ctx.ticket_id,
@@ -454,7 +473,7 @@ async def _handle_ticket_pipeline_exception(
     )
 
     status = _failure_status(classified)
-    await _record_history(
+    _record_history(
         ctx,
         status=status,
         classification=classification_label,
@@ -533,7 +552,7 @@ async def _post_error_note(
                 hint=hint,
             ),
         )
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         log.exception(
             "process_ticket.error_note_failed",
             ticket_id=ctx.ticket_id,
@@ -563,7 +582,7 @@ async def _apply_error_and_cleanup_processing_tag(
             max_retries=1,
             backoff_base=0.3,
         )
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         log.exception(
             "process_ticket.apply_error_failed",
             ticket_id=ctx.ticket_id,
@@ -576,8 +595,8 @@ async def _apply_error_and_cleanup_processing_tag(
 
 async def _release_ticket_lock(ctx: _TicketJobContext) -> None:
     try:
-        await asyncio.shield(release_ticket(ctx.settings, ctx.ticket_id))
-    except Exception:
+        await asyncio.shield(release_ticket(ctx.ticket_id))
+    except Exception:  # pylint: disable=broad-exception-caught
         log.exception(
             "process_ticket.release_ticket_failed",
             ticket_id=ctx.ticket_id,

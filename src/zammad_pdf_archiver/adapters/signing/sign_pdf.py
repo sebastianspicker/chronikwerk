@@ -1,3 +1,5 @@
+# pylint: disable=import-outside-toplevel
+"""Project module."""
 from __future__ import annotations
 
 import io
@@ -78,7 +80,6 @@ def _validate_cert_not_expired(pfx_bytes: bytes, password: bytes | None) -> None
 @dataclass
 class _CachedSigner:
     signer: Any  # signers.SimpleSigner
-    pfx_path: str
     pfx_mtime: float
     pfx_bytes: bytes
     password: bytes | None
@@ -124,7 +125,7 @@ def _signer_after_cert_recheck(
 def _build_signer_entry(
     pfx: _PfxMaterial,
     *,
-    pfx_path_str: str,
+    _pfx_path_str: str,
     current_mtime: float,
 ) -> tuple[_CachedSigner, Any]:
     try:
@@ -135,13 +136,12 @@ def _build_signer_entry(
     _validate_cert_not_expired(pfx.pfx_bytes, pfx.password)
     try:
         signer = signers.SimpleSigner.load_pkcs12(pfx.path, passphrase=pfx.password)
-    except Exception as exc:  # noqa: BLE001 - surface as PermanentError with context
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise PermanentError("Failed to initialise signer from PKCS#12/PFX bundle") from exc
 
     return (
         _CachedSigner(
             signer=signer,
-            pfx_path=pfx_path_str,
             pfx_mtime=current_mtime,
             pfx_bytes=pfx.pfx_bytes,
             password=pfx.password,
@@ -183,7 +183,7 @@ def _get_cached_signer(pfx: _PfxMaterial) -> Any:
 
     entry, _signer = _build_signer_entry(
         pfx,
-        pfx_path_str=pfx_path_str,
+        _pfx_path_str=pfx_path_str,
         current_mtime=current_mtime,
     )
     return _cache_new_signer(pfx_path_str, current_mtime, entry)
@@ -192,50 +192,66 @@ def _get_cached_signer(pfx: _PfxMaterial) -> Any:
 def _classify_signing_failure(exc: Exception) -> PermanentError | TransientError:
     if isinstance(
         exc,
-        (httpx.TimeoutException, httpx.ConnectError, ConnectionError, OSError, TimeoutError),
+        httpx.TimeoutException | httpx.ConnectError | ConnectionError | OSError | TimeoutError,
     ):
         return TransientError("Failed to sign PDF due to temporary (TSA) network issue")
     return PermanentError("Failed to sign PDF")
 
 
-def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = False) -> bytes:
-    """
-    Sign a PDF with an (invisible) PAdES signature using a locally provided PKCS#12/PFX bundle.
+def _optional_timestamper(
+    signing: SigningSettings,
+    *,
+    trust_env: bool,
+    allow_insecure_http: bool,
+    allow_private_networks: bool,
+) -> Any | None:
+    """Build the configured TSA client only when timestamping is enabled."""
+    if not signing.timestamp.enabled:
+        return None
+    try:
+        from zammad_pdf_archiver.adapters.signing.tsa_rfc3161 import build_timestamper
+    except ImportError as exc:
+        raise _missing_signing_dependency(exc) from exc
+    return build_timestamper(
+        signing,
+        trust_env=trust_env,
+        allow_insecure_http=allow_insecure_http,
+        allow_private_networks=allow_private_networks,
+    )
 
-    If enabled via settings, an RFC3161 TSA timestamp will be embedded (PAdES-T style).
-    """
-    if not isinstance(pdf_bytes, (bytes, bytearray)) or not pdf_bytes:
-        raise ValueError("pdf_bytes must be non-empty bytes")
 
-    pfx = _load_pfx(signing)
-
+def _build_pdf_signer(
+    pfx: _PfxMaterial,
+    signing: SigningSettings,
+    *,
+    trust_env: bool,
+    allow_insecure_http: bool,
+    allow_private_networks: bool,
+) -> Any:
+    """Build the configured pyHanko signer while keeping dependency loading lazy."""
     # Import lazily so the rest of the service stays importable even if pyHanko isn't installed.
     try:
-        from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
         from pyhanko.sign.fields import SigFieldSpec
         from pyhanko.sign.signers.pdf_signer import PdfSignatureMetadata, PdfSigner
     except ImportError as exc:
         raise _missing_signing_dependency(exc) from exc
 
-    reason = signing.pades.reason
-    location = signing.pades.location
-
     signer = _get_cached_signer(pfx)
 
     field_name = "Signature1"
-    meta = PdfSignatureMetadata(field_name=field_name, reason=reason, location=location)
-
-    timestamper = None
-    if signing.timestamp.enabled:
-        try:
-            from zammad_pdf_archiver.adapters.signing.tsa_rfc3161 import build_timestamper
-        except ImportError as exc:
-            raise _missing_signing_dependency(exc) from exc
-
-        timestamper = build_timestamper(signing, trust_env=trust_env)
-
-    pdf_signer = PdfSigner(
-        signature_meta=meta,
+    signature_meta = PdfSignatureMetadata(
+        field_name=field_name,
+        reason=signing.pades.reason,
+        location=signing.pades.location,
+    )
+    timestamper = _optional_timestamper(
+        signing,
+        trust_env=trust_env,
+        allow_insecure_http=allow_insecure_http,
+        allow_private_networks=allow_private_networks,
+    )
+    return PdfSigner(
+        signature_meta=signature_meta,
         signer=signer,
         timestamper=timestamper,
         new_field_spec=SigFieldSpec(
@@ -244,13 +260,48 @@ def sign_pdf(pdf_bytes: bytes, signing: SigningSettings, *, trust_env: bool = Fa
         ),
     )
 
+
+def _write_signed_pdf(pdf_bytes: bytes, pdf_signer: Any) -> bytes:
+    """Apply a prepared pyHanko signer and classify library failures."""
+    try:
+        from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    except ImportError as exc:
+        raise _missing_signing_dependency(exc) from exc
+
     out = io.BytesIO()
     try:
         writer = IncrementalPdfFileWriter(io.BytesIO(bytes(pdf_bytes)))
         pdf_signer.sign_pdf(writer, output=out)
     except (TransientError, PermanentError):
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         raise _classify_signing_failure(exc) from exc
 
     return out.getvalue()
+
+
+def sign_pdf(
+    pdf_bytes: bytes,
+    signing: SigningSettings,
+    *,
+    trust_env: bool = False,
+    allow_insecure_http: bool = False,
+    allow_private_networks: bool = False,
+) -> bytes:
+    """
+    Sign a PDF with an (invisible) PAdES signature using a locally provided PKCS#12/PFX bundle.
+
+    If enabled via settings, an RFC3161 TSA timestamp will be embedded (PAdES-T style).
+    """
+    if not isinstance(pdf_bytes, bytes | bytearray) or not pdf_bytes:
+        raise ValueError("pdf_bytes must be non-empty bytes")
+
+    pfx = _load_pfx(signing)
+    pdf_signer = _build_pdf_signer(
+        pfx,
+        signing,
+        trust_env=trust_env,
+        allow_insecure_http=allow_insecure_http,
+        allow_private_networks=allow_private_networks,
+    )
+    return _write_signed_pdf(bytes(pdf_bytes), pdf_signer)

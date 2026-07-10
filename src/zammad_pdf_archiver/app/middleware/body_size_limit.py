@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 from starlette.datastructures import Headers
@@ -37,6 +38,7 @@ def _limited_receive_factory(receive: Receive, max_bytes: int) -> Receive:
     received = 0
 
     async def limited_receive() -> Message:
+        """Implement the limited receive operation."""
         nonlocal received
         message = await receive()
         if message.get("type") == "http.disconnect":
@@ -51,7 +53,7 @@ def _limited_receive_factory(receive: Receive, max_bytes: int) -> Receive:
     return limited_receive
 
 
-class BodySizeLimitMiddleware:
+class BodySizeLimitMiddleware:  # pylint: disable=too-few-public-methods
     """Enforce a maximum body size on ingest-path requests.
 
     Security note on chunked transfer encoding: ASGI servers (uvicorn,
@@ -62,6 +64,7 @@ class BodySizeLimitMiddleware:
     """
 
     def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
+        """Implement the   init   operation."""
         self.app = app
 
         if settings is None:
@@ -71,6 +74,7 @@ class BodySizeLimitMiddleware:
         self._max_bytes = int(settings.hardening.body_size_limit.max_bytes)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Enforce the configured request body size limit."""
         if not _is_limited_path(scope, self._max_bytes):
             await self.app(scope, receive, send)
             return

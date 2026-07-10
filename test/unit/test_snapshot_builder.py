@@ -21,17 +21,17 @@ class _FakeZammadClient:
         self._tags = TagList.model_validate(tags)
         self._articles = articles
 
-    async def get_ticket(self, ticket_id: int) -> ZammadTicket:
+    async def get_ticket(self, _ticket_id: int) -> ZammadTicket:
         return self._ticket
 
-    async def list_tags(self, ticket_id: int) -> TagList:
+    async def list_tags(self, _ticket_id: int) -> TagList:
         return self._tags
 
-    async def list_articles(self, ticket_id: int) -> list[ZammadArticle]:
+    async def list_articles(self, _ticket_id: int) -> list[ZammadArticle]:
         return self._articles
 
 
-def test_articles_are_sorted_and_text_is_escaped() -> None:
+def test_articles_are_sorted_and_rich_html_is_sanitized() -> None:
     async def run() -> None:
         ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
         articles = [
@@ -51,8 +51,8 @@ def test_articles_are_sorted_and_text_is_escaped() -> None:
             1,
         )
         assert [article.id for article in snapshot.articles] == [1, 2]
-        assert snapshot.articles[0].body_html == "&lt;b&gt;earlier&lt;/b&gt;"
-        assert snapshot.articles[0].body_text == "<b>earlier</b>"
+        assert snapshot.articles[0].body_html == "<b>earlier</b>"
+        assert snapshot.articles[0].body_text == "earlier"
 
     asyncio.run(run())
 
