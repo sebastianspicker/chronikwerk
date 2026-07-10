@@ -57,3 +57,11 @@ def test_e2e_compose_mounts_ephemeral_signing_material() -> None:
     assert "ZTA_E2E_PFX_PASSWORD" in compose
     assert "ZTA_E2E_SIGNING_DIR" in compose
     assert ":/run/e2e-signing:ro" in compose
+
+
+def test_e2e_compose_initializes_archive_volume_for_non_root_runtime() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    compose = (repo_root / "infra" / "e2e" / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert 'command: ["chown", "10001:10001", "/tmp/archive"]' in compose
+    assert "condition: service_completed_successfully" in compose

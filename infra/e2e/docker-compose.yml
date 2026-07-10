@@ -1,4 +1,18 @@
 services:
+  archive-init:
+    image: zammad-pdf-archiver:e2e
+    user: "0:0"
+    command: ["chown", "10001:10001", "/tmp/archive"]
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - archive:/tmp/archive
+
   archiver:
     image: zammad-pdf-archiver:e2e
     build:
@@ -25,6 +39,8 @@ services:
       - archive:/tmp/archive
       - "${ZTA_E2E_SIGNING_DIR:?ZTA_E2E_SIGNING_DIR must point to ephemeral signing material}:/run/e2e-signing:ro"
     depends_on:
+      archive-init:
+        condition: service_completed_successfully
       mock:
         condition: service_healthy
 
