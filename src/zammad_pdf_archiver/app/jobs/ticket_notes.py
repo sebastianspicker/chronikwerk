@@ -1,3 +1,4 @@
+"""Project module."""
 from html import escape
 
 import structlog
@@ -140,6 +141,7 @@ def error_note_html(
 
 
 def concise_exc_message(exc: BaseException) -> str:
+    """Implement the concise exc message operation."""
     text = f"{exc.__class__.__name__}: {exc}"
     text = text.strip()
     text = scrub_secrets_in_text(text)

@@ -30,7 +30,7 @@ webhook -> fetch ticket/articles/tags -> build snapshot -> render PDF
 | `POST` | `/ingest` | HMAC | Accept one webhook payload. |
 | `POST` | `/ingest/batch` | HMAC | Accept up to 100 webhook payloads. |
 | `POST` | `/retry/{ticket_id}` | Bearer | Force one reprocessing attempt. |
-| `GET` | `/jobs/history` | none | Read process-local processing history. |
+| `GET` | `/jobs/history` | Dedicated history bearer token | Optional process-local history; disabled by default. |
 | `GET` | `/healthz` | none | Health check; supports `?deep=true`. |
 | `GET` | `/metrics` | optional Bearer | Prometheus metrics when enabled. |
 

@@ -1,12 +1,16 @@
+"""Project module."""
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from html import escape
+from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 
 from zammad_pdf_archiver.adapters.zammad.models import Article as ZammadArticle
 from zammad_pdf_archiver.adapters.zammad.models import TagList
 from zammad_pdf_archiver.adapters.zammad.models import Ticket as ZammadTicket
+from zammad_pdf_archiver.domain.html_sanitize import sanitize_html_fragment
 from zammad_pdf_archiver.domain.snapshot_models import (
     Article,
     AttachmentMeta,
@@ -30,9 +34,50 @@ def _party_from_zammad_ref(ref: Any) -> PartyRef | None:
     )
 
 
+class _BodyTextExtractor(HTMLParser):
+    _BLOCK_TAGS = frozenset({"br", "div", "li", "p", "pre", "tr"})
+
+    def __init__(self) -> None:
+        """Implement the   init   operation."""
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Implement the handle starttag operation."""
+        if tag.lower() in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        """Implement the handle endtag operation."""
+        if tag.lower() in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        """Implement the handle data operation."""
+        self.parts.append(data)
+
+
+def _readable_text_from_html(value: str) -> str:
+    parser = _BodyTextExtractor()
+    parser.feed(value)
+    parser.close()
+    lines = [" ".join(line.split()) for line in "".join(parser.parts).splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
 def _article_body_html_and_text(article: ZammadArticle) -> tuple[str, str]:
     body_raw = article.body if isinstance(article.body, str) else ""
-    return (escape(body_raw, quote=False) if isinstance(body_raw, str) else ""), body_raw
+    content_type = (article.content_type or "").lower()
+    looks_like_html = bool(re.search(r"<\s*/?\s*[a-z][^>]*>", body_raw, re.IGNORECASE))
+    if "html" not in content_type and not looks_like_html:
+        return escape(body_raw, quote=False), body_raw
+
+    sanitized = sanitize_html_fragment(body_raw)
+    if sanitized:
+        return sanitized, _readable_text_from_html(sanitized)
+    # Fail closed: escaped source is safe for the template fallback and keeps
+    # the original text available when malformed HTML cannot be sanitized.
+    return escape(body_raw, quote=False), body_raw
 
 
 def _attachment_to_meta(article: ZammadArticle, attachment: Any) -> AttachmentMeta:
@@ -82,6 +127,7 @@ async def build_snapshot(
     ticket: ZammadTicket | None = None,
     tags: TagList | None = None,
 ) -> Snapshot:
+    """Implement the build snapshot operation."""
     if ticket is None:
         ticket = await client.get_ticket(ticket_id)
     if tags is None:

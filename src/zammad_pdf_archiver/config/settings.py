@@ -1,3 +1,6 @@
+"""Project module."""
+# Pydantic settings sections intentionally expose fields rather than public methods.
+# pylint: disable=too-few-public-methods
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -19,11 +22,13 @@ class ServerSettings(_BaseSection):
     # nginx, Traefik, cloud load balancer) should handle external access,
     # TLS termination, and IP filtering.
     # Container bind; proxy/firewall owns exposure.
+    """Implement the ServerSettings operation."""
     host: str = "0.0.0.0"  # nosec B104
     port: int = Field(default=8080, ge=1, le=65535)
 
 
 class ZammadSettings(_BaseSection):
+    """Implement the ZammadSettings operation."""
     base_url: AnyHttpUrl
     api_token: SecretStr
     webhook_hmac_secret: SecretStr | None = None
@@ -32,6 +37,7 @@ class ZammadSettings(_BaseSection):
 
 
 class WorkflowSettings(_BaseSection):
+    """Implement the WorkflowSettings operation."""
     trigger_tag: str = "pdf:sign"
     require_tag: bool = True
     acknowledge_on_success: bool = True
@@ -39,6 +45,7 @@ class WorkflowSettings(_BaseSection):
 
 
 class FieldsSettings(_BaseSection):
+    """Implement the FieldsSettings operation."""
     archive_path: str = "archive_path"
     archive_user_mode: str = "archive_user_mode"
     # Custom field name for archive_user in fixed mode (Bug #1/#6).
@@ -46,6 +53,7 @@ class FieldsSettings(_BaseSection):
 
 
 class StorageSettings(_BaseSection):
+    """Implement the StorageSettings operation."""
     root: Path
     fsync: bool = True
     filename_pattern: str = "Ticket-{ticket_number}_{timestamp_utc}.pdf"
@@ -57,6 +65,7 @@ class StorageSettings(_BaseSection):
 
 
 class PdfSettings(_BaseSection):
+    """Implement the PdfSettings operation."""
     locale: str = "de_DE"
     timezone: str = "Europe/Berlin"
     max_articles: int = Field(default=250, ge=0)
@@ -73,11 +82,13 @@ class PdfSettings(_BaseSection):
 
 
 class SigningPadesSettings(_BaseSection):
+    """Implement the SigningPadesSettings operation."""
     reason: str = "Ticket Archivierung"
     location: str = "Datacenter"
 
 
 class SigningTimestampRfc3161Settings(_BaseSection):
+    """Implement the SigningTimestampRfc3161Settings operation."""
     tsa_url: AnyHttpUrl | None = None
     timeout_seconds: float = Field(default=10.0, gt=0)
     ca_bundle_path: Path | None = None
@@ -86,6 +97,7 @@ class SigningTimestampRfc3161Settings(_BaseSection):
 
 
 class SigningTimestampSettings(_BaseSection):
+    """Implement the SigningTimestampSettings operation."""
     enabled: bool = False
     rfc3161: SigningTimestampRfc3161Settings = Field(
         default_factory=SigningTimestampRfc3161Settings
@@ -93,6 +105,7 @@ class SigningTimestampSettings(_BaseSection):
 
 
 class SigningSettings(_BaseSection):
+    """Implement the SigningSettings operation."""
     enabled: bool = False
     # PKCS#12/PFX bundle with signer cert + private key.
     pfx_path: Path | None = None
@@ -117,11 +130,14 @@ class SigningSettings(_BaseSection):
 
 
 class ObservabilitySettings(_BaseSection):
+    """Implement the ObservabilitySettings operation."""
     log_level: str = "INFO"
     log_format: str | None = None  # json|human
     metrics_enabled: bool = False
     # When set, GET /metrics requires Authorization: Bearer <this token> (constant-time compare).
     metrics_bearer_token: SecretStr | None = None
+    history_enabled: bool = False
+    history_bearer_token: SecretStr | None = None
     # When true, GET /healthz omits version and service name (reduces fingerprinting).
     healthz_omit_version: bool = False
 
@@ -137,6 +153,7 @@ class ObservabilitySettings(_BaseSection):
 
 
 class RateLimitSettings(_BaseSection):
+    """Implement the RateLimitSettings operation."""
     enabled: bool = True
     rps: float = Field(default=5.0, ge=0, le=10_000)
     burst: int = Field(default=10, ge=1, le=10_000)
@@ -148,21 +165,34 @@ class RateLimitSettings(_BaseSection):
 
 class BodySizeLimitSettings(_BaseSection):
     # 0 disables the limit.
+    """Implement the BodySizeLimitSettings operation."""
     max_bytes: int = Field(default=1024 * 1024, ge=0)
+
+
+class AdmissionSettings(_BaseSection):
+    """Bounds for process-local background ticket work."""
+
+    max_pending: int = Field(default=100, ge=0, le=10_000)
+    max_running: int = Field(default=4, ge=1, le=1_000)
+    shutdown_timeout_seconds: float = Field(default=5.0, gt=0, le=300)
 
 
 class WebhookHardeningSettings(_BaseSection):
     # When enabled, /ingest requires X-Zammad-Delivery replay TTL > 0.
+    """Implement the WebhookHardeningSettings operation."""
     require_delivery_id: bool = False
 
 
 class TransportHardeningSettings(_BaseSection):
     # When true, allow httpx to read HTTP_PROXY/HTTPS_PROXY/NO_PROXY.
+    """Implement the TransportHardeningSettings operation."""
     trust_env: bool = False
-    # Allow outbound upstreams to target loopback / link-local addresses.
+    allow_insecure_http: bool = False
+    allow_private_networks: bool = False
 
 
 class HardeningSettings(_BaseSection):
+    """Implement the HardeningSettings operation."""
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     body_size_limit: BodySizeLimitSettings = Field(default_factory=BodySizeLimitSettings)
     webhook: WebhookHardeningSettings = Field(default_factory=WebhookHardeningSettings)
@@ -170,6 +200,7 @@ class HardeningSettings(_BaseSection):
 
 
 class Settings(BaseSettings):
+    """Implement the Settings operation."""
     model_config = SettingsConfigDict(
         env_prefix="",
         env_nested_delimiter="__",
@@ -187,6 +218,7 @@ class Settings(BaseSettings):
     signing: SigningSettings = Field(default_factory=SigningSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     hardening: HardeningSettings = Field(default_factory=HardeningSettings)
+    admission: AdmissionSettings = Field(default_factory=AdmissionSettings)
     retry_bearer_token: SecretStr | None = None
 
     @classmethod
@@ -201,12 +233,13 @@ class Settings(BaseSettings):
             @classmethod
             def settings_customise_sources(
                 cls,
-                settings_cls: type[BaseSettings],
+                _settings_cls: type[BaseSettings],
                 init_settings: PydanticBaseSettingsSource,
                 env_settings: PydanticBaseSettingsSource,
                 dotenv_settings: PydanticBaseSettingsSource,
                 file_secret_settings: PydanticBaseSettingsSource,
             ) -> tuple[PydanticBaseSettingsSource, ...]:
+                """Implement the settings customise sources operation."""
                 return (init_settings,)
 
         return _InitOnlySettings(**dict(data))
@@ -214,12 +247,15 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls: type[BaseSettings],
+        _settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource | Any, ...]:
+        # Keep this order explicit: process environment, constructor/YAML
+        # values, dotenv, file secrets, then Pydantic defaults.
+        """Implement the settings customise sources operation."""
         return (
             env_settings,
             init_settings,

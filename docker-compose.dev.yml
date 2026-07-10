@@ -12,14 +12,14 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     ports:
-      - "8080:8080"
+      - "${SERVER__PORT:-8080}:${SERVER__PORT:-8080}"
     env_file:
-      - path: .env
+      - path: "${ARCHIVER_ENV_FILE:-.env}"
         required: false
     environment:
-      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
-      SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"
-      SERVER_PORT: "${SERVER_PORT:-8080}"
+      OBSERVABILITY__LOG_LEVEL: "${OBSERVABILITY__LOG_LEVEL:-INFO}"
+      SERVER__HOST: "${SERVER__HOST:-0.0.0.0}"
+      SERVER__PORT: "${SERVER__PORT:-8080}"
       STORAGE__ROOT: "${STORAGE__ROOT:-/mnt/archive}"
     volumes:
       # Mount entire project for hot-reload during development.

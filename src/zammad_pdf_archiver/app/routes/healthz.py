@@ -1,14 +1,19 @@
+"""Project module."""
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from datetime import UTC, datetime
 from importlib import metadata
 
+import structlog
 from fastapi import APIRouter, Request
 
+from zammad_pdf_archiver.config.redact import scrub_secrets_in_text
 from zammad_pdf_archiver.config.settings import Settings
 
 router = APIRouter()
+log = structlog.get_logger(__name__)
 
 
 def _service_version() -> str:
@@ -25,7 +30,8 @@ def _check_storage(settings: Settings) -> dict[str, object]:
         with tempfile.NamedTemporaryFile(dir=root, delete=True):
             return {"writable": True}
     except OSError as exc:
-        return {"writable": False, "reason": str(exc)[:200]}
+        log.warning("healthz.storage_check_failed", error=scrub_secrets_in_text(str(exc)))
+        return {"writable": False, "reason": "storage_unavailable"}
 
 
 def _deep_check_healthy(_name: str, result: object) -> bool | None:
@@ -40,7 +46,7 @@ def _deep_check_healthy(_name: str, result: object) -> bool | None:
 
 async def _deep_checks(settings: Settings) -> tuple[dict[str, object], bool]:
     checks: dict[str, object] = {}
-    checks["storage"] = _check_storage(settings)
+    checks["storage"] = await asyncio.to_thread(_check_storage, settings)
     healthy_checks = [
         result
         for name, value in checks.items()

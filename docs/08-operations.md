@@ -10,12 +10,16 @@ service. Deployment preparation lives in [deploy.md](deploy.md).
 - `POST /ingest/batch`: returns `202` after accepting a batch; each payload is
   scheduled separately.
 - `POST /retry/{ticket_id}`: returns `202` after accepting one forced retry.
-- `GET /jobs/history`: returns process-local history.
+- `GET /jobs/history`: returns authenticated, process-local history.
 - `GET /healthz`: liveness/status, with optional `?deep=true` storage check.
 - `GET /metrics`: Prometheus metrics when enabled.
 
 `202` means accepted, not archived. Confirm completion by checking final tags,
 the internal ticket note, logs, and archive output.
+
+When the bounded in-process admission limit is full, ingest returns `503` with
+`code=job_capacity_exhausted` and `Retry-After: 1`; no background task was
+accepted. Batch requests are rejected as a whole when their jobs do not fit.
 
 ## Start and Stop
 
@@ -29,8 +33,8 @@ sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env down
 Health check:
 
 ```bash
-curl -fsS "http://127.0.0.1:${SERVER_PORT:-8080}/healthz"
-curl -fsS "http://127.0.0.1:${SERVER_PORT:-8080}/healthz?deep=true"
+curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz"
+curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz?deep=true"
 ```
 
 ## Update and Rollback
@@ -81,9 +85,10 @@ Primary signals:
 
 ## Idempotency and Retry Limits
 
-The default runtime is process-local:
+The default runtime is single-instance and process-local:
 
-- Background tasks can be lost if the process exits before completion.
+- Graceful shutdown waits for admitted work, but a process crash or abrupt
+  termination can lose accepted background work.
 - In-flight ticket locks are process-local.
 - Delivery-ID dedupe is in-memory and resets on restart.
 - A delivery ID is claimed before processing completes, so retry with a new
@@ -91,6 +96,11 @@ The default runtime is process-local:
 
 Use one service instance unless you have verified the concurrency and storage
 semantics for your deployment.
+
+Internal success/error note creation is a non-idempotent Zammad `POST` and is
+attempted once per processing pass; transport and 5xx failures are not retried
+automatically to avoid duplicate notes. Re-run the ticket through the workflow
+or `POST /retry/{ticket_id}` after resolving the cause.
 
 ## Reprocessing Workflow
 

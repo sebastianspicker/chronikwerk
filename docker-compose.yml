@@ -3,8 +3,8 @@
 # =============================================================================
 #
 # Usage:
-#   1. Copy .env.example to .env and edit with your values
-#   2. docker compose up -d --build
+#   1. Create an external env file and set ARCHIVER_ENV_FILE to its path
+#   2. docker compose --env-file "$ARCHIVER_ENV_FILE" up -d --build
 #   3. curl http://localhost:8080/healthz
 #
 # For dev/hot-reload, use: docker compose -f docker-compose.dev.yml up --build
@@ -22,19 +22,19 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${SERVER_PORT:-8080}:${SERVER_PORT:-8080}"
+      - "${SERVER__PORT:-8080}:${SERVER__PORT:-8080}"
     env_file:
       # Docker Compose >= 2.24.0 required for `path` + `required`.
-      - path: .env
+      - path: "${ARCHIVER_ENV_FILE:-.env}"
         required: false
     environment:
-      # Sane defaults -- override in .env or host environment.
-      SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"
-      SERVER_PORT: "${SERVER_PORT:-8080}"
+      # Sane defaults -- override in the external env file or host environment.
+      SERVER__HOST: "${SERVER__HOST:-0.0.0.0}"
+      SERVER__PORT: "${SERVER__PORT:-8080}"
       STORAGE__ROOT: "${STORAGE__ROOT:-/mnt/archive}"
       SIGNING__PFX_PATH: "${SIGNING__PFX_PATH:-/run/secrets/signing.pfx}"
     volumes:
-      # Config file (optional). Set CONFIG_PATH=./config/config.yaml in .env to enable.
+      # Config file (optional). Set CONFIG_PATH in the external env file to enable.
       - ./config:/app/config:ro
 
       # Archive storage: bind-mount the host path where PDFs should be written.
@@ -56,7 +56,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os,urllib.request; p=os.getenv('SERVER_PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()\"",
+          "python -c \"import os,urllib.request; p=os.getenv('SERVER__PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()\"",
         ]
       interval: 10s
       timeout: 3s

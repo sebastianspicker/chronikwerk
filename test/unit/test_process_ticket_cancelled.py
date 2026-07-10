@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Tests deliberately exercise private cancellation orchestration primitives.
+# pylint: disable=protected-access,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
 
 import pytest
@@ -24,12 +28,12 @@ def test_process_ticket_with_client_cancellation_does_not_run_error_flow(
 ) -> None:
     settings = make_settings(str(tmp_path))
 
-    async def _cancelled_pipeline(**kwargs):  # noqa: ANN003, ARG001
+    async def _cancelled_pipeline(**_kwargs):  # noqa: ANN003, ARG001
         raise asyncio.CancelledError()
 
     called = {"error_handler": 0}
 
-    async def _error_handler(**kwargs):  # noqa: ANN003, ARG001
+    async def _error_handler(**_kwargs):  # noqa: ANN003, ARG001
         called["error_handler"] += 1
         return process_ticket_module.ProcessTicketResult(
             status="failed_permanent",

@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +25,7 @@ def _get_delivery_id_store(settings: Settings) -> InMemoryTTLSet | None:
 
 
 async def try_claim_delivery_id(settings: Settings, delivery_id: str) -> bool:
+    """Implement the try claim delivery id operation."""
     async with _STORE_GUARD:
         store = _get_delivery_id_store(settings)
         if store is None:
@@ -32,6 +34,7 @@ async def try_claim_delivery_id(settings: Settings, delivery_id: str) -> bool:
 
 
 async def try_acquire_ticket(_settings: Settings, ticket_id: int) -> bool:
+    """Implement the try acquire ticket operation."""
     async with _IN_FLIGHT_TICKETS_GUARD:
         if ticket_id in _IN_FLIGHT_TICKETS:
             return False
@@ -40,11 +43,13 @@ async def try_acquire_ticket(_settings: Settings, ticket_id: int) -> bool:
 
 
 async def release_ticket(ticket_id: int) -> None:
+    """Implement the release ticket operation."""
     async with _IN_FLIGHT_TICKETS_GUARD:
         _IN_FLIGHT_TICKETS.discard(ticket_id)
 
 
 async def aclose_stores() -> None:
+    """Implement the aclose stores operation."""
     async with _STORE_GUARD:
         _DELIVERY_ID_SETS.clear()
     async with _IN_FLIGHT_TICKETS_GUARD:
@@ -52,5 +57,6 @@ async def aclose_stores() -> None:
 
 
 def reset_for_tests() -> None:
+    """Implement the reset for tests operation."""
     _DELIVERY_ID_SETS.clear()
     _IN_FLIGHT_TICKETS.clear()

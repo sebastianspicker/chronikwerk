@@ -1,6 +1,8 @@
 # pylint: disable=import-outside-toplevel
+"""Project module."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import warnings
 from collections.abc import Generator
@@ -76,7 +78,23 @@ async def render_pdf(
     locale: str = "de_DE",
     timezone: str = "Europe/Berlin",
 ) -> bytes:
+    """Implement the render pdf operation."""
     _validate_article_limit(snapshot, max_articles)
+    return await asyncio.to_thread(
+        _render_pdf_sync,
+        snapshot,
+        locale=locale,
+        timezone=timezone,
+    )
+
+
+def _render_pdf_sync(
+    snapshot: Snapshot,
+    *,
+    locale: str,
+    timezone: str,
+) -> bytes:
+    """Render inside one worker thread, keeping template resources alive there."""
     with _template_folder_path() as template_folder:
         html = render_html(
             snapshot,

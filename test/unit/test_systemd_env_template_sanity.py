@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ipaddress import IPv4Address
 from pathlib import Path
 
 
@@ -32,3 +33,24 @@ def test_systemd_env_template_marks_webhook_secret_as_required_by_default() -> N
 
     assert "Webhook auth (required unless you explicitly enable unsigned mode" in text
     assert "ZAMMAD__WEBHOOK_HMAC_SECRET" in text
+
+
+def test_systemd_env_template_uses_nested_settings_keys() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    env_path = repo_root / "infra" / "systemd" / "zammad-archiver.env"
+    env = _parse_env_file(env_path)
+
+    # IPv4Address(0) is the standard all-interfaces bind address.
+    assert env["SERVER__HOST"] == str(IPv4Address(0))
+    assert env["SERVER__PORT"] == "8080"
+    assert env["OBSERVABILITY__LOG_LEVEL"] == "INFO"
+    assert "SERVER_PORT" not in env
+
+
+def test_systemd_unit_passes_external_env_file_to_compose() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    unit_path = repo_root / "infra" / "systemd" / "zammad-archiver.service"
+    text = unit_path.read_text("utf-8")
+
+    assert "EnvironmentFile=/etc/zammad-archiver/zammad-archiver.env" in text
+    assert "--env-file ${ARCHIVER_ENV_FILE}" in text

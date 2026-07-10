@@ -92,7 +92,8 @@ Common errors:
 
 ### `GET /jobs/history`
 
-Returns process-local processing history.
+Returns process-local processing history when explicitly enabled. The route is
+disabled by default and requires `Authorization: Bearer <OBSERVABILITY__HISTORY_BEARER_TOKEN>`.
 
 Query parameters:
 
@@ -142,14 +143,13 @@ and `version`.
 
 ## `GET /metrics`
 
-Mounted only when `observability.metrics_enabled=true`.
+Mounted only when `observability.metrics_enabled=true`; configuration also
+requires a non-blank bearer token.
 
 Authentication:
 
-- If `OBSERVABILITY__METRICS_BEARER_TOKEN` is set, requests must include
-  `Authorization: Bearer <token>`.
-- Without a configured token, the endpoint is unauthenticated and must be
-  protected by network controls.
+- `OBSERVABILITY__METRICS_BEARER_TOKEN` is required when metrics are enabled;
+  requests must include `Authorization: Bearer <token>`.
 
 Response format: Prometheus text exposition.
 
@@ -159,13 +159,12 @@ Supported signature header:
 
 - `X-Hub-Signature`
 
-Supported algorithms:
+Supported algorithm:
 
-- `sha1=<hex>`
 - `sha256=<hex>`
 
-The signature is computed over the raw request body bytes. Prefer SHA-256 for
-new setups.
+The signature is computed over the raw request body bytes. SHA-1 compatibility
+is not supported.
 
 Example:
 

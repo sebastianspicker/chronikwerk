@@ -1,6 +1,8 @@
 # Deployment
 
-This project ships production-oriented Docker and Docker Compose artifacts.
+This project ships production-oriented Docker and Docker Compose artifacts. Use
+one external environment file for both Compose interpolation and the container;
+set `ARCHIVER_ENV_FILE` in that file to its installed path.
 
 ## Prerequisites
 
@@ -26,7 +28,7 @@ sudo rsync -a --delete ./ /opt/zammad-ticket-archiver/
 Copy a template and edit it on the target host:
 
 ```bash
-sudo install -m 0640 -o root -g root .env.example /etc/zammad-archiver/zammad-archiver.env
+sudo install -m 0640 -o root -g root infra/systemd/zammad-archiver.env /etc/zammad-archiver/zammad-archiver.env
 sudo ${EDITOR:-vi} /etc/zammad-archiver/zammad-archiver.env
 ```
 
@@ -36,6 +38,12 @@ Minimum values:
 - `ZAMMAD__API_TOKEN`
 - `ZAMMAD__WEBHOOK_HMAC_SECRET`
 - `STORAGE__ROOT`
+
+Keep this line in the installed file and update it if the location changes:
+
+```bash
+ARCHIVER_ENV_FILE=/etc/zammad-archiver/zammad-archiver.env
+```
 
 ## Optional Signing Material
 
@@ -67,7 +75,7 @@ services:
 ```bash
 cd /opt/zammad-ticket-archiver
 sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
-curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz"
 ```
 
 ## CIFS/SMB Storage

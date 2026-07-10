@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -73,6 +74,7 @@ class _TicketJobContext:
 
 @dataclass(frozen=True)
 class ProcessTicketResult:
+    """Implement the ProcessTicketResult operation."""
     status: str
     ticket_id: int | None
     classification: str | None = None
@@ -212,6 +214,8 @@ async def _process_ticket_with_client(
         timeout_seconds=settings.zammad.timeout_seconds,
         verify_tls=settings.zammad.verify_tls,
         trust_env=settings.hardening.transport.trust_env,
+        allow_insecure_http=settings.hardening.transport.allow_insecure_http,
+        allow_private_networks=settings.hardening.transport.allow_private_networks,
     ) as client:
         observe_total = True
         total_start = perf_counter()
@@ -347,7 +351,8 @@ async def _render_and_store_ticket(
         settings=ctx.settings,
     )
     target_path, sidecar_path = storage_paths
-    return store_ticket_files(
+    return await asyncio.to_thread(
+        store_ticket_files,
         pdf_bytes=pdf_bytes,
         snapshot=snapshot,
         target_path=target_path,
@@ -366,6 +371,28 @@ async def _finalize_success(
     now: datetime,
     storage_result: StorageResult,
 ) -> None:
+    try:
+        await async_retry(
+            lambda: apply_done(client, ctx.ticket_id, trigger_tag=trigger_tag),
+            max_retries=3,
+            backoff_base=0.5,
+            backoff_factor=2.0,
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        # The PDF and audit sidecar are durable at this point, but the ticket
+        # state is not.  Re-raise so the existing failure path can remove the
+        # processing tag, record a failure, and avoid a false processed signal.
+        log.exception(
+            "process_ticket.finalization_failed_after_storage",
+            ticket_id=ctx.ticket_id,
+            storage_succeeded=True,
+            storage_path=str(storage_result.target_path),
+            sidecar_path=str(storage_result.sidecar_path),
+            size_bytes=storage_result.size_bytes,
+            sha256_hex=storage_result.sha256_hex,
+        )
+        raise
+
     if ctx.settings.workflow.acknowledge_on_success:
         await client.create_internal_article(
             ctx.ticket_id,
@@ -381,15 +408,6 @@ async def _finalize_success(
                 timestamp_utc=format_timestamp_utc(now),
             ),
         )
-    try:
-        await async_retry(
-            lambda: apply_done(client, ctx.ticket_id, trigger_tag=trigger_tag),
-            max_retries=3,
-            backoff_base=0.5,
-            backoff_factor=2.0,
-        )
-    except Exception:  # pylint: disable=broad-exception-caught
-        log.exception("process_ticket.apply_done_failed", ticket_id=ctx.ticket_id)
 
     processed_total.inc()
     _record_history(ctx, status="processed")

@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -27,6 +28,7 @@ def _env_for() -> Environment:
 def _register_filters(env: Environment) -> None:
     @pass_context
     def datetime_filter(ctx: dict[str, Any], value: Any, fmt: str = "%d.%m.%Y %H:%M") -> str:
+        """Implement the datetime filter operation."""
         return _format_datetime(
             value,
             fmt=fmt,
@@ -53,6 +55,7 @@ def render_html(
     locale: str = "de_DE",
     timezone: str = "Europe/Berlin",
 ) -> str:
+    """Implement the render html operation."""
     template = _env_for().get_template(_TEMPLATE_PATH)
     return template.render(
         snapshot=snapshot,

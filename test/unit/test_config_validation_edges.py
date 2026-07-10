@@ -30,6 +30,15 @@ def test_metrics_without_token_is_rejected(tmp_path: Path) -> None:
     assert "observability.metrics_bearer_token" in str(exc.value)
 
 
+def test_history_without_token_is_rejected(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, observability={"history_enabled": True})
+
+    with pytest.raises(ConfigValidationError) as exc:
+        validate_settings(settings)
+
+    assert "observability.history_bearer_token" in str(exc.value)
+
+
 def test_delivery_id_requires_ttl(tmp_path: Path) -> None:
     settings = _settings(
         tmp_path,

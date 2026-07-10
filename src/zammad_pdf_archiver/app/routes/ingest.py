@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,7 @@ from zammad_pdf_archiver.app.constants import (
     FORCE_REPROCESS_KEY,
     REQUEST_ID_KEY,
 )
+from zammad_pdf_archiver.app.jobs.admission import AdmissionClosed, JobAdmission
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down, track_task
 from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_token
@@ -28,7 +30,7 @@ log = structlog.get_logger(__name__)
 MAX_BATCH_SIZE: int = 100
 
 
-class IngestPayload(BaseModel):
+class IngestPayload(BaseModel):  # pylint: disable=too-few-public-methods
     """Minimal webhook payload schema: require resolvable ticket id; allow extra fields."""
 
     model_config = ConfigDict(extra="allow")
@@ -45,6 +47,7 @@ class IngestPayload(BaseModel):
         return self
 
     def resolved_ticket_id(self) -> int | None:
+        """Implement the resolved ticket id operation."""
         return extract_ticket_id(self.model_dump())
 
 
@@ -64,15 +67,23 @@ async def _run_process_ticket_background(
     delivery_id: str | None,
     payload: dict[str, Any],
     settings: Settings,
+    admission: JobAdmission,
 ) -> None:
     ticket_id = extract_ticket_id(payload)
     if ticket_id is None:
         log.warning("ingest.skip_background_no_ticket_id", delivery_id=delivery_id)
+        admission.cancel_reservation()
         return
 
     bound: dict[str, object] = {"ticket_id": ticket_id}
     if delivery_id:
         bound["delivery_id"] = delivery_id
+
+    try:
+        await admission.acquire()
+    except AdmissionClosed:
+        log.info("ingest.job_cancelled_during_shutdown", ticket_id=ticket_id)
+        return
 
     structlog.contextvars.bind_contextvars(**bound)
     try:
@@ -85,6 +96,7 @@ async def _run_process_ticket_background(
         )
     finally:
         structlog.contextvars.unbind_contextvars(*bound.keys())
+        await admission.release()
 
 
 def _schedule_background_task(
@@ -92,16 +104,34 @@ def _schedule_background_task(
     delivery_id: str | None,
     payload: dict[str, Any],
     settings: Settings,
-) -> None:
-    track_task(
-        asyncio.create_task(
+    admission: JobAdmission,
+) -> bool:
+    if not admission.try_reserve():
+        return False
+    try:
+        task = asyncio.create_task(
             _run_process_ticket_background(
                 delivery_id=delivery_id,
                 payload=payload,
                 settings=settings,
+                admission=admission,
             )
         )
+    except Exception:
+        admission.cancel_reservation()
+        raise
+    track_task(task)
+    return True
+
+
+def _overload_error() -> JSONResponse:
+    response = api_error(
+        503,
+        "Service is at background job capacity; retry later.",
+        code="job_capacity_exhausted",
     )
+    response.headers["Retry-After"] = "1"
+    return response
 
 
 def _resolve_settings_or_error(request: Request) -> tuple[Settings | None, JSONResponse | None]:
@@ -127,6 +157,7 @@ async def ingest_webhook(
         return error
     if settings is None:
         return api_error(503, "settings not configured", code="settings_not_configured")
+    admission: JobAdmission = request.app.state.admission
 
     ticket_id = payload.resolved_ticket_id()
     if dry_run:
@@ -143,25 +174,13 @@ async def ingest_webhook(
         )
         ticket_id = extract_ticket_id(payload_for_job)
         if ticket_id is not None:
-            bound: dict[str, object] = {"ticket_id": ticket_id}
-            if delivery_id:
-                bound["delivery_id"] = delivery_id
-
-            structlog.contextvars.bind_contextvars(**bound)
-            try:
-                _schedule_background_task(
+            if not _schedule_background_task(
                 delivery_id=delivery_id,
                 payload=payload_for_job,
                 settings=settings,
-            )
-            except Exception:  # pylint: disable=broad-exception-caught
-                log.exception(
-                    "ingest.process_ticket_unhandled_error",
-                    ticket_id=ticket_id,
-                    delivery_id=delivery_id,
-                )
-            finally:
-                structlog.contextvars.unbind_contextvars(*bound.keys())
+                admission=admission,
+            ):
+                return _overload_error()
 
     return JSONResponse(status_code=202, content={"status": "accepted", "ticket_id": ticket_id})
 
@@ -178,6 +197,7 @@ async def batch_ingest(
         return error
     if settings is None:
         return api_error(503, "settings not configured", code="settings_not_configured")
+    admission: JobAdmission = request.app.state.admission
 
     # Security: reject oversized batches before processing any items.
     if len(payloads) > MAX_BATCH_SIZE:
@@ -193,7 +213,7 @@ async def batch_ingest(
             content={"status": "dry_run_accepted", "count": len(payloads)},
         )
 
-    accepted = 0
+    jobs: list[tuple[str | None, dict[str, Any]]] = []
     batch_delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
     for index, payload in enumerate(payloads):
         ticket_id = payload.resolved_ticket_id()
@@ -203,14 +223,29 @@ async def batch_ingest(
                 getattr(request.state, "request_id", None),
             )
             delivery_id = f"{batch_delivery_id}:{index}" if batch_delivery_id is not None else None
-            _schedule_background_task(
-                delivery_id=delivery_id,
-                payload=payload_for_job,
-                settings=settings,
-            )
-            accepted += 1
+            jobs.append((delivery_id, payload_for_job))
 
-    return JSONResponse(status_code=202, content={"status": "accepted", "count": accepted})
+    if jobs and not admission.try_reserve(len(jobs)):
+        return _overload_error()
+
+    created = 0
+    try:
+        for delivery_id, payload_for_job in jobs:
+            task = asyncio.create_task(
+                _run_process_ticket_background(
+                    delivery_id=delivery_id,
+                    payload=payload_for_job,
+                    settings=settings,
+                    admission=admission,
+                )
+            )
+            track_task(task)
+            created += 1
+    except Exception:
+        admission.cancel_reservation(len(jobs) - created)
+        raise
+
+    return JSONResponse(status_code=202, content={"status": "accepted", "count": len(jobs)})
 
 
 @router.post("/retry/{ticket_id}", status_code=202)
@@ -230,10 +265,13 @@ async def retry_ticket(
     payload_for_job: dict[str, Any] = {"ticket_id": ticket_id}
     payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
     payload_for_job[FORCE_REPROCESS_KEY] = True
-    _schedule_background_task(
+    admission: JobAdmission = request.app.state.admission
+    if not _schedule_background_task(
         delivery_id=None,  # Retry does not need deduplication
         payload=payload_for_job,
         settings=settings,
-    )
+        admission=admission,
+    ):
+        return _overload_error()
 
     return JSONResponse(status_code=202, content={"status": "accepted", "ticket_id": ticket_id})

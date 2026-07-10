@@ -8,6 +8,7 @@ name: Security
 #   - If severity cannot be determined, we fail closed (treat as CRITICAL).
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -40,13 +41,36 @@ jobs:
           python -m pip install --no-cache-dir -U pip
           python -m pip install --no-cache-dir -U pip-audit cvss
 
-      - name: Run pip-audit (JSON)
+      - name: Audit base production dependencies
         run: |
-          # pip-audit returns exit code 1 when it finds vulnerabilities.
-          # We always capture JSON and enforce our policy in the next step.
-          pip-audit -f json -s osv --desc off --aliases on -o pip-audit.json . || true
-          if [ ! -f pip-audit.json ]; then echo '{"dependencies":[]}' > pip-audit.json; fi
+          set +e
+          pip-audit -f json -s osv --desc off --aliases on -o pip-audit-base.json .
+          audit_status=$?
+          set -e
+          printf '{"tool":"pip-audit","exit_code":%s}\n' "$audit_status" > pip-audit-base.status.json
 
-      - name: Enforce policy (fail on CRITICAL and HIGH)
+      - name: Enforce base audit policy
         run: |
+          PIP_AUDIT_INPUT_PATH=pip-audit-base.json \
+          PIP_AUDIT_STATUS_PATH=pip-audit-base.status.json \
+          python scripts/ci/enforce_pip_audit_policy.py
+
+      - name: Install signing production dependencies
+        run: python -m pip install --no-cache-dir -U ".[signing]"
+
+      - name: Audit signing production dependencies
+        run: |
+          set +e
+          # Audit the installed signing environment, not the base project
+          # metadata, so the extra package set is actually covered.
+          pip-audit --local -f json -s osv --desc off --aliases on -o pip-audit-signing.json
+          audit_status=$?
+          set -e
+          printf '{"tool":"pip-audit","exit_code":%s}\n' "$audit_status" > pip-audit-signing.status.json
+
+      - name: Enforce signing audit policy and package coverage
+        run: |
+          PIP_AUDIT_INPUT_PATH=pip-audit-signing.json \
+          PIP_AUDIT_STATUS_PATH=pip-audit-signing.status.json \
+          PIP_AUDIT_REQUIRED_PACKAGES=cryptography,pyhanko,pyhanko-certvalidator,asn1crypto \
           python scripts/ci/enforce_pip_audit_policy.py

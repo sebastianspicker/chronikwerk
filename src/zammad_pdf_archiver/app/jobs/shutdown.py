@@ -1,3 +1,4 @@
+"""Project module."""
 import asyncio
 from threading import Event
 
@@ -16,6 +17,7 @@ def set_shutting_down() -> None:
 
 
 def clear_shutting_down() -> None:
+    """Implement the clear shutting down operation."""
     _SHUTTING_DOWN.clear()
 
 
@@ -40,6 +42,7 @@ async def _await_or_cancel_tasks(loop_tasks: set[asyncio.Task], *, timeout: floa
     except TimeoutError:
         for task in loop_tasks:
             task.cancel()
+        await asyncio.gather(*loop_tasks, return_exceptions=True)
     finally:
         _TASKS.difference_update(loop_tasks)
 

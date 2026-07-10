@@ -1,21 +1,77 @@
 from __future__ import annotations
 
-# ruff: noqa: I001
 import asyncio
 import hashlib
 import hmac
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from test.support.settings_factory import make_settings
+import httpx
+import respx
 from fastapi.testclient import TestClient
+
+from test.support.credentials import fake_credential  # pylint: disable=wrong-import-order
+from test.support.settings_factory import make_settings  # pylint: disable=wrong-import-order
+from zammad_pdf_archiver.adapters.storage.layout import build_filename_from_pattern
 from zammad_pdf_archiver.adapters.zammad.models import TagList
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.errors import TransientError
 
-TEST_WEBHOOK_SECRET = "test-webhook-secret"
+TEST_WEBHOOK_SECRET = fake_credential("webhook")
+
+
+def fixed_process_ticket_now(monkeypatch: Any, module: Any) -> datetime:
+    fixed = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(module, "now_utc", lambda: fixed)
+    return fixed
+
+
+def expected_process_ticket_pdf_path(tmp_path: Path, settings: Settings, now: datetime) -> Path:
+    filename = build_filename_from_pattern(
+        settings.storage.filename_pattern,
+        ticket_number="20240123",
+        timestamp_utc=now.date().isoformat(),
+    )
+    return tmp_path / "agent" / "A" / "B" / "C" / filename
+
+
+def archive_ticket_json(
+    ticket_id: int = 123,
+    *,
+    number: str = "20240123",
+    owner: str = "agent",
+    fallback: str = "fallback-agent",
+    archive_path: str | list[str] = "A > B > C",
+) -> dict[str, object]:
+    return {
+        "id": ticket_id,
+        "number": number,
+        "title": "Example Ticket",
+        "owner": {"login": owner},
+        "updated_by": {"login": fallback},
+        "preferences": {
+            "custom_fields": {
+                "archive_user_mode": "owner",
+                "archive_path": archive_path,
+            }
+        },
+    }
+
+
+def archive_article_json() -> dict[str, object]:
+    return {
+        "id": 1,
+        "created_at": "2026-02-07T11:59:00Z",
+        "internal": False,
+        "subject": "Hello",
+        "body": "<p>Hello World</p>",
+        "content_type": "text/html",
+        "from": "customer@example.invalid",
+        "attachments": [],
+    }
 
 
 def post_signed_json(
@@ -44,6 +100,45 @@ def process_ticket_settings(storage_root: Path) -> Settings:
 
 def process_ticket_payload(ticket_id: int = 321) -> dict[str, dict[str, int]]:
     return {"ticket": {"id": ticket_id}}
+
+
+def process_ticket_request_payload(request_id: str, ticket_id: int = 123) -> dict[str, object]:
+    return {
+        "ticket": {"id": ticket_id},
+        "_request_id": request_id,
+        "user": {"login": "agent-from-webhook"},
+    }
+
+
+def register_process_ticket_fetch_routes(*, articles: list[dict[str, object]]) -> None:
+    respx.get("https://zammad.example.local/api/v1/tickets/123").mock(
+        return_value=httpx.Response(200, json=archive_ticket_json())
+    )
+    respx.get(
+        "https://zammad.example.local/api/v1/tags",
+        params={"object": "Ticket", "o_id": "123"},
+    ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
+    respx.get("https://zammad.example.local/api/v1/ticket_articles/by_ticket/123").mock(
+        return_value=httpx.Response(200, json=articles)
+    )
+
+
+def register_process_ticket_tag_routes() -> tuple[respx.Route, respx.Route]:
+    remove_tag_route = respx.post("https://zammad.example.local/api/v1/tags/remove").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    add_tag_route = respx.post("https://zammad.example.local/api/v1/tags/add").mock(
+        return_value=httpx.Response(200, json={"success": True})
+    )
+    return remove_tag_route, add_tag_route
+
+
+def register_process_ticket_article_route(
+    json_body: dict[str, object] | None = None,
+) -> respx.Route:
+    return respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
+        return_value=httpx.Response(200, json=json_body or {"id": 999})
+    )
 
 
 def fake_ticket(ticket_id: int, title: str) -> SimpleNamespace:

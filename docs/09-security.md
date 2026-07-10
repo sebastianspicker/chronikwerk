@@ -30,7 +30,7 @@ flowchart LR
 
 - HMAC verification for `/ingest` and `/ingest/batch`.
 - Fail-closed behavior when signed mode is required but no secret is configured.
-- SHA-1 and SHA-256 signatures are accepted; prefer SHA-256 for new setups.
+- SHA-256 HMAC signatures are required; SHA-1 is not accepted.
 
 ### Replay and Duplicate Delivery
 
@@ -64,8 +64,24 @@ objects in production.
 
 ### Unsafe Upstream Transport
 
-- HTTP upstreams, disabled TLS verification, loopback, and link-local upstreams
-  require explicit unsafe configuration.
+- HTTPS and certificate verification are required by default. Set
+  `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP=true` only for an explicitly
+  isolated test/internal deployment.
+- Loopback, private, link-local, unspecified, reserved, and multicast address
+  literals are rejected. DNS names are resolved off the event loop before the
+  first outbound request and every returned address is checked; resolution
+  failure is fail-closed. `HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS=true`
+  is an explicit test/internal override.
+- `trust_env` remains opt-in. Proxy configuration and DNS rebinding can still
+  change the effective network path; enforce egress policy at the host or
+  proxy boundary for production.
+
+### Job History
+
+`/jobs/history` is disabled by default. To expose it, enable
+`OBSERVABILITY__HISTORY_ENABLED=true` and provide a dedicated non-blank
+`OBSERVABILITY__HISTORY_BEARER_TOKEN`; configuration fails closed when the
+token is missing.
 
 ## Hardening Checklist
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# pylint: disable=wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
 import errno
 import json
@@ -310,8 +313,8 @@ def test_process_ticket_v01_invalid_archive_path_is_permanent_and_writes_no_file
 
         asyncio.run(process_ticket("delivery-path-invalid-1", payload, settings))
 
-        assert list(tmp_path.rglob("*.pdf")) == []
-        assert list(tmp_path.rglob("*.pdf.json")) == []
+        assert not list(tmp_path.rglob("*.pdf"))
+        assert not list(tmp_path.rglob("*.pdf.json"))
 
         added = _called_tag_items(routes.add_tag)
         removed = _called_tag_items(routes.remove_tag)
@@ -336,6 +339,7 @@ def test_process_ticket_v01_enforces_pdf_max_articles_setting(tmp_path, monkeypa
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
             "storage": {"root": str(tmp_path)},
+            "hardening": {"transport": {"allow_private_networks": True}},
             "pdf": {"max_articles": 1},
         }
     )
@@ -366,6 +370,7 @@ def test_process_ticket_v01_pdf_max_articles_zero_disables_limit(tmp_path, monke
         {
             "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
             "storage": {"root": str(tmp_path)},
+            "hardening": {"transport": {"allow_private_networks": True}},
             "pdf": {"max_articles": 0},
         }
     )

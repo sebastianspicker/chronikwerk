@@ -25,6 +25,10 @@ Core template fields:
 - `ticket.custom_fields`
 - `articles[]`
 
+Each article may include attachment metadata (`filename`, `size`, content type,
+and identifiers). Attachment binary content is intentionally not persisted by
+the storage layer; the metadata is rendered in the PDF only.
+
 ## Path Fields
 
 Path placement is derived from ticket custom fields:

@@ -19,6 +19,11 @@ The exact filename comes from `storage.filename_pattern`.
 - Final paths are resolved under `storage.root`.
 - Symlinks under the storage root are rejected before writes.
 - PDF and sidecar writes use atomic replace behavior.
+- Attachment binaries are not archived; attachment metadata remains in the PDF
+  snapshot and templates only.
+- Replacements use a collision-proof transaction backup. The sidecar is moved
+  last as the completion marker; a failed commit restores the prior PDF and
+  sidecar pair, or removes the partial PDF on a first write.
 - Optional fsync is enabled by default with `storage.fsync=true`.
 
 ## Operational Checks
@@ -30,6 +35,10 @@ Before production use, verify:
 - enough free space and quota
 - `GET /healthz?deep=true` reports writable storage
 - one real archive run produces both PDF and sidecar
+
+If a replacement fails during commit, the original canonical PDF and sidecar
+remain the authoritative pair. Backup and rollback cleanup failures are logged
+separately from the original write failure and may require filesystem cleanup.
 
 ## CIFS/SMB Notes
 

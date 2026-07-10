@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from pyhanko.sign.timestamps.common_utils import set_tsp_headers
 
 from zammad_pdf_archiver.adapters.http_util import timeouts_for
 from zammad_pdf_archiver.config.settings import SigningSettings
+from zammad_pdf_archiver.config.transport import PolicyEnforcingAsyncTransport
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 
@@ -20,9 +22,17 @@ class _TsaConfig:
     ca_bundle_path: Path | None
     auth: tuple[str, str] | None
     trust_env: bool
+    allow_insecure_http: bool = False
+    allow_private_networks: bool = False
 
 
-def _load_tsa_config(signing: SigningSettings, *, trust_env: bool = False) -> _TsaConfig:
+def _load_tsa_config(
+    signing: SigningSettings,
+    *,
+    trust_env: bool = False,
+    allow_insecure_http: bool = False,
+    allow_private_networks: bool = False,
+) -> _TsaConfig:
     rfc3161 = signing.timestamp.rfc3161
 
     tsa_url = rfc3161.tsa_url
@@ -51,11 +61,14 @@ def _load_tsa_config(signing: SigningSettings, *, trust_env: bool = False) -> _T
         ca_bundle_path=ca_bundle_path,
         auth=auth,
         trust_env=trust_env,
+        allow_insecure_http=allow_insecure_http,
+        allow_private_networks=allow_private_networks,
     )
 
 
-class _HttpxRFC3161TimeStamper(TimeStamper):
+class _HttpxRFC3161TimeStamper(TimeStamper):  # pylint: disable=too-few-public-methods
     def __init__(self, config: _TsaConfig):
+        """Implement the   init   operation."""
         super().__init__()
         self._config = config
 
@@ -67,15 +80,24 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
 
     async def _post_tsa_request(self, req: tsp.TimeStampReq) -> httpx.Response:
         try:
+            limits = httpx.Limits(max_connections=2, max_keepalive_connections=1)
+            transport = PolicyEnforcingAsyncTransport(
+                allow_insecure_http=self._config.allow_insecure_http,
+                allow_private_networks=self._config.allow_private_networks,
+                verify=self._verify_value(),
+                trust_env=self._config.trust_env,
+                limits=limits,
+            )
             auth: tuple[str | bytes, str | bytes] | None = self._config.auth
 
             async with httpx.AsyncClient(
                 timeout=timeouts_for(self._config.timeout_seconds),
-                limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
+                limits=limits,
                 verify=self._verify_value(),
                 trust_env=self._config.trust_env,
                 follow_redirects=False,
                 auth=auth,
+                transport=transport,
             ) as client:
                 return await client.post(
                     self._config.url,
@@ -108,8 +130,8 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
     def _validate_tsa_status(tsa_resp: tsp.TimeStampResp) -> None:
         status_info = tsa_resp["status"]
         status_value = status_info["status"].native
-        _ACCEPTED_STATUSES = {"granted", "granted_with_mods"}
-        if status_value not in _ACCEPTED_STATUSES:
+        accepted_statuses = {"granted", "granted_with_mods"}
+        if status_value not in accepted_statuses:
             status_string = ""
             try:
                 status_string = status_info["status_string"].native or ""
@@ -131,6 +153,7 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
             )
 
     async def async_request_tsa_response(self, req: tsp.TimeStampReq) -> tsp.TimeStampResp:
+        """Implement the async request tsa response operation."""
         response = await self._post_tsa_request(req)
         self._validate_http_response(response)
         tsa_resp = self._parse_tsa_response(response)
@@ -139,7 +162,13 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
         return tsa_resp
 
 
-def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> TimeStamper:
+def build_timestamper(
+    signing: SigningSettings,
+    *,
+    trust_env: bool = False,
+    allow_insecure_http: bool = False,
+    allow_private_networks: bool = False,
+) -> TimeStamper:
     """
     Build a pyHanko-compatible RFC3161 timestamper.
 
@@ -149,5 +178,10 @@ def build_timestamper(signing: SigningSettings, *, trust_env: bool = False) -> T
       - PermanentError for misconfiguration or non-retryable TSA responses.
       - TransientError for network issues and HTTP 5xx responses.
     """
-    config = _load_tsa_config(signing, trust_env=trust_env)
+    config = _load_tsa_config(
+        signing,
+        trust_env=trust_env,
+        allow_insecure_http=allow_insecure_http,
+        allow_private_networks=allow_private_networks,
+    )
     return _HttpxRFC3161TimeStamper(config)

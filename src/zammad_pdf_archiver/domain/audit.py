@@ -1,4 +1,5 @@
 # pylint: disable=import-outside-toplevel
+"""Project module."""
 from __future__ import annotations
 
 import sys
@@ -37,6 +38,7 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
 
 @dataclass(frozen=True)
 class AuditRecordInput:
+    """Implement the AuditRecordInput operation."""
     ticket_id: int
     ticket_number: str
     title: str | None

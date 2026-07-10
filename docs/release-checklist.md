@@ -14,6 +14,18 @@ This project uses SemVer and Keep-a-Changelog style `CHANGELOG.md`.
 - You are on `main`.
 - The working tree is clean.
 - CI is green for the commit being released.
+- `make verify` is the first local release validation command: it enforces
+  branch-aware coverage at 85%, static/unit/integration/NFR checks, docs/config
+  checks, build and clean-wheel import, production-image unsigned-render smoke,
+  and dedicated Docker E2E.
+- On hosts without Docker, use `make verify-core` for non-container diagnostics;
+  it is not release sign-off because image and E2E checks remain mandatory.
+- Security dependency auditing remains a separate required fail-closed workflow
+  covering base and signing dependency environments.
+- RC publication is tag-only (`v*-rc.*`): reusable CI and security workflows
+  must pass for the tagged SHA, and the release job downloads their `dist`
+  artifact rather than rebuilding. Tag/version normalization and the exact
+  nonempty `CHANGELOG.md` section are mandatory checks.
 - Security workflow is green.
 - Target version and tag format are decided.
 
@@ -56,6 +68,16 @@ PY
 ```
 
 ## Docker Smoke Test
+
+Release evidence uses the production `Dockerfile`, not the development image.
+The dedicated API fixture builds that image, starts a minimal mock Zammad and
+archive volume, signs ingest bodies with SHA-256 HMAC, checks authenticated
+history, tags/notes, retry acceptance (`202`), PDF headers, sidecars, and
+checksums, then tears the stack down:
+
+```bash
+make test-e2e
+```
 
 ```bash
 docker build -t zammad-pdf-archiver:local .

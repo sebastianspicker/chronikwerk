@@ -10,12 +10,19 @@ Source of truth:
 
 Highest first:
 
-1. Environment variables, including values loaded from `.env`.
-2. YAML mapping from `CONFIG_PATH`, or `config/config.yaml` when present.
-3. Defaults in the settings model.
+1. Process environment variables.
+2. Explicit constructor/YAML values from `CONFIG_PATH`, or
+   `config/config.yaml` when present.
+3. Dotenv values from `.env`.
+4. File secrets when configured by the settings source.
+5. Defaults in the settings model.
 
 Nested environment keys use double underscores, for example
 `ZAMMAD__BASE_URL`.
+
+`config/config.example.yaml` is a complete model example. The systemd and
+Compose environment templates are intentionally partial deployment templates;
+their keys must be known model keys, but omitted settings use model defaults.
 
 ## Minimum Required Values
 
@@ -77,7 +84,6 @@ Production-like runs must provide:
 | `pdf.timezone` | `Europe/Berlin` | `PDF__TIMEZONE` | Time zone used by templates. |
 | `pdf.max_articles` | `250` | `PDF__MAX_ARTICLES` | Maximum article count; `0` disables the limit. |
 | `pdf.article_limit_mode` | `fail` | `PDF__ARTICLE_LIMIT_MODE` | `fail` or `cap_and_continue`. |
-| `pdf.max_total_attachment_bytes` | `52428800` | `PDF__MAX_TOTAL_ATTACHMENT_BYTES` | Maximum attachment bytes per ticket. |
 
 ## Signing
 
@@ -90,6 +96,7 @@ Production-like runs must provide:
 | `signing.pades.location` | `Datacenter` | `SIGNING__PADES__LOCATION` | Signature location. |
 | `signing.timestamp.enabled` | `false` | `SIGNING__TIMESTAMP__ENABLED` | Enable RFC3161 timestamping. |
 | `signing.timestamp.rfc3161.tsa_url` | `null` | `SIGNING__TIMESTAMP__RFC3161__TSA_URL` | TSA endpoint. |
+| `signing.timestamp.rfc3161.ca_bundle_path` | `null` | `SIGNING__TIMESTAMP__RFC3161__CA_BUNDLE_PATH` | Optional CA bundle for TSA TLS verification. |
 | `signing.timestamp.rfc3161.user` | `null` | `SIGNING__TIMESTAMP__RFC3161__USER` | TSA basic-auth user. |
 | `signing.timestamp.rfc3161.password` | `null` | `SIGNING__TIMESTAMP__RFC3161__PASSWORD` | TSA basic-auth password. |
 | `signing.timestamp.rfc3161.timeout_seconds` | `10.0` | `SIGNING__TIMESTAMP__RFC3161__TIMEOUT_SECONDS` | TSA request timeout. |
@@ -103,6 +110,8 @@ Production-like runs must provide:
 | `observability.metrics_enabled` | `false` | `OBSERVABILITY__METRICS_ENABLED` | Mount `/metrics`. |
 | `observability.metrics_bearer_token` | `null` | `OBSERVABILITY__METRICS_BEARER_TOKEN` | Bearer token for `/metrics`. |
 | `observability.healthz_omit_version` | `false` | `OBSERVABILITY__HEALTHZ_OMIT_VERSION` | Omit service/version from `/healthz`. |
+| `observability.history_enabled` | `false` | `OBSERVABILITY__HISTORY_ENABLED` | Expose authenticated process-local job history. |
+| `observability.history_bearer_token` | `null` | `OBSERVABILITY__HISTORY_BEARER_TOKEN` | Dedicated bearer token required when history is enabled. |
 
 ## Hardening
 
@@ -116,6 +125,16 @@ Production-like runs must provide:
 | `hardening.body_size_limit.max_bytes` | `1048576` | `HARDENING__BODY_SIZE_LIMIT__MAX_BYTES` | Request body limit; `0` disables. |
 | `hardening.webhook.require_delivery_id` | `false` | `HARDENING__WEBHOOK__REQUIRE_DELIVERY_ID` | Require `X-Zammad-Delivery`. |
 | `hardening.transport.trust_env` | `false` | `HARDENING__TRANSPORT__TRUST_ENV` | Allow proxy env vars for outbound HTTP. |
+| `hardening.transport.allow_insecure_http` | `false` | `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP` | Explicitly allow HTTP upstreams for isolated internal/test use. |
+| `hardening.transport.allow_private_networks` | `false` | `HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS` | Explicitly allow non-global upstream addresses for isolated internal/test use. |
+
+## Admission
+
+| Key | Default | Env key | Description |
+| --- | --- | --- | --- |
+| `admission.max_pending` | `100` | `ADMISSION__MAX_PENDING` | Maximum admitted jobs waiting for a running slot. |
+| `admission.max_running` | `4` | `ADMISSION__MAX_RUNNING` | Maximum ticket pipelines running concurrently. |
+| `admission.shutdown_timeout_seconds` | `5.0` | `ADMISSION__SHUTDOWN_TIMEOUT_SECONDS` | Graceful shutdown drain timeout before cancellation. |
 
 ## Top-Level Runtime Tokens
 

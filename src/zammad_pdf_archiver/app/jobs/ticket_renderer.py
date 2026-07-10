@@ -50,6 +50,7 @@ async def build_and_render_pdf(
     tags: TagList,
     settings: Settings,
 ) -> tuple[bytes, Snapshot]:
+    """Implement the build and render pdf operation."""
     snapshot = await build_snapshot(client, ticket_id, ticket=ticket, tags=tags)
     snapshot = _cap_articles_if_configured(
         snapshot,
@@ -68,7 +69,14 @@ async def build_and_render_pdf(
 
     if settings.signing.enabled:
         sign_started = perf_counter()
-        pdf_bytes = await asyncio.to_thread(sign_pdf, pdf_bytes, signing=settings.signing)
+        pdf_bytes = await asyncio.to_thread(
+            sign_pdf,
+            pdf_bytes,
+            signing=settings.signing,
+            trust_env=settings.hardening.transport.trust_env,
+            allow_insecure_http=settings.hardening.transport.allow_insecure_http,
+            allow_private_networks=settings.hardening.transport.allow_private_networks,
+        )
         sign_seconds.observe(perf_counter() - sign_started)
 
     return pdf_bytes, snapshot

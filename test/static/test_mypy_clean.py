@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -17,7 +17,8 @@ def test_mypy_clean(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["MYPY_CACHE_DIR"] = str(tmp_path)
 
-    # Fixed interpreter/module invocation.
+    # Fixed interpreter/module invocation: shell=False and no test-controlled argv.
+    # nosemgrep
     proc = subprocess.run(  # nosec B603
         [sys.executable, "-m", "mypy", ".", "--config-file", "pyproject.toml"],
         cwd=repo_root,

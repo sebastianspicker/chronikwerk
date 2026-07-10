@@ -11,7 +11,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
 
-RUN python -m pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir ".[signing]"
 
 
 FROM python:3.12-slim AS runtime
@@ -38,7 +38,9 @@ RUN addgroup --system --gid 10001 app \
 
 COPY --from=builder --chown=app:app /opt/venv /opt/venv
 
-COPY --chown=app:app config/ /app/config/
+# Only the public template belongs in the image. Local config/config.yaml and
+# signing material are supplied at runtime and excluded from the build context.
+COPY --chown=app:app config/config.example.yaml /app/config/config.example.yaml
 
 USER app:app
 

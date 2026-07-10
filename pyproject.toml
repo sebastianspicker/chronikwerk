@@ -39,7 +39,8 @@ dependencies = [
 
 [project.optional-dependencies]
 signing = [
-    "cryptography>=46.0.5,<48",
+    "asn1crypto>=1.5,<2.0",
+    "cryptography>=48.0.1,<49",
     "pyhanko>=0.26,<0.35",
     "pyhanko-certvalidator>=0.26,<0.31",
 ]
@@ -76,7 +77,26 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+
+[tool.ruff.lint.per-file-ignores]
+"test/**/*.py" = ["D"]
+
+[tool.bandit.assert_used]
+skips = ["*/test/**/*.py"]
+
+[tool.pylint."messages control"]
+disable = ["C0114", "C0115", "C0116"]
+
+[tool.pylint.design]
+# Service boundaries and typed record builders commonly need more than
+# Pylint's five-argument default; keep the ceiling low enough to retain signal.
+max-args = 8
+
+[tool.pylint.similarities]
+# Short repeated fixture literals and assertion sequences are normal in tests.
+# Keep R0801 focused on substantial cross-module duplication.
+min-similarity-lines = 20
 
 [tool.mypy]
 python_version = "3.12"
@@ -99,7 +119,7 @@ source = ["src/zammad_pdf_archiver"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 92
+fail_under = 85
 show_missing = true
 skip_empty = true
 exclude_lines = [

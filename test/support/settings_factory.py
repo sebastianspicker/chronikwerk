@@ -29,7 +29,10 @@ def make_settings(
         "hardening": {
             "webhook": {
                 "require_delivery_id": require_delivery_id,
-            }
+            },
+            # Test fixtures use non-resolvable example hosts and opt into the
+            # explicit internal-network override.
+            "transport": {"allow_private_networks": True},
         },
     }
     if secret is not None:

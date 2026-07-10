@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Imports occur after app construction to patch the lifecycle under test.
+# pylint: disable=import-outside-toplevel,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 from collections.abc import Generator
 
 import pytest

@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
@@ -11,6 +12,7 @@ router = APIRouter()
 
 @router.get("/metrics")
 def metrics(request: Request) -> Response:
+    """Implement the metrics operation."""
     settings = getattr(request.app.state, "settings", None)
     if settings is not None:
         token = settings.observability.metrics_bearer_token

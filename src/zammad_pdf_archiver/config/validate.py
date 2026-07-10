@@ -1,22 +1,27 @@
+"""Project module."""
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
 from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.config.transport import validate_url_policy
+from zammad_pdf_archiver.domain.errors import PermanentError
 
 
 @dataclass(frozen=True)
 class ConfigValidationIssue:
+    """Implement the ConfigValidationIssue operation."""
     path: str
     message: str
 
 
 class ConfigValidationError(ValueError):
+    """Implement the ConfigValidationError operation."""
     def __init__(self, issues: Iterable[ConfigValidationIssue]):
+        """Implement the   init   operation."""
         self.issues = list(issues)
         super().__init__(self._format_message())
 
@@ -28,6 +33,7 @@ class ConfigValidationError(ValueError):
 
 
 def issues_from_pydantic_error(error: ValidationError) -> list[ConfigValidationIssue]:
+    """Implement the issues from pydantic error operation."""
     issues: list[ConfigValidationIssue] = []
     for item in error.errors(include_url=False):
         loc = ".".join(str(part) for part in item.get("loc", ())) or "<root>"
@@ -67,13 +73,14 @@ def _validate_delivery_id_requirement(
 
 def _validate_transport(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     zammad_url = str(settings.zammad.base_url)
-    if zammad_url.lower().startswith("http://"):
-        issues.append(
-            ConfigValidationIssue(
-                path="zammad.base_url",
-                message="Plain HTTP upstream URL is not allowed. Use https://.",
-            )
+    try:
+        validate_url_policy(
+            zammad_url,
+            allow_insecure_http=settings.hardening.transport.allow_insecure_http,
+            allow_private_networks=settings.hardening.transport.allow_private_networks,
         )
+    except PermanentError as exc:
+        issues.append(ConfigValidationIssue(path="zammad.base_url", message=str(exc)))
     if not settings.zammad.verify_tls:
         issues.append(
             ConfigValidationIssue(
@@ -95,19 +102,16 @@ def _validate_tsa_transport(
     if tsa_url is None:
         return
     tsa_url_str = str(tsa_url)
-    parsed_tsa_url = urlparse(tsa_url_str)
-    if tsa_url_str.lower().startswith("http://"):
-        issues.append(
-            ConfigValidationIssue(
-                path="signing.timestamp.rfc3161.tsa_url",
-                message="Plain HTTP TSA URL is not allowed. Use https://.",
-            )
+    try:
+        validate_url_policy(
+            tsa_url_str,
+            allow_insecure_http=settings.hardening.transport.allow_insecure_http,
+            allow_private_networks=settings.hardening.transport.allow_private_networks,
         )
-    if (parsed_tsa_url.hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}:
+    except PermanentError as exc:
         issues.append(
             ConfigValidationIssue(
-                path="signing.timestamp.rfc3161.tsa_url",
-                message="Localhost TSA URL is not allowed.",
+                path="signing.timestamp.rfc3161.tsa_url", message=str(exc)
             )
         )
 
@@ -121,6 +125,15 @@ def _validate_observability(settings: Settings, issues: list[ConfigValidationIss
                 ConfigValidationIssue(
                     path="observability.metrics_bearer_token",
                     message="Metrics enabled but observability.metrics_bearer_token is missing.",
+                )
+            )
+    if settings.observability.history_enabled:
+        token = settings.observability.history_bearer_token
+        if token is None or not token.get_secret_value().strip():
+            issues.append(
+                ConfigValidationIssue(
+                    path="observability.history_bearer_token",
+                    message="History enabled but observability.history_bearer_token is missing.",
                 )
             )
 
@@ -137,6 +150,7 @@ def _validate_log_level(settings: Settings, issues: list[ConfigValidationIssue])
 
 
 def validate_settings(settings: Settings) -> None:
+    """Implement the validate settings operation."""
     issues: list[ConfigValidationIssue] = []
     _validate_webhook_auth(settings, issues)
     _validate_delivery_id_requirement(settings, issues)

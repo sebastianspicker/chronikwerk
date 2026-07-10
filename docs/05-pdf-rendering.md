@@ -50,10 +50,15 @@ Article fields include:
 ## HTML Safety
 
 - Jinja autoescape is enabled.
-- Article HTML is sanitized before rendering.
-- Active content and event handlers are removed.
-- Links are restricted to safe schemes such as `http`, `https`, and `mailto`.
-- If sanitized HTML is empty, templates can fall back to plain text.
+- Article bodies marked as HTML (or containing common markup) are processed by
+  a dependency-free allowlist sanitizer before rendering.
+- Rich formatting, tables, and safe links are retained; scripts, styles, forms,
+  event-handler/style attributes, and dangerous or scheme-relative URLs are
+  removed.
+- Malformed markup is recovered into a bounded fragment. If sanitization fails,
+  the source is escaped and rendered through the plain-text fallback.
+- Attachment binaries are not fetched or archived; attachment metadata is
+  rendered only in the PDF.
 
 ## Limits
 
@@ -61,7 +66,7 @@ Relevant settings:
 
 - `PDF__MAX_ARTICLES`
 - `PDF__ARTICLE_LIMIT_MODE`
-- `PDF__MAX_TOTAL_ATTACHMENT_BYTES`
-
-When limits are exceeded, behavior depends on configuration: fail the job or cap
-and continue with an archive warning.
+Attachments are represented as metadata only (`filename`, size, content type,
+and IDs). Attachment binaries are not archived and there is no attachment-byte
+limit setting. Article limits still fail the job or cap and continue according
+to `PDF__MAX_ARTICLES` and `PDF__ARTICLE_LIMIT_MODE`.

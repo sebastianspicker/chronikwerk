@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# pylint: disable=wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import asyncio
 from pathlib import Path
 

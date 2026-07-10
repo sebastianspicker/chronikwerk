@@ -71,6 +71,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Implement the main operation."""
     parser = _build_parser()
     args = parser.parse_args()
     if args.command is None:

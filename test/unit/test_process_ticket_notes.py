@@ -5,11 +5,12 @@ from zammad_pdf_archiver.app.jobs.ticket_notes import success_note_html as _succ
 from zammad_pdf_archiver.config.redact import REDACTED_VALUE
 
 
-def test_success_note_html_escapes_untrusted_values() -> None:
+def test_success_note_html_escapes_untrusted_values(tmp_path) -> None:
+    archive = tmp_path / "archive"
     html = _success_note_html(
-        storage_dir='/tmp/archive/<script>alert("x")</script>&',
+        storage_dir=f'{archive}/<script>alert("x")</script>&',
         filename='evil"><img src=x onerror=alert(1)>.pdf',
-        sidecar_path="/tmp/archive/file.pdf.json?<x>",
+        sidecar_path=f"{archive}/file.pdf.json?<x>",
         size_bytes=123,
         sha256_hex="ab" * 32,
         request_id="<b>req</b>",

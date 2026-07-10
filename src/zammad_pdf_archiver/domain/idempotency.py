@@ -1,3 +1,4 @@
+"""Project module."""
 from __future__ import annotations
 
 import time
@@ -8,6 +9,7 @@ class InMemoryTTLSet:
     """In-memory idempotency set with expiring keys."""
 
     def __init__(self, *, ttl_seconds: float, now: Callable[[], float] = time.monotonic) -> None:
+        """Implement the   init   operation."""
         if ttl_seconds < 0:
             raise ValueError("ttl_seconds must be >= 0")
         self._ttl_seconds = float(ttl_seconds)
@@ -16,6 +18,7 @@ class InMemoryTTLSet:
         self._next_evict_at = float(self._now())
 
     def __len__(self) -> int:
+        """Return the number of currently tracked keys."""
         return len(self._expires_at_by_key)
 
     def _maybe_evict(self, now: float) -> None:
@@ -41,18 +44,22 @@ class InMemoryTTLSet:
         self._expires_at_by_key[key] = now + self._ttl_seconds
 
     async def seen(self, key: str) -> bool:
+        """Implement the seen operation."""
         return self._seen_sync(key)
 
     async def add(self, key: str) -> None:
+        """Implement the add operation."""
         self._add_sync(key)
 
     async def try_claim(self, key: str) -> bool:
+        """Implement the try claim operation."""
         if self._seen_sync(key):
             return False
         self._add_sync(key)
         return True
 
     def evict_expired(self) -> None:
+        """Implement the evict expired operation."""
         self._evict_expired_at(self._now())
 
     def _evict_expired_at(self, now: float) -> None:

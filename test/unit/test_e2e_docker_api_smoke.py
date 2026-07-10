@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+# Directly exercises the private fixture contract exported by the smoke helper.
+# pylint: disable=protected-access,wrong-import-order
+# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
+
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 from scripts.e2e import docker_api_smoke
+from test.support.credentials import fake_credential
 
 
 def test_expected_statuses_from_dataset() -> None:
@@ -32,7 +38,7 @@ def test_expected_statuses_rejects_missing_status() -> None:
 
 def test_latest_status_by_ticket_keeps_newest_history_item() -> None:
     payload = {
-        "items": [
+        "entries": [
             {"ticket_id": 1104, "status": "processed"},
             {"ticket_id": 1104, "status": "skipped_not_triggered"},
             {"ticket_id": 1101, "status": "processed"},
@@ -46,7 +52,7 @@ def test_latest_status_by_ticket_keeps_newest_history_item() -> None:
 
 
 def test_assert_expected_statuses_reports_mismatch() -> None:
-    payload = {"items": [{"ticket_id": 1101, "status": "failed_permanent"}]}
+    payload = {"entries": [{"ticket_id": 1101, "status": "failed_permanent"}]}
 
     with pytest.raises(docker_api_smoke.E2EFailure, match="ticket 1101"):
         docker_api_smoke.assert_expected_statuses(payload, {1101: "processed"})
@@ -56,7 +62,10 @@ def test_assert_artifacts_accepts_pdf_and_sidecar_payload() -> None:
     payload = {
         "pdf_count": 2,
         "bad_pdfs": [],
-        "sidecar_ticket_ids": [1101, "1102"],
+        "artifacts": [
+            {"ticket_id": 1101, "sha256": "a", "pdf_sha256": "a"},
+            {"ticket_id": 1102, "sha256": "b", "pdf_sha256": "b"},
+        ],
     }
 
     docker_api_smoke.assert_artifacts(payload, {1101, 1102})
@@ -66,7 +75,7 @@ def test_assert_artifacts_reports_missing_sidecar() -> None:
     payload = {
         "pdf_count": 2,
         "bad_pdfs": [],
-        "sidecar_ticket_ids": [1101],
+        "artifacts": [{"ticket_id": 1101, "sha256": "a", "pdf_sha256": "a"}],
     }
 
     with pytest.raises(docker_api_smoke.E2EFailure, match="missing sidecars"):
@@ -83,15 +92,32 @@ def test_expected_processed_ticket_ids_derives_from_status_map() -> None:
     ) == {1101, 1104}
 
 
+def test_ephemeral_signing_environment_injects_and_restores_compose_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZTA_E2E_PFX_PASSWORD", "existing-password")
+    monkeypatch.delenv("ZTA_E2E_SIGNING_DIR", raising=False)
+
+    with docker_api_smoke._ephemeral_signing_environment():
+        directory = Path(os.environ["ZTA_E2E_SIGNING_DIR"])
+        assert directory.is_dir()
+        assert (directory / "e2e-signing.pfx").is_file()
+        assert os.environ["ZTA_E2E_PFX_PASSWORD"] == docker_api_smoke.E2E_SIGNING_PASSWORD
+
+    assert "ZTA_E2E_SIGNING_DIR" not in os.environ
+    assert os.environ["ZTA_E2E_PFX_PASSWORD"] == "existing-password"
+    assert not directory.exists()
+
+
 def test_dry_run_prints_docker_api_plan(capsys: pytest.CaptureFixture[str]) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     args = argparse.Namespace(
         project="zammad-archiver-e2e",
-        compose_file=repo_root / "docker-compose.yml",
-        dataset=repo_root / "examples/demo/mock_university_dataset.json",
+        compose_file=repo_root / "infra/e2e/docker-compose.yml",
+        dataset=repo_root / "infra/e2e/dataset.json",
         archiver_url="http://127.0.0.1:18080",
         mock_url="http://127.0.0.1:18090",
-        admin_token="demo-admin-token",
+        admin_token=fake_credential("admin-token"),
         timeout_seconds=90.0,
         keep_stack=False,
         dry_run=True,
