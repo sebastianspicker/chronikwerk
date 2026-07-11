@@ -1,5 +1,4 @@
 # pylint: disable=import-outside-toplevel
-"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -68,6 +67,7 @@ def _write_pdf(html: str, *, template_folder: Path, css_paths: tuple[Path, ...])
         return html_doc.write_pdf(
             stylesheets=stylesheets,
             pdf_identifier=_pdf_identifier(html, css_paths),
+            pdf_variant="pdf/ua-1",
         )
 
 
@@ -75,10 +75,9 @@ async def render_pdf(
     snapshot: Snapshot,
     *,
     max_articles: int = 250,
-    locale: str = "de_DE",
+    locale: str = "de-DE",
     timezone: str = "Europe/Berlin",
 ) -> bytes:
-    """Implement the render pdf operation."""
     _validate_article_limit(snapshot, max_articles)
     return await asyncio.to_thread(
         _render_pdf_sync,

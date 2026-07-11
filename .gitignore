@@ -11,6 +11,9 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+node_modules/
+test-results/
+playwright-report/
 .coverage
 .coverage_html/
 coverage.xml
@@ -29,6 +32,11 @@ uv.lock
 .envrc
 .python-version
 .direnv/
+.netrc
+.npmrc
+.pypirc
+secrets/
+credentials/
 
 # Local YAML configuration and signing material
 config/config.yaml
@@ -44,10 +52,21 @@ config/*.override.yml
 *.p12
 *.pem
 *.key
+*.cer
+*.crt
+*.csr
+*.jks
+*.keystore
 
 # OS
 .DS_Store
 Thumbs.db
+.AppleDouble
+._*
+.Spotlight-V100/
+*.swp
+*.swo
+*~
 
 # Local runtime artifacts
 *.log
@@ -62,6 +81,10 @@ coverage.json
 *.bak
 *.orig
 *.rej
+*.pdf
+*.pdf.json
+*.p7s
+*.tsr
 
 # IDEs
 .idea/
@@ -75,6 +98,8 @@ coverage.json
 /exports/
 /output/
 private/
+/admin-state/
+/state/
 examples/demo/
 docs/assets/demo/
 
@@ -106,6 +131,8 @@ progress.md
 .claude/
 .codex/
 .agents/
+.serena/
+.codacy/
 .github/codex/
 .github/workflows/codex.yml
 AGENTS.md

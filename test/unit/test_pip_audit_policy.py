@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# Directly exercises the private OSV boundary to verify its failure policy.
-# pylint: disable=protected-access
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import importlib.util
 import json
 import sys

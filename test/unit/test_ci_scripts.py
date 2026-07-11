@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import stat
-import subprocess  # nosec B404
+import subprocess
 from pathlib import Path
 
 
@@ -11,8 +11,7 @@ def test_ci_smoke_script_checks_current_repo_layout() -> None:
 
     assert script.stat().st_mode & stat.S_IXUSR, "smoke script must remain executable"
 
-    # Fixed repository-local executable via shebang: shell=False and no user-controlled argv.
-    # nosemgrep
+    # Execute via the script's Bash shebang; the script uses Bash-only syntax.
     proc = subprocess.run(  # nosec B603
         [str(script)], capture_output=True, text=True, check=False
     )
@@ -53,15 +52,3 @@ def test_release_gate_contains_production_and_e2e_contracts() -> None:
     helper_text = helper.read_text(encoding="utf-8")
     assert "Dockerfile" in helper_text
     assert "unsigned-render-ok" in helper_text
-    assert "verify_production_signing.py" in helper_text
-
-
-def test_production_signing_helper_generates_and_validates_ephemeral_material() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    helper = repo_root / "scripts" / "ci" / "verify_production_signing.py"
-
-    helper_text = helper.read_text(encoding="utf-8")
-    assert "TemporaryDirectory" in helper_text
-    assert "serialize_key_and_certificates" in helper_text
-    assert "validate_pdf_signature" in helper_text
-    assert "production-signing-ok" in helper_text

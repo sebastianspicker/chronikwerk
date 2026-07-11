@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-# Route imports occur after app construction so each test can patch its live handler.
-# pylint: disable=import-outside-toplevel,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import hashlib
 import hmac
 
 from fastapi.testclient import TestClient
 
-from test.support.credentials import fake_credential
 from test.support.process_ticket_helpers import noop_process_ticket
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.server import create_app
@@ -21,7 +16,7 @@ def _sign(body: bytes, secret: str) -> str:
 
 
 def test_valid_sha256_signature_passes(tmp_path, monkeypatch) -> None:
-    secret = fake_credential("hmac")
+    secret = "test-secret"
     app = create_app(make_settings(str(tmp_path), secret=secret))
 
     import zammad_pdf_archiver.app.routes.ingest as ingest_route
@@ -40,7 +35,7 @@ def test_valid_sha256_signature_passes(tmp_path, monkeypatch) -> None:
 
 
 def test_missing_signature_fails(tmp_path) -> None:
-    app = create_app(make_settings(str(tmp_path), secret=fake_credential("hmac")))
+    app = create_app(make_settings(str(tmp_path), secret="test-secret"))
     response = TestClient(app).post("/ingest", json={"ticket_id": 123})
     assert response.status_code == 403
 
@@ -52,7 +47,7 @@ def test_no_secret_fails_closed(tmp_path) -> None:
 
 
 def test_sha1_signature_is_rejected(tmp_path) -> None:
-    secret = fake_credential("hmac")
+    secret = "test-secret"
     app = create_app(make_settings(str(tmp_path), secret=secret))
     body = b'{"ticket_id":123}'
     digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha1).hexdigest()

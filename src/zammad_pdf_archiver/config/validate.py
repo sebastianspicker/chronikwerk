@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -8,20 +7,16 @@ from pydantic import ValidationError
 
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.transport import validate_url_policy
-from zammad_pdf_archiver.domain.errors import PermanentError
 
 
 @dataclass(frozen=True)
 class ConfigValidationIssue:
-    """Implement the ConfigValidationIssue operation."""
     path: str
     message: str
 
 
 class ConfigValidationError(ValueError):
-    """Implement the ConfigValidationError operation."""
     def __init__(self, issues: Iterable[ConfigValidationIssue]):
-        """Implement the   init   operation."""
         self.issues = list(issues)
         super().__init__(self._format_message())
 
@@ -33,14 +28,12 @@ class ConfigValidationError(ValueError):
 
 
 def issues_from_pydantic_error(error: ValidationError) -> list[ConfigValidationIssue]:
-    """Implement the issues from pydantic error operation."""
     issues: list[ConfigValidationIssue] = []
     for item in error.errors(include_url=False):
         loc = ".".join(str(part) for part in item.get("loc", ())) or "<root>"
         msg = item.get("msg", "Invalid value")
         issues.append(ConfigValidationIssue(path=loc, message=msg))
     return issues
-
 
 
 def _validate_webhook_auth(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
@@ -50,7 +43,7 @@ def _validate_webhook_auth(settings: Settings, issues: list[ConfigValidationIssu
         issues.append(
             ConfigValidationIssue(
                 path="zammad.webhook_hmac_secret",
-        message="Missing webhook HMAC secret. Set ZAMMAD__WEBHOOK_HMAC_SECRET.",
+                message="Missing webhook HMAC secret. Set ZAMMAD__WEBHOOK_HMAC_SECRET.",
             )
         )
 
@@ -79,7 +72,7 @@ def _validate_transport(settings: Settings, issues: list[ConfigValidationIssue])
             allow_insecure_http=settings.hardening.transport.allow_insecure_http,
             allow_private_networks=settings.hardening.transport.allow_private_networks,
         )
-    except PermanentError as exc:
+    except Exception as exc:
         issues.append(ConfigValidationIssue(path="zammad.base_url", message=str(exc)))
     if not settings.zammad.verify_tls:
         issues.append(
@@ -108,11 +101,9 @@ def _validate_tsa_transport(
             allow_insecure_http=settings.hardening.transport.allow_insecure_http,
             allow_private_networks=settings.hardening.transport.allow_private_networks,
         )
-    except PermanentError as exc:
+    except Exception as exc:
         issues.append(
-            ConfigValidationIssue(
-                path="signing.timestamp.rfc3161.tsa_url", message=str(exc)
-            )
+            ConfigValidationIssue(path="signing.timestamp.rfc3161.tsa_url", message=str(exc))
         )
 
 
@@ -149,13 +140,27 @@ def _validate_log_level(settings: Settings, issues: list[ConfigValidationIssue])
         )
 
 
+def _validate_admin(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    if not settings.admin.enabled:
+        return
+    token = settings.admin.access_token
+    token_value = token.get_secret_value() if token is not None else ""
+    if len(token_value) < 32:
+        issues.append(
+            ConfigValidationIssue(
+                path="admin.access_token",
+                message="Admin enabled but access token is missing or shorter than 32 characters.",
+            )
+        )
+
+
 def validate_settings(settings: Settings) -> None:
-    """Implement the validate settings operation."""
     issues: list[ConfigValidationIssue] = []
     _validate_webhook_auth(settings, issues)
     _validate_delivery_id_requirement(settings, issues)
     _validate_transport(settings, issues)
     _validate_observability(settings, issues)
     _validate_log_level(settings, issues)
+    _validate_admin(settings, issues)
     if issues:
         raise ConfigValidationError(issues)

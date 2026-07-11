@@ -33,12 +33,26 @@ webhook -> fetch ticket/articles/tags -> build snapshot -> render PDF
 | `GET` | `/jobs/history` | Dedicated history bearer token | Optional process-local history; disabled by default. |
 | `GET` | `/healthz` | none | Health check; supports `?deep=true`. |
 | `GET` | `/metrics` | optional Bearer | Prometheus metrics when enabled. |
+| mixed | `/admin/*` | secure session + CSRF | Feature-flagged operations and non-secret configuration UI. |
+
+The administration application is disabled by default. It remains single-process:
+sessions and displayed job history are volatile, while staged non-secret configuration
+revisions live in a dedicated state volume and require an external restart.
+
+This release-candidate checkout contains the multilingual admin application and tagged
+PDF renderer, but neither surface is a conformance claim. Keep admin disabled until the
+browser, assistive-technology, deployment, and independent PDF/UA checks in the release
+checklist are complete.
 
 See [docs/api.md](docs/api.md) for request and response details.
 
 ## Non-Goals
 
 - Archive search or browsing UI.
+- PDF preview or full-text indexing.
+- Redis, a durable queue, DLQ controls, or multi-instance correctness.
+- Secret management, live configuration reload, or UI-controlled service restarts.
+- Multi-user accounts, RBAC, SSO, analytics, dark mode, or a mobile-specific app.
 - Built-in retention or WORM policy engine.
 - Built-in encryption-at-rest management.
 - Multi-tenant isolation beyond path policy and external filesystem ACLs.
@@ -99,7 +113,7 @@ Tag transitions:
 python -m pip install -e ".[dev]"
 make lint
 make test-fast
-make qa
+make verify-core
 make verify
 ```
 
@@ -111,8 +125,11 @@ Useful make targets:
 | `make typecheck` | Mypy over `src` and `test`. |
 | `make test-fast` | Static and unit tests. |
 | `make test-all` | Static, unit, integration, and NFR tests. |
+| `make test-browser` | Pinned Playwright/axe browser matrix; installs development-only browser tooling. |
+| `make pdf-ua-check PDF_FILES="..."` | veraPDF 1.30.1 gate for representative signed and unsigned PDFs. |
 | `make docs-check` | Checks documented Markdown paths exist. |
-| `make verify` | QA plus package build. |
+| `make verify-core` | Non-container lint, types, tests, docs, and package checks. |
+| `make verify` | Full release gate, including production-image and Docker E2E checks. |
 
 ## Documentation
 
@@ -130,6 +147,8 @@ Useful make targets:
 - [Deployment](docs/deploy.md)
 - [FAQ](docs/faq.md)
 - [Release checklist](docs/release-checklist.md)
+- [Product contract](PRODUCT.md)
+- [Design contract](DESIGN.md)
 
 ## Glossary
 

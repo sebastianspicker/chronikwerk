@@ -1,99 +1,35 @@
-"""Project module."""
-
 from __future__ import annotations
 
 import argparse
 import hashlib
 import hmac
 import json
-import os
-import secrets
 import shutil
 import socket
-import subprocess  # nosec B404
+import subprocess
 import sys
-import tempfile
 import time
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import httpx
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.serialization import pkcs12
-from cryptography.x509.oid import NameOID
 
 DEFAULT_PROJECT = "zammad-archiver-e2e"
 DEFAULT_COMPOSE_FILE = Path("infra/e2e/docker-compose.yml")
 DEFAULT_DATASET = Path("infra/e2e/dataset.json")
 DEFAULT_ARCHIVER_URL = "http://127.0.0.1:18080"
 DEFAULT_MOCK_URL = "http://127.0.0.1:18090"
-DEFAULT_ADMIN_TOKEN = os.environ.get("ZTA_E2E_ADMIN_TOKEN", "e2e-admin-token")
-DEFAULT_HISTORY_TOKEN = os.environ.get("ZTA_E2E_HISTORY_TOKEN", "e2e-history-token")
-DEFAULT_HMAC_SECRET = os.environ.get("ZTA_E2E_HMAC_SECRET", "e2e-webhook-secret")
+DEFAULT_ADMIN_TOKEN = "e2e-admin-token"
+DEFAULT_HISTORY_TOKEN = "e2e-history-token"
+DEFAULT_HMAC_SECRET = "e2e-webhook-secret"
 DEFAULT_TIMEOUT_SECONDS = 90.0
-E2E_SIGNING_PASSWORD = secrets.token_urlsafe(24)
 RETRY_TICKET_ID = 1104
 PROCESSED_STATUS = "processed"
 
 
 class E2EFailure(RuntimeError):
     """Raised when the Docker API E2E lane cannot prove the expected behavior."""
-
-
-def _write_ephemeral_pfx(directory: Path, password: str) -> Path:
-    """Create the short-lived PKCS#12 bundle mounted by the E2E archiver."""
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "E2E smoke signer")])
-    now = datetime.now(UTC)
-    certificate = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
-        .not_valid_after(now + timedelta(days=1))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(key, hashes.SHA256())
-    )
-    pfx_path = directory / "e2e-signing.pfx"
-    pfx_path.write_bytes(
-        pkcs12.serialize_key_and_certificates(
-            name=b"e2e-smoke-signer",
-            key=key,
-            cert=certificate,
-            cas=None,
-            encryption_algorithm=serialization.BestAvailableEncryption(password.encode("utf-8")),
-        )
-    )
-    pfx_path.chmod(0o444)
-    return pfx_path
-
-
-@contextmanager
-def _ephemeral_signing_environment() -> Iterator[None]:
-    """Expose a temporary read-only signing mount to Docker Compose only for this run."""
-    variable_names = ("ZTA_E2E_SIGNING_DIR", "ZTA_E2E_PFX_PASSWORD")
-    previous = {name: os.environ.get(name) for name in variable_names}
-    with tempfile.TemporaryDirectory(prefix="zta-e2e-signing-") as temporary_directory:
-        directory = Path(temporary_directory)
-        directory.chmod(0o755)
-        _write_ephemeral_pfx(directory, E2E_SIGNING_PASSWORD)
-        os.environ["ZTA_E2E_SIGNING_DIR"] = str(directory)
-        os.environ["ZTA_E2E_PFX_PASSWORD"] = E2E_SIGNING_PASSWORD
-        try:
-            yield
-        finally:
-            for name, value in previous.items():
-                if value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = value
 
 
 def _parse_args() -> argparse.Namespace:
@@ -123,7 +59,6 @@ def _load_dataset(path: Path) -> dict[str, Any]:
 
 
 def expected_statuses_from_dataset(dataset: dict[str, Any]) -> dict[int, str]:
-    """Implement the expected statuses from dataset operation."""
     seed_plan = dataset.get("seed_plan")
     if not isinstance(seed_plan, list):
         raise E2EFailure("dataset phase: dataset.seed_plan must be a list")
@@ -146,7 +81,6 @@ def expected_statuses_from_dataset(dataset: dict[str, Any]) -> dict[int, str]:
 
 
 def latest_status_by_ticket(history_payload: dict[str, Any]) -> dict[int, str]:
-    """Implement the latest status by ticket operation."""
     items = history_payload.get("entries")
     if not isinstance(items, list):
         raise E2EFailure("history phase: history payload has no entries list")
@@ -173,13 +107,14 @@ def assert_expected_statuses(
     history_payload: dict[str, Any],
     expected: dict[int, str],
 ) -> None:
-    """Implement the assert expected statuses operation."""
     latest = latest_status_by_ticket(history_payload)
     mismatches: list[str] = []
     for ticket_id, expected_status in sorted(expected.items()):
         actual = latest.get(ticket_id)
         if actual != expected_status:
-            mismatches.append(f"ticket {ticket_id}: expected {expected_status!r}, got {actual!r}")
+            mismatches.append(
+                f"ticket {ticket_id}: expected {expected_status!r}, got {actual!r}"
+            )
     if mismatches:
         raise E2EFailure("history phase: terminal status mismatch: " + "; ".join(mismatches))
 
@@ -188,7 +123,6 @@ def assert_artifacts(
     artifact_payload: dict[str, Any],
     expected_ticket_ids: set[int],
 ) -> None:
-    """Implement the assert artifacts operation."""
     pdf_count = int(artifact_payload.get("pdf_count", 0))
     bad_pdfs = [str(path) for path in artifact_payload.get("bad_pdfs", [])]
     artifacts = artifact_payload.get("artifacts")
@@ -226,16 +160,14 @@ def _compose_base(project: str, compose_file: Path) -> list[str]:
 
 
 def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    """Run fixed Docker argv only; shell execution is deliberately forbidden."""
     command = list(args)
     if not command or command[0] != "docker":
         raise E2EFailure("internal error: only docker commands are supported")
     docker = shutil.which("docker")
     if docker is None:
         raise E2EFailure("startup phase: docker executable not found")
-    # Every caller constructs one of this module's Docker Compose argv forms; no shell is used.
-    # pylint: disable-next=line-too-long
-    return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+    # Docker path is resolved and args are fixed by this script.
+    return subprocess.run(  # nosec B603
         [docker, *command[1:]],
         capture_output=True,
         text=True,
@@ -393,9 +325,10 @@ def _retry_ticket(
 
 
 def expected_processed_ticket_ids(expected_statuses: dict[int, str]) -> set[int]:
-    """Implement the expected processed ticket ids operation."""
     return {
-        ticket_id for ticket_id, status in expected_statuses.items() if status == PROCESSED_STATUS
+        ticket_id
+        for ticket_id, status in expected_statuses.items()
+        if status == PROCESSED_STATUS
     }
 
 
@@ -552,8 +485,13 @@ def _verify_artifacts(
     assert_artifacts(artifacts, expected_processed_ticket_ids(expected_after_retry))
 
 
-def _mock_state_maps(payload: Any, status_code: int) -> tuple[dict[Any, Any], dict[Any, Any]]:
-    """Validate the mock state envelope and return its tag and note mappings."""
+def _verify_mock_state(
+    client: httpx.Client,
+    *,
+    mock_url: str,
+    expected_processed: set[int],
+) -> None:
+    status_code, payload = _request_json(client, "GET", f"{mock_url}/__e2e/state")
     if status_code != 200 or not isinstance(payload, dict):
         raise E2EFailure(
             f"mock verification phase: invalid state response: {status_code}: {payload}"
@@ -562,44 +500,22 @@ def _mock_state_maps(payload: Any, status_code: int) -> tuple[dict[Any, Any], di
     notes = payload.get("notes")
     if not isinstance(tags, dict) or not isinstance(notes, dict):
         raise E2EFailure("mock verification phase: state has no tags/notes maps")
-    return tags, notes
-
-
-def _verify_ticket_state(
-    ticket_id: int,
-    *,
-    tags: dict[Any, Any],
-    notes: dict[Any, Any],
-) -> None:
-    """Verify that one processed ticket was signed and received an archive note."""
-    raw_tags = tags.get(str(ticket_id), tags.get(ticket_id, []))
-    if not isinstance(raw_tags, list):
-        raise E2EFailure(f"mock verification phase: ticket {ticket_id} has malformed tags")
-    if "pdf:signed" not in {str(value) for value in raw_tags}:
-        raise E2EFailure(f"mock verification phase: ticket {ticket_id} is not signed")
-    ticket_notes = notes.get(str(ticket_id), notes.get(ticket_id, []))
-    has_archive_note = isinstance(ticket_notes, list) and any(
-        isinstance(note, dict) and "PDF archived" in str(note.get("subject", ""))
-        for note in ticket_notes
-    )
-    if not has_archive_note:
-        raise E2EFailure(f"mock verification phase: ticket {ticket_id} has no archive note")
-
-
-def _verify_mock_state(
-    client: httpx.Client,
-    *,
-    mock_url: str,
-    expected_processed: set[int],
-) -> None:
-    status_code, payload = _request_json(client, "GET", f"{mock_url}/__e2e/state")
-    tags, notes = _mock_state_maps(payload, status_code)
     for ticket_id in sorted(expected_processed):
-        _verify_ticket_state(ticket_id, tags=tags, notes=notes)
+        raw_tags = tags.get(str(ticket_id), tags.get(ticket_id, []))
+        if not isinstance(raw_tags, list):
+            raise E2EFailure(f"mock verification phase: ticket {ticket_id} has malformed tags")
+        ticket_tags = {str(value) for value in raw_tags}
+        if "pdf:signed" not in ticket_tags:
+            raise E2EFailure(f"mock verification phase: ticket {ticket_id} is not signed")
+        ticket_notes = notes.get(str(ticket_id), notes.get(ticket_id, []))
+        if not isinstance(ticket_notes, list) or not any(
+            isinstance(note, dict) and "PDF archived" in str(note.get("subject", ""))
+            for note in ticket_notes
+        ):
+            raise E2EFailure(f"mock verification phase: ticket {ticket_id} has no archive note")
 
 
 def run(args: argparse.Namespace) -> int:
-    """Implement the run operation."""
     compose_file = args.compose_file.expanduser().resolve()
     dataset = _load_dataset(args.dataset.expanduser().resolve())
     expected = expected_statuses_from_dataset(dataset)
@@ -607,43 +523,41 @@ def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         return _print_dry_run(args, dataset)
 
-    with _ephemeral_signing_environment():
-        base = _prepare_stack(args, compose_file)
+    base = _prepare_stack(args, compose_file)
 
-        try:
-            print("E2E: starting Docker demo stack")
-            _run_checked([*base, "up", "-d", "--build"], phase="startup")
+    try:
+        print("E2E: starting Docker demo stack")
+        _run_checked([*base, "up", "-d", "--build"], phase="startup")
 
-            with httpx.Client(timeout=20.0) as client:
-                _wait_for_stack_ready(args, client)
-                expected_after_retry = _exercise_ingest_flow(
-                    args,
-                    client,
-                    dataset=dataset,
-                    expected=expected,
-                )
-                _verify_mock_state(
-                    client,
-                    mock_url=args.mock_url,
-                    expected_processed=expected_processed_ticket_ids(expected_after_retry),
-                )
-
-            _verify_artifacts(
+        with httpx.Client(timeout=20.0) as client:
+            _wait_for_stack_ready(args, client)
+            expected_after_retry = _exercise_ingest_flow(
                 args,
-                compose_file=compose_file,
-                expected_after_retry=expected_after_retry,
+                client,
+                dataset=dataset,
+                expected=expected,
             )
-            print("E2E: PASS")
-            return 0
-        finally:
-            if args.keep_stack:
-                print("E2E: keeping Docker stack running (--keep-stack)")
-            else:
-                _run_command([*base, "down", "-v", "--remove-orphans"])
+            _verify_mock_state(
+                client,
+                mock_url=args.mock_url,
+                expected_processed=expected_processed_ticket_ids(expected_after_retry),
+            )
+
+        _verify_artifacts(
+            args,
+            compose_file=compose_file,
+            expected_after_retry=expected_after_retry,
+        )
+        print("E2E: PASS")
+        return 0
+    finally:
+        if args.keep_stack:
+            print("E2E: keeping Docker stack running (--keep-stack)")
+        else:
+            _run_command([*base, "down", "-v", "--remove-orphans"])
 
 
 def main() -> int:
-    """Implement the main operation."""
     args = _parse_args()
     try:
         return run(args)

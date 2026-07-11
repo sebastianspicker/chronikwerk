@@ -45,16 +45,9 @@ def sample_pdf_bytes() -> bytes:
     return b"".join(parts)
 
 
-def write_test_pfx(
-    path: Path,
-    password: str | None,
-    *,
-    common_name: str = "Test Signer",
-    valid_from: timedelta = timedelta(days=-1),
-    valid_until: timedelta = timedelta(days=30),
-) -> str:
+def write_test_pfx(path: Path, password: str) -> None:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test Signer")])
     now = datetime.now(UTC)
     cert = (
         x509.CertificateBuilder()
@@ -62,8 +55,8 @@ def write_test_pfx(
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now + valid_from)
-        .not_valid_after(now + valid_until)
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(private_key=key, algorithm=hashes.SHA256())
     )
@@ -72,11 +65,6 @@ def write_test_pfx(
         key=key,
         cert=cert,
         cas=None,
-        encryption_algorithm=(
-            serialization.BestAvailableEncryption(password.encode("utf-8"))
-            if password
-            else serialization.NoEncryption()
-        ),
+        encryption_algorithm=serialization.BestAvailableEncryption(password.encode("utf-8")),
     )
     path.write_bytes(pfx)
-    return cert.fingerprint(hashes.SHA256()).hex()

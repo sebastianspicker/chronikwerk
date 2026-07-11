@@ -12,7 +12,6 @@ class _SafeURLFetcher:
     """WeasyPrint-compatible fetcher: only data: and file under template_root."""
 
     def __init__(self, template_root: Path) -> None:
-        """Implement the   init   operation."""
         self._root = template_root.resolve()
 
     def _file_path_from_url(self, parsed) -> Path:
@@ -43,7 +42,6 @@ class _SafeURLFetcher:
         )
 
     def fetch(self, url: str, headers=None):
-        """Implement the fetch operation."""
         from weasyprint.urls import (
             FatalURLFetchingError,
             URLFetcher,

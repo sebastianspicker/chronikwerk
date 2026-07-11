@@ -21,13 +21,13 @@ class _FakeZammadClient:
         self._tags = TagList.model_validate(tags)
         self._articles = articles
 
-    async def get_ticket(self, _ticket_id: int) -> ZammadTicket:
+    async def get_ticket(self, ticket_id: int) -> ZammadTicket:
         return self._ticket
 
-    async def list_tags(self, _ticket_id: int) -> TagList:
+    async def list_tags(self, ticket_id: int) -> TagList:
         return self._tags
 
-    async def list_articles(self, _ticket_id: int) -> list[ZammadArticle]:
+    async def list_articles(self, ticket_id: int) -> list[ZammadArticle]:
         return self._articles
 
 

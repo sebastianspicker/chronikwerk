@@ -33,6 +33,7 @@ services:
       SERVER__PORT: "${SERVER__PORT:-8080}"
       STORAGE__ROOT: "${STORAGE__ROOT:-/mnt/archive}"
       SIGNING__PFX_PATH: "${SIGNING__PFX_PATH:-/run/secrets/signing.pfx}"
+      ADMIN__STATE_DIR: "${ADMIN__STATE_DIR:-/var/lib/zammad-pdf-archiver/admin}"
     volumes:
       # Config file (optional). Set CONFIG_PATH in the external env file to enable.
       - ./config:/app/config:ro
@@ -40,6 +41,9 @@ services:
       # Archive storage: bind-mount the host path where PDFs should be written.
       # The host path is typically a CIFS/SMB mount managed by the host OS.
       - "${STORAGE__ROOT:-/mnt/archive}:${STORAGE__ROOT:-/mnt/archive}:rw"
+
+      # Persistent non-secret managed revisions. Required before enabling admin.
+      - admin-state:/var/lib/zammad-pdf-archiver/admin:rw
 
     # Signing material (uncomment when SIGNING__ENABLED=true):
       # - /etc/zammad-archiver/secrets/signing.pfx:/run/secrets/signing.pfx:ro
@@ -63,3 +67,6 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+
+volumes:
+  admin-state:

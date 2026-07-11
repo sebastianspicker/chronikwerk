@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import hashlib
@@ -38,9 +37,7 @@ def _forbidden() -> JSONResponse:
 
 
 def _service_misconfigured() -> JSONResponse:
-    return api_error(
-        503, "webhook_auth_not_configured", code="webhook_auth_not_configured"
-    )
+    return api_error(503, "webhook_auth_not_configured", code="webhook_auth_not_configured")
 
 
 def _missing_delivery_id() -> JSONResponse:
@@ -96,7 +93,6 @@ def _replay_receive(chunks: list[bytes]) -> Receive:
     idx = 0
 
     async def receive() -> Message:
-        """Implement the receive operation."""
         nonlocal idx
         if idx >= len(chunks):
             return {"type": "http.request", "body": b"", "more_body": False}
@@ -108,10 +104,8 @@ def _replay_receive(chunks: list[bytes]) -> Receive:
     return receive
 
 
-class HmacVerifyMiddleware:  # pylint: disable=too-few-public-methods
-    """Implement the HmacVerifyMiddleware operation."""
+class HmacVerifyMiddleware:
     def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
-        """Implement the   init   operation."""
         self.app = app
         self._secret = _secret_bytes(settings)
         self._require_delivery_id = (
@@ -134,9 +128,7 @@ class HmacVerifyMiddleware:  # pylint: disable=too-few-public-methods
         await _missing_delivery_id()(scope, receive, send)
         return True
 
-    async def _reject_without_secret(
-        self, scope: Scope, receive: Receive, send: Send
-    ) -> bool:
+    async def _reject_without_secret(self, scope: Scope, receive: Receive, send: Send) -> bool:
         if self._secret:
             return False
 
@@ -169,7 +161,6 @@ class HmacVerifyMiddleware:  # pylint: disable=too-few-public-methods
         self,
         signature: bytes,
         digest_ctor: type,
-        *,
         receive: Receive,
         scope: Scope,
         send: Send,
@@ -191,7 +182,6 @@ class HmacVerifyMiddleware:  # pylint: disable=too-few-public-methods
         return chunks
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Verify webhook signatures before dispatching requests."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -211,13 +201,7 @@ class HmacVerifyMiddleware:  # pylint: disable=too-few-public-methods
             return
 
         signature, digest_ctor, _algo_name = parsed
-        chunks = await self._verify_body_signature(
-            signature,
-            digest_ctor,
-            receive=receive,
-            scope=scope,
-            send=send,
-        )
+        chunks = await self._verify_body_signature(signature, digest_ctor, receive, scope, send)
         if chunks is None:
             return
 

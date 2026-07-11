@@ -1,4 +1,5 @@
 """Build normalized snapshots from Zammad tickets and render them as PDFs."""
+
 from __future__ import annotations
 
 import asyncio
@@ -28,9 +29,8 @@ def _cap_articles_if_configured(
     settings: Settings,
 ) -> Snapshot:
     max_articles = settings.pdf.max_articles
-    if (
-        settings.pdf.article_limit_mode == "cap_and_continue"
-        and 0 < max_articles < len(snapshot.articles)
+    if settings.pdf.article_limit_mode == "cap_and_continue" and 0 < max_articles < len(
+        snapshot.articles
     ):
         log.warning(
             "process_ticket.article_limit_capped",
@@ -38,7 +38,16 @@ def _cap_articles_if_configured(
             total=len(snapshot.articles),
             cap=max_articles,
         )
-        return snapshot.model_copy(update={"articles": snapshot.articles[:max_articles]})
+        total = snapshot.articles_total
+        if total is None:
+            total = len(snapshot.articles)
+        return snapshot.model_copy(
+            update={
+                "articles": snapshot.articles[:max_articles],
+                "articles_total": total,
+                "articles_omitted": total - max_articles,
+            }
+        )
     return snapshot
 
 
@@ -50,7 +59,6 @@ async def build_and_render_pdf(
     tags: TagList,
     settings: Settings,
 ) -> tuple[bytes, Snapshot]:
-    """Implement the build and render pdf operation."""
     snapshot = await build_snapshot(client, ticket_id, ticket=ticket, tags=tags)
     snapshot = _cap_articles_if_configured(
         snapshot,

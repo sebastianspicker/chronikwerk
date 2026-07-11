@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +24,7 @@ class _Bucket:
     updated_at: float
 
 
-class _InMemoryTokenBucketLimiter:  # pylint: disable=too-few-public-methods
+class _InMemoryTokenBucketLimiter:
     def __init__(
         self,
         *,
@@ -34,7 +33,6 @@ class _InMemoryTokenBucketLimiter:  # pylint: disable=too-few-public-methods
         max_entries: int = 10_000,
         now=monotonic,
     ) -> None:
-        """Implement the   init   operation."""
         self._rps = float(rps)
         self._burst = float(burst)
         self._max_entries = int(max_entries)
@@ -115,6 +113,7 @@ def _client_key_from_header(scope: Scope, header_name: str) -> str:
     # omitting it.
     return _client_key_from_scope(scope)
 
+
 def _client_key(scope: Scope, header_name: str | None) -> str:
     if header_name and header_name.strip():
         return _client_key_from_header(scope, header_name.strip())
@@ -125,10 +124,8 @@ def _rate_limited():
     return api_error(429, "rate_limited", code="rate_limited")
 
 
-class RateLimitMiddleware:  # pylint: disable=too-few-public-methods
-    """Implement the RateLimitMiddleware operation."""
+class RateLimitMiddleware:
     def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
-        """Implement the   init   operation."""
         self.app = app
 
         if settings is None:
@@ -146,7 +143,6 @@ class RateLimitMiddleware:  # pylint: disable=too-few-public-methods
         self._limiter = _InMemoryTokenBucketLimiter(rps=config.rps, burst=config.burst)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Apply rate limiting to incoming HTTP requests."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

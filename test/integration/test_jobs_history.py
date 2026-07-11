@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# Route imports occur after app construction so each test can patch its live handler.
-# pylint: disable=import-outside-toplevel,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 from fastapi.testclient import TestClient
 
 from test.support.settings_factory import make_settings

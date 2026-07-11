@@ -1,6 +1,3 @@
-"""Project module."""
-# Pydantic response models intentionally expose fields rather than public methods.
-# pylint: disable=too-few-public-methods
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,24 +11,20 @@ class _ZammadModel(BaseModel):
 
 
 class UserRef(_ZammadModel):
-    """Implement the UserRef operation."""
     login: str | None = None
 
 
 class CustomerRef(_ZammadModel):
-    """Implement the CustomerRef operation."""
     id: int | None = None
     login: str | None = None
     email: str | None = None
 
 
 class TicketPreferences(_ZammadModel):
-    """Implement the TicketPreferences operation."""
     custom_fields: dict[str, Any] | None = None
 
 
 class Ticket(_ZammadModel):
-    """Implement the Ticket operation."""
     id: int
     number: str
     title: str | None = None
@@ -47,7 +40,6 @@ class Ticket(_ZammadModel):
 
 
 class AttachmentMeta(_ZammadModel):
-    """Implement the AttachmentMeta operation."""
     id: int | None = None
     filename: str | None = None
     size: int | None = None
@@ -56,7 +48,6 @@ class AttachmentMeta(_ZammadModel):
 
 
 class Article(_ZammadModel):
-    """Implement the Article operation."""
     id: int
     created_at: datetime | None = None
     internal: bool | None = None

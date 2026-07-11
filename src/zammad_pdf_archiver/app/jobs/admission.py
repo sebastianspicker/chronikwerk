@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +22,6 @@ class JobAdmission:
     """
 
     def __init__(self, *, max_pending: int, max_running: int) -> None:
-        """Implement the   init   operation."""
         self.max_pending = max_pending
         self.max_running = max_running
         self._pending = 0
@@ -34,17 +32,14 @@ class JobAdmission:
 
     @property
     def pending(self) -> int:
-        """Implement the pending operation."""
         return self._pending
 
     @property
     def running(self) -> int:
-        """Implement the running operation."""
         return self._running
 
     @property
     def closing(self) -> bool:
-        """Implement the closing operation."""
         return self._closing
 
     def try_reserve(self, count: int = 1) -> bool:
@@ -82,7 +77,6 @@ class JobAdmission:
         self._publish()
 
     async def release(self) -> None:
-        """Implement the release operation."""
         async with self._condition:
             self._running = max(0, self._running - 1)
             self._publish()

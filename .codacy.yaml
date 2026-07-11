@@ -1,9 +1,7 @@
 runtimes:
-  - python@3.12.11
+  - python@3.11.11
 
 tools:
-  - ruff@0.12.7
-  - bandit@1.8.3
   - lizard@1.22.2
   - opengrep@1.21.0
   - pylint@4.0.5

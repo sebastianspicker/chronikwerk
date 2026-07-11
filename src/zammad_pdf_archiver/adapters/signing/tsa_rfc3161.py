@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,7 +10,7 @@ from pyhanko.sign.timestamps.common_utils import set_tsp_headers
 
 from zammad_pdf_archiver.adapters.http_util import timeouts_for
 from zammad_pdf_archiver.config.settings import SigningSettings
-from zammad_pdf_archiver.config.transport import PolicyEnforcingAsyncTransport
+from zammad_pdf_archiver.config.transport import validate_url_policy_async
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 
 
@@ -66,9 +65,8 @@ def _load_tsa_config(
     )
 
 
-class _HttpxRFC3161TimeStamper(TimeStamper):  # pylint: disable=too-few-public-methods
+class _HttpxRFC3161TimeStamper(TimeStamper):
     def __init__(self, config: _TsaConfig):
-        """Implement the   init   operation."""
         super().__init__()
         self._config = config
 
@@ -80,24 +78,20 @@ class _HttpxRFC3161TimeStamper(TimeStamper):  # pylint: disable=too-few-public-m
 
     async def _post_tsa_request(self, req: tsp.TimeStampReq) -> httpx.Response:
         try:
-            limits = httpx.Limits(max_connections=2, max_keepalive_connections=1)
-            transport = PolicyEnforcingAsyncTransport(
+            await validate_url_policy_async(
+                self._config.url,
                 allow_insecure_http=self._config.allow_insecure_http,
                 allow_private_networks=self._config.allow_private_networks,
-                verify=self._verify_value(),
-                trust_env=self._config.trust_env,
-                limits=limits,
             )
             auth: tuple[str | bytes, str | bytes] | None = self._config.auth
 
             async with httpx.AsyncClient(
                 timeout=timeouts_for(self._config.timeout_seconds),
-                limits=limits,
+                limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
                 verify=self._verify_value(),
                 trust_env=self._config.trust_env,
                 follow_redirects=False,
                 auth=auth,
-                transport=transport,
             ) as client:
                 return await client.post(
                     self._config.url,
@@ -130,8 +124,8 @@ class _HttpxRFC3161TimeStamper(TimeStamper):  # pylint: disable=too-few-public-m
     def _validate_tsa_status(tsa_resp: tsp.TimeStampResp) -> None:
         status_info = tsa_resp["status"]
         status_value = status_info["status"].native
-        accepted_statuses = {"granted", "granted_with_mods"}
-        if status_value not in accepted_statuses:
+        _ACCEPTED_STATUSES = {"granted", "granted_with_mods"}
+        if status_value not in _ACCEPTED_STATUSES:
             status_string = ""
             try:
                 status_string = status_info["status_string"].native or ""
@@ -153,7 +147,6 @@ class _HttpxRFC3161TimeStamper(TimeStamper):  # pylint: disable=too-few-public-m
             )
 
     async def async_request_tsa_response(self, req: tsp.TimeStampReq) -> tsp.TimeStampResp:
-        """Implement the async request tsa response operation."""
         response = await self._post_tsa_request(req)
         self._validate_http_response(response)
         tsa_resp = self._parse_tsa_response(response)

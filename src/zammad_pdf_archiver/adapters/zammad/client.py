@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +18,6 @@ from zammad_pdf_archiver.adapters.zammad.errors import (
 )
 from zammad_pdf_archiver.adapters.zammad.models import Article, TagList, Ticket
 from zammad_pdf_archiver.config.transport import (
-    PolicyEnforcingAsyncTransport,
     validate_url_policy,
     validate_url_policy_async,
 )
@@ -60,7 +58,6 @@ class AsyncZammadClient:
         allow_private_networks: bool = False,
         _runtime: _ZammadRuntimeOptions | None = None,
     ) -> None:
-        """Implement the   init   operation."""
         url = httpx.URL(base_url)
         if not url.scheme or not url.host:
             raise ValueError("base_url must include scheme and host, e.g. https://zammad.example")
@@ -83,34 +80,22 @@ class AsyncZammadClient:
         )
 
         self._owns_http_client = runtime.http_client is None
-        limits = httpx.Limits(
-            max_connections=10,
-            max_keepalive_connections=5,
-            keepalive_expiry=30.0,
+        self._http = runtime.http_client or httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={
+                "Authorization": f"Token token={api_token}",
+                "Accept": "application/json",
+            },
+            timeout=timeouts_for(timeout_seconds),
+            limits=httpx.Limits(
+                max_connections=10,
+                max_keepalive_connections=5,
+                keepalive_expiry=30.0,
+            ),
+            verify=verify_tls,
+            trust_env=trust_env,
+            follow_redirects=False,
         )
-        if runtime.http_client is not None:
-            self._http = runtime.http_client
-        else:
-            transport = PolicyEnforcingAsyncTransport(
-                allow_insecure_http=allow_insecure_http,
-                allow_private_networks=self._allow_private_networks,
-                verify=verify_tls,
-                trust_env=trust_env,
-                limits=limits,
-            )
-            self._http = httpx.AsyncClient(
-                base_url=self._base_url,
-                headers={
-                    "Authorization": f"Token token={api_token}",
-                    "Accept": "application/json",
-                },
-                timeout=timeouts_for(timeout_seconds),
-                limits=limits,
-                verify=verify_tls,
-                trust_env=trust_env,
-                follow_redirects=False,
-                transport=transport,
-            )
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if it was created by this instance."""
@@ -118,7 +103,6 @@ class AsyncZammadClient:
             await self._http.aclose()
 
     async def __aenter__(self) -> AsyncZammadClient:
-        """Enter the asynchronous client context."""
         return self
 
     async def __aexit__(
@@ -127,7 +111,6 @@ class AsyncZammadClient:
         exc: BaseException | None,
         tb: Any,
     ) -> None:
-        """Close the asynchronous client context."""
         await self.aclose()
 
     async def get_ticket(self, ticket_id: int) -> Ticket:
@@ -235,12 +218,11 @@ class AsyncZammadClient:
 
         while True:
             try:
-                if not self._owns_http_client:
-                    await validate_url_policy_async(
-                        str(self._base_url),
-                        allow_insecure_http=self._allow_insecure_http,
-                        allow_private_networks=self._allow_private_networks,
-                    )
+                await validate_url_policy_async(
+                    str(self._base_url),
+                    allow_insecure_http=self._allow_insecure_http,
+                    allow_private_networks=self._allow_private_networks,
+                )
                 response = await self._http.request(
                     method, path, params=params, json=json, headers=headers
                 )

@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-# Directly exercises the private article-cap helper to assert its boundary cases.
-# pylint: disable=protected-access
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -46,16 +41,14 @@ def _snapshot(article_count: int) -> Snapshot:
     )
 
 
-def test_build_and_render_pdf_forwards_unlimited_article_setting(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_build_and_render_pdf_forwards_unlimited_article_setting(monkeypatch) -> None:
     settings = Settings.from_mapping(
         {
             "zammad": {
                 "base_url": "https://zammad.example.invalid",
                 "api_token": "token",
             },
-            "storage": {"root": str(tmp_path / "archive")},
+            "storage": {"root": "/tmp/archive"},
             "pdf": {"max_articles": 0},
         }
     )
@@ -88,14 +81,14 @@ def test_build_and_render_pdf_forwards_unlimited_article_setting(
     assert seen == {"snapshot": snapshot, "max_articles": 0}
 
 
-def test_cap_articles_uses_snapshot_copy_without_mutating_original(tmp_path: Path) -> None:
+def test_cap_articles_uses_snapshot_copy_without_mutating_original() -> None:
     settings = Settings.from_mapping(
         {
             "zammad": {
                 "base_url": "https://zammad.example.invalid",
                 "api_token": "token",
             },
-            "storage": {"root": str(tmp_path / "archive")},
+            "storage": {"root": "/tmp/archive"},
             "pdf": {"max_articles": 1, "article_limit_mode": "cap_and_continue"},
         }
     )
@@ -111,18 +104,20 @@ def test_cap_articles_uses_snapshot_copy_without_mutating_original(tmp_path: Pat
     assert capped.ticket is snapshot.ticket
     assert len(capped.articles) == 1
     assert len(snapshot.articles) == 2
+    assert capped.articles_total == 2
+    assert capped.articles_omitted == 1
 
 
 @pytest.mark.parametrize("trust_env", [True, False])
-def test_signing_forwards_transport_trust_env(monkeypatch, tmp_path: Path, trust_env: bool) -> None:
+def test_signing_forwards_transport_trust_env(monkeypatch, trust_env: bool) -> None:
     settings = Settings.from_mapping(
         {
             "zammad": {
                 "base_url": "https://zammad.example.invalid",
                 "api_token": "token",
             },
-            "storage": {"root": str(tmp_path / "archive")},
-            "signing": {"enabled": True, "pfx_path": str(tmp_path / "test.pfx")},
+            "storage": {"root": "/tmp/archive"},
+            "signing": {"enabled": True, "pfx_path": "/tmp/test.pfx"},
             "hardening": {"transport": {"trust_env": trust_env}},
         }
     )
@@ -135,7 +130,6 @@ def test_signing_forwards_transport_trust_env(monkeypatch, tmp_path: Path, trust
         return b"%PDF"
 
     def fake_sign_pdf(pdf: bytes, *, signing: Any, trust_env: bool, **_kwargs: Any) -> bytes:
-        del signing
         seen["trust_env"] = trust_env
         return pdf + b"-signed"
 

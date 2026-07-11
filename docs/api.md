@@ -153,6 +153,31 @@ Authentication:
 
 Response format: Prometheus text exposition.
 
+## Administration application and API
+
+All `/admin` routes are absent (`404`) unless `admin.enabled=true`. Admin responses use
+`Cache-Control: no-store`, a strict same-origin CSP, frame denial, `nosniff`, and
+`Referrer-Policy: no-referrer`. Login exchanges the external access token for an
+`HttpOnly`, `SameSite=Strict`, secure-by-default process-local session cookie. Every
+state-changing request requires the per-session `X-CSRF-Token`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/admin/api/v1/session` | Create a process-local admin session; returns `204`. |
+| `DELETE` | `/admin/api/v1/session` | CSRF-protected logout. |
+| `GET` | `/admin/api/v1/status` | Runtime, admission, volatile-history, and revision state. |
+| `POST` | `/admin/api/v1/status/storage-check` | User-initiated deep storage check. |
+| `GET` | `/admin/api/v1/jobs` | Cursor-paginated process-local history (`limit<=100`). |
+| `POST` | `/admin/api/v1/jobs/{ticket_id}/retry` | Acknowledged retry request; returns `202`. |
+| `GET` | `/admin/api/v1/config` | Allowlisted values, ownership, secret-presence booleans, revisions. |
+| `POST` | `/admin/api/v1/config/validate` | Validate a flat field overlay and return a normalized diff. |
+| `PUT` | `/admin/api/v1/config/staged` | Stage with `If-Match`; restart remains external. |
+| `GET` | `/admin/api/v1/config/revisions` | Bounded non-secret revision metadata. |
+| `POST` | `/admin/api/v1/config/revisions/{revision}/restore` | Stage a previous overlay as a new revision. |
+
+Admin API errors use stable `code`, localized `message`, and `request_id` fields. Machine
+status values such as `accepted`, `processed`, and `failed` are never localized.
+
 ## Webhook HMAC
 
 Supported signature header:

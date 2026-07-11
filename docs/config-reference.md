@@ -11,11 +11,12 @@ Source of truth:
 Highest first:
 
 1. Process environment variables.
-2. Explicit constructor/YAML values from `CONFIG_PATH`, or
+2. Managed non-secret overlay in `admin.state_dir`.
+3. Explicit constructor/YAML values from `CONFIG_PATH`, or
    `config/config.yaml` when present.
-3. Dotenv values from `.env`.
-4. File secrets when configured by the settings source.
-5. Defaults in the settings model.
+4. Dotenv values from `.env`.
+5. File secrets when configured by the settings source.
+6. Defaults in the settings model.
 
 Nested environment keys use double underscores, for example
 `ZAMMAD__BASE_URL`.
@@ -80,7 +81,7 @@ Production-like runs must provide:
 
 | Key | Default | Env key | Description |
 | --- | --- | --- | --- |
-| `pdf.locale` | `de_DE` | `PDF__LOCALE` | Locale used by templates. |
+| `pdf.locale` | `de-DE` | `PDF__LOCALE` | PDF locale; `de_DE`/`en_GB` legacy forms normalize to BCP 47. |
 | `pdf.timezone` | `Europe/Berlin` | `PDF__TIMEZONE` | Time zone used by templates. |
 | `pdf.max_articles` | `250` | `PDF__MAX_ARTICLES` | Maximum article count; `0` disables the limit. |
 | `pdf.article_limit_mode` | `fail` | `PDF__ARTICLE_LIMIT_MODE` | `fail` or `cap_and_continue`. |
@@ -135,6 +136,24 @@ Production-like runs must provide:
 | `admission.max_pending` | `100` | `ADMISSION__MAX_PENDING` | Maximum admitted jobs waiting for a running slot. |
 | `admission.max_running` | `4` | `ADMISSION__MAX_RUNNING` | Maximum ticket pipelines running concurrently. |
 | `admission.shutdown_timeout_seconds` | `5.0` | `ADMISSION__SHUTDOWN_TIMEOUT_SECONDS` | Graceful shutdown drain timeout before cancellation. |
+
+## Administration
+
+The administration application is disabled by default. When enabled, the access token
+must contain at least 32 characters. The state directory stores only managed non-secret
+overlays and the latest 20 revision records; mount it on persistent storage. Sessions are
+process-local and do not survive a restart. All managed changes require an external
+restart and environment-owned fields remain read-only.
+
+| Key | Default | Env key | Description |
+| --- | --- | --- | --- |
+| `admin.enabled` | `false` | `ADMIN__ENABLED` | Mount the `/admin` HTML and API routes. |
+| `admin.access_token` | `null` | `ADMIN__ACCESS_TOKEN` | External admin token; never stored in a cookie or revision. |
+| `admin.state_dir` | `/var/lib/zammad-pdf-archiver/admin` | `ADMIN__STATE_DIR` | Persistent directory for non-secret managed revisions. |
+| `admin.session_idle_seconds` | `1800` | `ADMIN__SESSION_IDLE_SECONDS` | Process-local idle session lifetime. |
+| `admin.session_absolute_seconds` | `28800` | `ADMIN__SESSION_ABSOLUTE_SECONDS` | Absolute session lifetime. |
+| `admin.cookie_secure` | `true` | `ADMIN__COOKIE_SECURE` | Send the session cookie only over HTTPS. |
+| `admin.default_locale` | `de-DE` | `ADMIN__DEFAULT_LOCALE` | Initial admin locale; supports `de-DE` and `en-GB`. |
 
 ## Top-Level Runtime Tokens
 
