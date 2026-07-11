@@ -40,7 +40,7 @@ dependencies = [
 [project.optional-dependencies]
 signing = [
     "asn1crypto>=1.5,<2.0",
-    "cryptography>=48.0.1,<49",
+    "cryptography>=48.0.1,<50",
     "pyhanko>=0.26,<0.35",
     "pyhanko-certvalidator>=0.26,<0.31",
 ]
