@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redis queue and DLQ behavior, the historical decorative dashboard, alternate PDF
   template variants, demo assets, and obsolete local operations helpers.
 
+### Security
+- Require `cryptography>=48.0.1` so signing installations do not use wheels affected
+  by GHSA-537c-gmf6-5ccf.
+
 ## [0.2.0-rc.2] - 2026-04-09
 
 ### Added
