@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-# json is imported with the error-path fixture to keep the serialization case explicit.
-# pylint: disable=import-outside-toplevel,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 from unittest.mock import MagicMock
 
 import pytest

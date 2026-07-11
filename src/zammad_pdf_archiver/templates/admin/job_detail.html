@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ _("admin.ticket_history") }} {{ ticket_id }} · {{ _("admin.service_name") }}{% endblock %}
+{% block content %}
+<p class="breadcrumb"><a href="/admin">{{ _("admin.overview") }}</a> / <a href="/admin/jobs">{{ _("admin.jobs") }}</a> / {{ ticket_id }}</p>
+<h1>{{ _("admin.ticket_history") }}: {{ ticket_id }}</h1>
+{% if accepted %}<div class="banner banner--success" role="status">{{ _("admin.accepted") }}{% if request_id %}<br>{{ _("admin.request_id") }}: <code>{{ request_id }}</code>{% endif %}</div>{% endif %}
+{% if items %}<ol class="timeline">{% for item in items %}<li><div class="timeline-heading"><time>{{ item.created_display }}</time><span class="status-badge">{{ item.status }}</span></div><p>{{ item.classification or "—" }} · {{ item.message or "—" }}</p>{% if item.request_id %}<code>{{ item.request_id }}</code>{% endif %}</li>{% endfor %}</ol>{% else %}<p class="empty-state">{{ _("admin.no_jobs") }}</p>{% endif %}
+<details class="action-disclosure">
+  <summary>{{ _("admin.retry") }}</summary>
+  <p>{{ _("admin.retry_warning") }}</p>
+  <form method="post" action="/admin/jobs/{{ ticket_id }}/retry">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <label class="checkbox"><input type="checkbox" name="acknowledge_overwrite" value="true" required> {{ _("admin.retry_ack") }}</label>
+    <button class="button button--danger" type="submit">{{ _("admin.retry_submit") }}</button>
+  </form>
+</details>
+{% endblock %}

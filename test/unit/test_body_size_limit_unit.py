@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-# pylint: disable=wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import asyncio
 from typing import Any
 
@@ -23,7 +20,7 @@ from zammad_pdf_archiver.app.middleware.body_size_limit import (
 _inner_called: list[bool] = []
 
 
-async def _inner_app(_scope: Any, _receive: Any, _send: Any) -> None:
+async def _inner_app(scope: Any, receive: Any, send: Any) -> None:
     _inner_called.append(True)
 
 
@@ -138,8 +135,8 @@ def test_middleware_passes_non_ingest_path_through(tmp_path) -> None:
     async def _recv() -> dict[str, Any]:
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    async def _send(_msg: Any) -> None:
-        return None
+    async def _send(msg: Any) -> None:
+        pass
 
     asyncio.run(middleware(scope, _recv, _send))
     assert _inner_called == [True]
@@ -186,7 +183,7 @@ def test_middleware_rejects_streaming_body_over_limit(tmp_path) -> None:
             return {"type": "http.request", "body": b"x" * 20, "more_body": False}
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    async def _inner(_scope: Any, receive: Any, _send: Any) -> None:
+    async def _inner(scope: Any, receive: Any, send: Any) -> None:
         await receive()
 
     middleware = BodySizeLimitMiddleware(app=_inner, settings=settings)
@@ -209,8 +206,8 @@ def test_middleware_with_no_settings() -> None:
     async def _recv() -> dict[str, Any]:
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    async def _send(_msg: Any) -> None:
-        return None
+    async def _send(msg: Any) -> None:
+        pass
 
     asyncio.run(middleware(scope, _recv, _send))
     assert _inner_called == [True]

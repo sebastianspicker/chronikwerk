@@ -1,5 +1,4 @@
 # pylint: disable=import-outside-toplevel
-"""Project module."""
 from __future__ import annotations
 
 import sys
@@ -38,13 +37,15 @@ def _extract_cert_fingerprint(signing_settings: SigningSettings) -> str | None:
 
 @dataclass(frozen=True)
 class AuditRecordInput:
-    """Implement the AuditRecordInput operation."""
     ticket_id: int
     ticket_number: str
     title: str | None
     created_at: datetime
     storage_path: str
     sha256: str
+    articles_total: int | None = None
+    articles_included: int | None = None
+    articles_omitted: int = 0
 
 
 def build_audit_record(
@@ -83,6 +84,13 @@ def build_audit_record(
         "signing": signing,
         "service": service,
     }
+    if record.articles_total is not None:
+        out["article_coverage"] = {
+            "total": record.articles_total,
+            "included": record.articles_included,
+            "omitted": record.articles_omitted,
+            "complete": record.articles_omitted == 0,
+        }
     if attachments:
         out["attachments"] = attachments
     return out

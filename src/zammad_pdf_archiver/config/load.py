@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import os
@@ -8,6 +7,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from zammad_pdf_archiver.config.managed import ManagedConfigError, ManagedConfigStore, deep_merge
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import (
     ConfigValidationError,
@@ -20,7 +20,6 @@ from zammad_pdf_archiver.config.validate import (
 def _default_config_path_if_present() -> Path | None:
     candidate = Path("config/config.yaml")
     return candidate if candidate.exists() else None
-
 
 
 def _resolve_config_path(config_path: str | Path | None) -> tuple[Path | None, bool]:
@@ -54,7 +53,11 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
     return raw
 
 
-def load_settings(*, config_path: str | Path | None = None) -> Settings:
+def load_settings(
+    *,
+    config_path: str | Path | None = None,
+    include_managed: bool = True,
+) -> Settings:
     """Load settings using env > YAML/init > dotenv > file secrets > defaults."""
     path, explicit = _resolve_config_path(config_path)
     yaml_data: dict[str, Any] = {}
@@ -82,6 +85,21 @@ def load_settings(*, config_path: str | Path | None = None) -> Settings:
         raise ConfigValidationError(issues) from exc
 
     validate_settings(settings)
+
+    overlay_path = settings.admin.state_dir / "managed-config.json"
+    if include_managed and (settings.admin.enabled or overlay_path.exists()):
+        try:
+            overlay = ManagedConfigStore(settings.admin.state_dir).load()
+        except (ManagedConfigError, OSError, ValueError) as exc:
+            raise ConfigValidationError(
+                [ConfigValidationIssue(path="admin.state_dir", message=str(exc))]
+            ) from exc
+        if overlay:
+            try:
+                settings = Settings(**deep_merge(yaml_data, overlay))
+            except ValidationError as exc:
+                raise ConfigValidationError(issues_from_pydantic_error(exc)) from exc
+            validate_settings(settings)
     return settings
 
 

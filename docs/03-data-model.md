@@ -24,6 +24,8 @@ Core template fields:
 - `ticket.tags`
 - `ticket.custom_fields`
 - `articles[]`
+- `articles_total`
+- `articles_omitted`
 
 Each article may include attachment metadata (`filename`, `size`, content type,
 and identifiers). Attachment binary content is intentionally not persisted by
@@ -57,6 +59,7 @@ The sidecar records:
 - SHA-256 checksum
 - signing/timestamp status
 - service metadata
+- article coverage (`total`, `included`, `omitted`, and `complete`)
 
 The sidecar is for operational audit and integrity checks; it is not a durable
 database.

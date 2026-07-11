@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# pytest is imported only by the platform-specific test branch.
-# pylint: disable=import-outside-toplevel
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 from pathlib import Path
 
 

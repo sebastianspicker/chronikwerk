@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ _("admin.revisions") }} · {{ _("admin.service_name") }}{% endblock %}
+{% block content %}
+<p class="breadcrumb"><a href="/admin">{{ _("admin.overview") }}</a> / <a href="/admin/configuration">{{ _("admin.configuration") }}</a> / {{ _("admin.revisions") }}</p>
+<h1>{{ _("admin.revisions") }}</h1>
+{% if revisions %}
+<div class="table-region" role="region" aria-label="{{ _("admin.revisions") }}" tabindex="0">
+  <table><thead><tr><th>{{ _("admin.created_at") }}</th><th>Revision</th><th>{{ _("admin.previous_revision") }}</th><th>{{ _("admin.changed_paths") }}</th><th></th></tr></thead>
+  <tbody>{% for revision in revisions %}<tr><td>{{ revision.created_at }}</td><td><code>{{ revision.revision }}</code></td><td><code>{{ revision.previous_revision }}</code></td><td>{{ revision.changed_paths | join(", ") }}</td><td><form method="post" action="/admin/configuration/revisions/{{ revision.revision }}/restore"><input type="hidden" name="csrf_token" value="{{ session.csrf_token }}"><input type="hidden" name="expected_revision" value="{{ current_revision }}"><label class="checkbox"><input type="checkbox" name="security_acknowledged" value="true" required> {{ _("admin.security_ack") }}</label><button class="button" type="submit">{{ _("admin.restore") }}</button></form></td></tr>{% endfor %}</tbody></table>
+</div>
+{% else %}<p class="empty-state">{{ _("admin.empty_revisions") }}</p>{% endif %}
+{% endblock %}

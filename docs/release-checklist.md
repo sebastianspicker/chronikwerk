@@ -7,7 +7,7 @@ This project uses SemVer and Keep-a-Changelog style `CHANGELOG.md`.
 | Mode | Package version | Git tag |
 | --- | --- | --- |
 | stable | `0.2.0` | `v0.2.0` |
-| release candidate | `0.2.0rc1` | `v0.2.0-rc.1` |
+| release candidate | `0.2.0rcN` | `v0.2.0-rc.N` |
 
 ## Preconditions
 
@@ -36,6 +36,15 @@ This project uses SemVer and Keep-a-Changelog style `CHANGELOG.md`.
 3. Leave an empty `[Unreleased]` section for future work.
 
 ## Local Validation
+
+Run the repository-owned aggregate gates first:
+
+```bash
+make verify-core
+make verify
+```
+
+The commands below document the constituent non-container checks for diagnosis:
 
 ```bash
 python -m ruff check .
@@ -106,6 +115,16 @@ PY
 - Execute one real archive run and confirm PDF plus sidecar.
 - Confirm signing material and TSA settings in the target environment.
 - Confirm logs and internal ticket notes do not expose secrets.
+- Confirm admin routes return 404 when `admin.enabled=false`.
+- Run keyboard-only and axe checks in German and English across Chromium, Firefox, and
+  WebKit at desktop, 768px, 390px, and 400% zoom.
+- Verify secure-cookie behavior behind the production TLS proxy and confirm no external
+  browser asset requests.
+- Run veraPDF 1.30.1 with the `ua1` profile on unsigned and signed representative PDFs;
+  confirm title, language, A4 size, tagging, bookmarks, and DejaVu font embedding.
+  The pinned local gate is `make pdf-ua-check PDF_FILES="unsigned.pdf signed.pdf"`.
+- Complete VoiceOver/Safari, NVDA/Firefox, PDF reading-order, outline, contrast, reflow,
+  and non-color-state manual checks. Renderer tagging alone is not conformance proof.
 
 ## Tag
 

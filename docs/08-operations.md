@@ -13,6 +13,8 @@ service. Deployment preparation lives in [deploy.md](deploy.md).
 - `GET /jobs/history`: returns authenticated, process-local history.
 - `GET /healthz`: liveness/status, with optional `?deep=true` storage check.
 - `GET /metrics`: Prometheus metrics when enabled.
+- `/admin`: optional session-authenticated overview, volatile history, retry, and staged
+  non-secret configuration.
 
 `202` means accepted, not archived. Confirm completion by checking final tags,
 the internal ticket note, logs, and archive output.
@@ -43,9 +45,14 @@ Update:
 
 ```bash
 cd /opt/zammad-ticket-archiver
-sudo rsync -a --delete /path/to/updated/repo/ ./
+sudo git fetch --tags --prune
+sudo git checkout <new-release-tag>
 sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
 ```
+
+Update from a clean tag or a versioned image. Never synchronize a developer working tree
+into `/opt`: ignored local configuration, credentials, archives, evidence, and tool state
+must remain outside the deployment source tree.
 
 Rollback:
 
@@ -56,6 +63,16 @@ sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --
 ```
 
 For no-build rollbacks, publish versioned images and pin compose `image:` tags.
+
+Managed configuration remains restart-only. The UI labels a newly staged revision as
+inactive until the process is restarted externally. If a staged revision prevents web
+startup, use the offline CLI against the same external configuration and state directory:
+
+```bash
+zammad-archiver-cli list-config-revisions
+zammad-archiver-cli stage-config-rollback <full-revision-hash>
+sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env restart
+```
 
 ## Optional systemd Wrapper
 

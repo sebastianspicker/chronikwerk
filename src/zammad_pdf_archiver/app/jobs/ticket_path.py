@@ -1,4 +1,3 @@
-"""Project module."""
 from typing import Any
 
 from zammad_pdf_archiver.adapters.zammad.models import Ticket

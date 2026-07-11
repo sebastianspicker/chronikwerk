@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import re
@@ -60,7 +59,6 @@ def validate_segments(
     max_depth: int = 10,
     max_length: int = 64,
 ) -> list[str]:
-    """Implement the validate segments operation."""
     if max_depth <= 0:
         raise ValueError("max_depth must be > 0")
     if max_length <= 0:

@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-# Each test imports the private parser after supplying its synthetic request scope.
-# pylint: disable=import-outside-toplevel
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import pytest
 from pydantic import ValidationError
 

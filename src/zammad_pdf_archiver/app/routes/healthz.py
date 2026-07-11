@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +20,6 @@ def _service_version() -> str:
         return metadata.version("zammad-pdf-archiver")
     except metadata.PackageNotFoundError:
         return "0.0.0"
-
 
 
 def _check_storage(settings: Settings) -> dict[str, object]:

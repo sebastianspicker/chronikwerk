@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# Directly exercises the private admission boundary of the job orchestration.
-# pylint: disable=protected-access,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import asyncio
 import threading
 from contextlib import contextmanager

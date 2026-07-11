@@ -7,7 +7,9 @@ Security summary for the FastAPI webhook service.
 ```mermaid
 flowchart LR
   Z["Zammad"] -->|"Webhook"| I["Ingress: /ingest"]
-  OP["Operators"] -->|"Config + secrets"| I
+  OP["Operators"] -->|"Session + CSRF"| A["Optional /admin control plane"]
+  DEP["Deployment environment"] -->|"Config + secrets"| I
+  A -->|"Non-secret staged overlay"| I
   I -->|"API token"| ZA["Zammad API"]
   I -->|"Write output"| FS["Archive filesystem"]
   I -->|"Optional RFC3161"| TSA["TSA endpoint"]
@@ -22,6 +24,7 @@ flowchart LR
 - `SIGNING__PFX_PATH` and `SIGNING__PFX_PASSWORD`
 - `SIGNING__TIMESTAMP__RFC3161__USER`
 - `SIGNING__TIMESTAMP__RFC3161__PASSWORD`
+- `ADMIN__ACCESS_TOKEN`
 - archived PDFs and audit sidecars
 
 ## Implemented Mitigations
@@ -57,6 +60,11 @@ Residual risk: filesystem behavior still depends on the mounted storage and OS.
 Residual risk: redaction is best-effort. Do not log raw config or full exception
 objects in production.
 
+Repository policy ignores local environment files, YAML overrides, credential and
+signing material, generated archive PDFs, admin state, local evidence, and agent/tool
+state. Public examples contain placeholders only. A clean checkout or published image,
+not a developer working tree, is the deployment input.
+
 ### Request Flooding and Oversized Payloads
 
 - Request body size limit middleware.
@@ -83,6 +91,20 @@ objects in production.
 `OBSERVABILITY__HISTORY_BEARER_TOKEN`; configuration fails closed when the
 token is missing.
 
+### Administration application
+
+The `/admin` surface is absent unless explicitly enabled. Enabling it without an access
+token of at least 32 characters fails startup validation. Login uses a constant-time token
+comparison and creates a random process-local session; the access token never enters the
+cookie. Cookies are `HttpOnly`, `SameSite=Strict`, scoped to `/admin`, and secure by
+default. Sessions have idle and absolute lifetimes and disappear on restart.
+
+State-changing operations require a per-session CSRF token. Admin responses are
+`no-store` and enforce a same-origin CSP, frame denial, `nosniff`, and no-referrer policy.
+Managed configuration is restricted to an explicit non-secret registry, rejects unknown
+and environment-owned fields, writes atomically with an `If-Match` revision precondition,
+and never stores secret values. The UI cannot restart the service.
+
 ## Hardening Checklist
 
 - Restrict `/ingest` to trusted Zammad sources at the network edge.
@@ -90,6 +112,8 @@ token is missing.
 - Keep body-size and rate-limit controls enabled.
 - Require delivery IDs when Zammad can send them reliably.
 - Protect `/metrics` when enabled.
+- Keep admin disabled until the release gates pass; when enabled, place it behind TLS and
+  the existing trusted-network boundary and rotate `ADMIN__ACCESS_TOKEN` externally.
 - Keep signing/TSA credentials outside the repository.
 - Use a dedicated archive mount and service identity.
 - Monitor archive write failures and ticket `pdf:error` notes.

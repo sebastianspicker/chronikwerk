@@ -35,6 +35,8 @@ Provided variables:
 - `snapshot`
 - `ticket` (`snapshot.ticket`)
 - `articles` (`snapshot.articles`)
+- `articles_total`, `articles_included`, and `articles_omitted`
+- normalized `pdf_locale` (`de-DE` or `en-GB`) and localized labels
 
 Article fields include:
 
@@ -70,3 +72,19 @@ Attachments are represented as metadata only (`filename`, size, content type,
 and IDs). Attachment binaries are not archived and there is no attachment-byte
 limit setting. Article limits still fail the job or cap and continue according
 to `PDF__MAX_ARTICLES` and `PDF__ARTICLE_LIMIT_MODE`.
+
+When `cap_and_continue` omits articles, the PDF displays total, included, and omitted
+counts prominently and the sidecar records the same coverage. The document never reports
+a capped export as complete.
+
+## Accessibility and pagination
+
+Archive PDFs use semantic heading levels, a meaningful outline, full language metadata,
+page identity, page counters, DejaVu Sans, and WeasyPrint's `pdf/ua-1` output variant.
+Articles may split across pages; headings, short attachment rows, metadata blocks, and
+table rows avoid orphaning where practical. Long URLs, preformatted text, images, and
+wide tables are contained within A4 bounds.
+
+The renderer option is not a conformance claim. Release validation requires veraPDF
+1.30.1 with profile `ua1` for signed and unsigned fixtures plus human reading-order,
+outline, language, and assistive-technology checks.

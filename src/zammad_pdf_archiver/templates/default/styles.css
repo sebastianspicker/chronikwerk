@@ -3,25 +3,31 @@
   --muted: #475569;
   --border: #dbe1ea;
   --accent: #0b57d0;
-  --card-bg: #f8fafc;
+  --surface-muted: #f8fafc;
   --internal: #8b2c2c;
   --external: #165b1a;
   --internal-bg: #fef2f2;
   --external-bg: #f0fdf4;
+  --warning: #854d0e;
+  --warning-bg: #fffbeb;
+  --font-sans: "DejaVu Sans", sans-serif;
+  --font-mono: "DejaVu Sans Mono", monospace;
 }
+
+html { font-family: var(--font-sans); }
 
 body {
-  font-family: "IBM Plex Sans", "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--text);
   background: #fff;
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: 10.5pt;
+  line-height: 1.45;
   margin: 0;
   padding: 0;
+  overflow-wrap: anywhere;
 }
 
-.muted {
-  color: var(--muted);
-}
+.muted { color: var(--muted); }
 
 .header {
   border-bottom: 2px solid var(--accent);
@@ -30,131 +36,149 @@ body {
 }
 
 .title {
-  font-size: 18px;
-  margin-bottom: 10px;
+  font-size: 16pt;
+  line-height: 1.25;
+  margin: 0 0 10px;
 }
 
 .ticket-number {
   font-weight: 700;
+  string-set: ticket-number content();
 }
 
-.subject {
-  color: var(--text);
-  font-weight: 400;
-}
+.subject { font-weight: 400; }
 
 .ticket-meta {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   margin-top: 10px;
   padding: 10px 12px;
-  background: var(--card-bg);
-  border-radius: 6px;
-  border: 1px solid var(--border);
 }
 
-.meta-grid {
-  margin: 0;
-  padding: 0;
-}
+.meta-grid { margin: 0; padding: 0; }
 
 .meta-item {
   display: flex;
-  margin: 0 0 6px 0;
+  margin: 0 0 6px;
 }
 
-.meta-item:last-child {
-  margin-bottom: 0;
-}
+.meta-item:last-child { margin-bottom: 0; }
 
 .meta-item dt {
-  width: 160px;
-  flex: 0 0 160px;
-  margin: 0;
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 500;
+  flex: 0 0 42mm;
+  font-size: 8.5pt;
+  font-weight: 600;
+  margin: 0;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
 }
 
 .meta-item dd {
-  margin: 0;
   flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.meta-item--wide dt {
-  width: 160px;
+.article-count { font-size: 9.5pt; margin: 0 0 8px; }
+
+.completeness-warning {
+  background: var(--warning-bg);
+  border: 1px solid #e7d3a3;
+  border-radius: 4px;
+  color: var(--warning);
+  font-weight: 600;
+  margin: 0 0 14px;
+  padding: 8px 10px;
 }
 
 .article {
-  border-top-color: var(--border);
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 12px;
 }
+
+.article:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+
+.article-header {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11.5pt;
+  gap: 4px 6px;
+  line-height: 1.35;
+  margin: 0 0 8px;
+}
+
+.article-index { font-size: 9pt; font-weight: 700; }
+.timestamp { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sender { font-weight: 600; overflow-wrap: anywhere; }
+.dot { color: var(--muted); }
 
 .badge {
-  border-color: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: inline-block;
+  font-size: 8pt;
+  font-weight: 700;
+  padding: 1px 5px;
+  white-space: nowrap;
 }
 
-.badge--internal {
-  border-color: #e7c5c5;
-  color: var(--internal);
-  background-color: var(--internal-bg);
+.badge--internal { background: var(--internal-bg); border-color: #e7c5c5; color: var(--internal); }
+.badge--external { background: var(--external-bg); border-color: #c4e0c4; color: var(--external); }
+.article-subject { color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+
+.body { overflow-wrap: anywhere; }
+.body p { margin: 0 0 9px; }
+.body p:last-child { margin-bottom: 0; }
+.body ul, .body ol { margin: 6px 0 10px; padding-left: 20px; }
+.body li { margin-bottom: 3px; }
+.body blockquote { border-left: 1px solid var(--border); color: var(--muted); margin: 8px 0; padding-left: 10px; }
+.body pre, .body code { font-family: var(--font-mono); font-size: 8.5pt; overflow-wrap: anywhere; }
+.body pre { background: var(--surface-muted); border: 1px solid var(--border); border-radius: 4px; padding: 8px; white-space: pre-wrap; word-break: break-all; }
+.body img { height: auto; max-width: 100%; }
+
+.body table {
+  border-collapse: collapse;
+  font-size: 8pt;
+  table-layout: fixed;
+  width: 100%;
 }
 
-.badge--external {
-  border-color: #c4e0c4;
-  color: var(--external);
-  background-color: var(--external-bg);
-}
+.body caption { font-weight: 600; margin-bottom: 4px; text-align: left; }
+.body th, .body td { border: 1px solid var(--border); overflow-wrap: anywhere; padding: 3px 4px; vertical-align: top; }
+.body th { background: var(--surface-muted); font-weight: 700; }
 
-.body pre {
-  border-color: var(--border);
-  background: var(--card-bg);
-}
-
-.section {
-  margin-top: 20px;
-}
+.subheading { font-size: 10.5pt; margin: 12px 0 6px; }
+.attachment-list, .attachment-index { margin: 0; padding-left: 18px; }
+.attachment-item, .attachment-index-item { margin: 0 0 4px; overflow-wrap: anywhere; }
+.attachment-name { font-weight: 600; }
+.attachment-meta { color: var(--muted); font-size: 9pt; }
+.section { margin-top: 20px; }
 
 .section-title {
-  margin: 0 0 10px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
   border-bottom: 1px solid var(--border);
+  font-size: 12pt;
+  margin: 0 0 10px;
   padding-bottom: 6px;
 }
 
-.footer {
-  margin-top: 24px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-  font-size: 10px;
-  color: var(--muted);
-}
+.footer { border-top: 1px solid var(--border); color: var(--muted); font-size: 8.5pt; margin-top: 24px; padding-top: 10px; }
 
 @media print {
   @page {
-    margin: 14mm;
+    margin: 16mm 14mm 18mm;
+    size: A4;
+    @bottom-left { color: #475569; content: string(ticket-number); font-family: "DejaVu Sans", sans-serif; font-size: 8pt; }
+    @bottom-right { color: #475569; content: counter(page) " / " counter(pages); font-family: "DejaVu Sans", sans-serif; font-size: 8pt; }
   }
 
-  body {
-    -webkit-print-color-adjust: exact;
-  }
-
-  .section,
-  .article,
-  .ticket-meta {
-    break-inside: avoid-page;
-    page-break-inside: avoid;
-  }
-
-  .header {
-    break-after: avoid-page;
-    page-break-after: avoid;
-  }
-
-  .footer {
-    break-inside: avoid-page;
-    page-break-inside: avoid;
-  }
+  body { -webkit-print-color-adjust: exact; }
+  .header, .article-header, .subheading, .section-title { break-after: avoid-page; }
+  .ticket-meta, .attachment-item, .attachment-index-item, .footer { break-inside: avoid-page; }
+  .body pre { max-height: none; overflow: visible; }
+  thead { display: table-header-group; }
+  tr, img { break-inside: avoid-page; }
 }

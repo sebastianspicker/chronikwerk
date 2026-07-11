@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# The validator is imported after the schema fixture is prepared.
-# pylint: disable=import-outside-toplevel,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import re
 from pathlib import Path
 from typing import Any
@@ -11,7 +7,6 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
-from test.support.credentials import fake_credential
 from zammad_pdf_archiver.config.settings import Settings
 
 
@@ -49,8 +44,8 @@ def test_config_example_constructs_and_validates(tmp_path: Path) -> None:
     data = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
     data["storage"]["root"] = str(tmp_path)
     data["zammad"]["base_url"] = "https://zammad.example.local"
-    data["zammad"]["api_token"] = fake_credential("api-token")
-    data["zammad"]["webhook_hmac_secret"] = fake_credential("webhook")
+    data["zammad"]["api_token"] = "test-token"
+    data["zammad"]["webhook_hmac_secret"] = "test-secret"
     settings = Settings.from_mapping(data)
     from zammad_pdf_archiver.config.validate import validate_settings
 
@@ -77,7 +72,7 @@ def test_accessible_config_key_inventory_has_no_unknown_keys() -> None:
     documented_rows = set(
         re.findall(
             r"\| `([^`]+)` \| [^|]+ \| `([A-Z][A-Z0-9_]+)` \|",
-            Path("docs/config-reference.md").read_text(encoding="utf-8"),
+            Path("docs/config-reference.md").read_text(),
         )
     )
     documented_paths = {row[0] for row in documented_rows}

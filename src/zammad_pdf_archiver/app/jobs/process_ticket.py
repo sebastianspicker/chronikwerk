@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -74,7 +73,6 @@ class _TicketJobContext:
 
 @dataclass(frozen=True)
 class ProcessTicketResult:
-    """Implement the ProcessTicketResult operation."""
     status: str
     ticket_id: int | None
     classification: str | None = None
@@ -131,6 +129,7 @@ async def process_ticket(
         delivery_id=delivery_id,
         request_id=request_id,
     )
+    _record_history(ctx, status="running")
 
     bound = _bound_context(ctx)
     with structlog.contextvars.bound_contextvars(**bound):
@@ -307,8 +306,7 @@ def _resolve_storage_paths(
     settings = ctx.settings
     custom_fields = (
         ticket.preferences.custom_fields
-        if ticket.preferences is not None
-        and isinstance(ticket.preferences.custom_fields, dict)
+        if ticket.preferences is not None and isinstance(ticket.preferences.custom_fields, dict)
         else {}
     )
     username = determine_username(

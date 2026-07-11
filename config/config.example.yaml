@@ -29,7 +29,7 @@ storage:
   filename_pattern: "Ticket-{ticket_number}_{timestamp_utc}.pdf"
 
 pdf:
-  locale: "de_DE"
+  locale: "de-DE"
   timezone: "Europe/Berlin"
   max_articles: 250
   article_limit_mode: "fail" # fail|cap_and_continue
@@ -81,3 +81,12 @@ admission:
   max_pending: 100
   max_running: 4
   shutdown_timeout_seconds: 5.0
+
+admin:
+  enabled: false
+  access_token: null
+  state_dir: "/var/lib/zammad-pdf-archiver/admin"
+  session_idle_seconds: 1800
+  session_absolute_seconds: 28800
+  cookie_secure: true
+  default_locale: "de-DE"

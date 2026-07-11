@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# Tests deliberately exercise private finalization orchestration primitives.
-# pylint: disable=protected-access
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path

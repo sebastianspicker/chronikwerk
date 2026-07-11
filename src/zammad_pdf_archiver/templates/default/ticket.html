@@ -15,30 +15,30 @@
 {% set archive_path = custom_fields.get("archive_path") %}
 {% set archive_user_mode = custom_fields.get("archive_user_mode") %}
 
-<section class="ticket-meta" aria-label="Ticket metadata">
+<section class="ticket-meta" aria-label="{{ _("pdf.ticket_metadata") }}">
   <dl class="meta-grid">
     <div class="meta-item">
-      <dt>Created</dt>
+      <dt>{{ _("pdf.created") }}</dt>
       <dd>{{ fmt_dt(ticket.created_at) }}</dd>
     </div>
     <div class="meta-item">
-      <dt>Updated</dt>
+      <dt>{{ _("pdf.updated") }}</dt>
       <dd>{{ fmt_dt(ticket.updated_at) }}</dd>
     </div>
     <div class="meta-item">
-      <dt>Requester / Customer</dt>
+      <dt>{{ _("pdf.requester") }}</dt>
       <dd>{{ party(ticket.customer) }}</dd>
     </div>
     <div class="meta-item">
-      <dt>Owner</dt>
+      <dt>{{ _("pdf.owner") }}</dt>
       <dd>{{ party(ticket.owner) }}</dd>
     </div>
     <div class="meta-item meta-item--wide">
-      <dt>Tags</dt>
+      <dt>{{ _("pdf.tags") }}</dt>
       <dd>{% if ticket.tags %}{{ ticket.tags | join(", ") }}{% else %}—{% endif %}</dd>
     </div>
     <div class="meta-item meta-item--wide">
-      <dt>Archive path</dt>
+      <dt>{{ _("pdf.archive_path") }}</dt>
       <dd>
         {% if archive_path is sequence and archive_path is not string %}
         {{ archive_path | join(" > ") }}
@@ -50,7 +50,7 @@
       </dd>
     </div>
     <div class="meta-item">
-      <dt>Archive user mode</dt>
+      <dt>{{ _("pdf.archive_user_mode") }}</dt>
       <dd>{{ archive_user_mode if archive_user_mode else "—" }}</dd>
     </div>
   </dl>
@@ -59,30 +59,30 @@
 
 {% block after_articles %}
 <section class="section">
-  <h2 class="section-title">Attachments (index)</h2>
+  <h2 class="section-title">{{ _("pdf.attachments_index") }}</h2>
   {% set articles_with_attachments = articles | selectattr("attachments") | list %}
   {% if articles_with_attachments %}
   <ul class="attachment-index">
     {% for article in articles_with_attachments %}
     {% for att in article.attachments %}
     <li class="attachment-index-item">
-      <span class="attachment-name">{{ att.filename if att.filename else "Unnamed file" }}</span>
+      <span class="attachment-name">{{ att.filename if att.filename else _("pdf.unnamed_file") }}</span>
       <span class="attachment-meta">
-        article #{{ article.id }}
+        {{ _("pdf.article") }} #{{ article.id }}
         {% if article.created_at %} · {{ fmt_dt(article.created_at) }}{% endif %}
         {% if att.content_type %} · {{ att.content_type }}{% endif %}
-        {% if att.size %} · {{ att.size }} B{% endif %}
+        {% if att.size is not none %} · {{ att.size | format_file_size }}{% endif %}
       </span>
     </li>
     {% endfor %}
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">No attachments.</p>
+  <p class="muted">{{ _("pdf.no_attachments") }}</p>
   {% endif %}
 </section>
 
 <footer class="footer">
-  <small>Archived by zammad-pdf-archiver &middot; Ticket {{ ticket.number }} &middot; {{ articles | length }} article{{ "s" if articles | length != 1 else "" }}</small>
+  <small>{{ _("pdf.archived_by") }} &middot; {{ _("pdf.ticket") }} {{ ticket.number }} &middot; {{ _(plural_key("pdf.article_count", articles_total), included=articles_included, total=articles_total) }}</small>
 </footer>
 {% endblock %}

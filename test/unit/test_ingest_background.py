@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# Route import follows app setup so the test patches the live background task.
-# pylint: disable=import-outside-toplevel,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import asyncio
 
 from starlette.requests import Request

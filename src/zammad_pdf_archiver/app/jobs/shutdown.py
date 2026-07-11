@@ -1,4 +1,3 @@
-"""Project module."""
 import asyncio
 from threading import Event
 
@@ -17,7 +16,6 @@ def set_shutting_down() -> None:
 
 
 def clear_shutting_down() -> None:
-    """Implement the clear shutting down operation."""
     _SHUTTING_DOWN.clear()
 
 

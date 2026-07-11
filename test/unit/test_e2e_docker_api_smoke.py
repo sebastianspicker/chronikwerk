@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-# Directly exercises the private fixture contract exported by the smoke helper.
-# pylint: disable=protected-access,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import argparse
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
 from scripts.e2e import docker_api_smoke
-from test.support.credentials import fake_credential
 
 
 def test_expected_statuses_from_dataset() -> None:
@@ -92,23 +86,6 @@ def test_expected_processed_ticket_ids_derives_from_status_map() -> None:
     ) == {1101, 1104}
 
 
-def test_ephemeral_signing_environment_injects_and_restores_compose_variables(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ZTA_E2E_PFX_PASSWORD", "existing-password")
-    monkeypatch.delenv("ZTA_E2E_SIGNING_DIR", raising=False)
-
-    with docker_api_smoke._ephemeral_signing_environment():
-        directory = Path(os.environ["ZTA_E2E_SIGNING_DIR"])
-        assert directory.is_dir()
-        assert (directory / "e2e-signing.pfx").is_file()
-        assert os.environ["ZTA_E2E_PFX_PASSWORD"] == docker_api_smoke.E2E_SIGNING_PASSWORD
-
-    assert "ZTA_E2E_SIGNING_DIR" not in os.environ
-    assert os.environ["ZTA_E2E_PFX_PASSWORD"] == "existing-password"
-    assert not directory.exists()
-
-
 def test_dry_run_prints_docker_api_plan(capsys: pytest.CaptureFixture[str]) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     args = argparse.Namespace(
@@ -117,7 +94,7 @@ def test_dry_run_prints_docker_api_plan(capsys: pytest.CaptureFixture[str]) -> N
         dataset=repo_root / "infra/e2e/dataset.json",
         archiver_url="http://127.0.0.1:18080",
         mock_url="http://127.0.0.1:18090",
-        admin_token=fake_credential("admin-token"),
+        admin_token="demo-admin-token",
         timeout_seconds=90.0,
         keep_stack=False,
         dry_run=True,

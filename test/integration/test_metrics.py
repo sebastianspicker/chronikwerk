@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-# pylint: disable=wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import hashlib
 import hmac
 import json
@@ -14,7 +11,6 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
-from test.support.credentials import fake_credential
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs.shutdown import clear_shutting_down
@@ -23,7 +19,7 @@ from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.domain.state_machine import TRIGGER_TAG
 
-_TEST_WEBHOOK_SECRET = fake_credential("webhook")
+_TEST_WEBHOOK_SECRET = "test-webhook-secret"
 
 
 def _test_settings(storage_root: str) -> Settings:

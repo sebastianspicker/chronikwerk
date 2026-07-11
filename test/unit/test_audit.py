@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-# Optional signing imports remain local so unrelated audit tests collect without them.
-# pylint: disable=import-outside-toplevel,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import SecretStr
 
-from test.support.credentials import fake_credential
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record
 
@@ -50,6 +46,7 @@ def test_build_audit_record_normalizes_timestamp_and_title() -> None:
     assert audit["created_at"] == "2026-02-07T12:00:00Z"
     assert audit["title"] == "Hello"
     from zammad_pdf_archiver._version import __version__
+
     assert audit["service"]["version"] == __version__
     assert audit["signing"] == {"enabled": False, "tsa_used": False}
 
@@ -98,13 +95,9 @@ def _cert_fingerprint_from_pfx(path: Path, password: str) -> str:
 
 def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -> None:
     pfx_path = tmp_path / "test.pfx"
-    _write_test_pfx(pfx_path, password=fake_credential("secret"))
+    _write_test_pfx(pfx_path, password="secret")
 
-    signing = SigningSettings(
-        enabled=True,
-        pfx_path=pfx_path,
-        pfx_password=SecretStr(fake_credential("secret")),
-    )
+    signing = SigningSettings(enabled=True, pfx_path=pfx_path, pfx_password=SecretStr("secret"))
     audit = build_audit_record(
         _audit_input(
             ticket_id=1,
@@ -116,7 +109,7 @@ def test_build_audit_record_extracts_cert_fingerprint_from_pfx(tmp_path: Path) -
         signing_settings=signing,
     )
 
-    expected = _cert_fingerprint_from_pfx(pfx_path, password=fake_credential("secret"))
+    expected = _cert_fingerprint_from_pfx(pfx_path, password="secret")
     assert audit["signing"]["enabled"] is True
     assert audit["signing"]["cert_fingerprint"] == expected
 
@@ -172,3 +165,28 @@ def test_build_audit_record_includes_attachments_when_provided() -> None:
             "sha256": "cd",
         },
     ]
+
+
+def test_build_audit_record_includes_article_coverage() -> None:
+    record = _audit_input(
+        ticket_id=1,
+        ticket_number="T1",
+        title="coverage",
+        storage_path="/mnt/archive/T1.pdf",
+        sha256="ab",
+    )
+    record = replace(
+        record,
+        articles_total=10,
+        articles_included=8,
+        articles_omitted=2,
+    )
+
+    audit = build_audit_record(record)
+
+    assert audit["article_coverage"] == {
+        "total": 10,
+        "included": 8,
+        "omitted": 2,
+        "complete": False,
+    }

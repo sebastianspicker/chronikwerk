@@ -1,11 +1,10 @@
 <!doctype html>
-<html lang="{{ (pdf_locale or 'en')[:2] }}">
+<html lang="{{ pdf_locale }}">
 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ticket {{ ticket.number }}{% if ticket.title %} – {{ ticket.title }}{% endif %}</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>{{ _("pdf.ticket") }} {{ ticket.number }}{% if ticket.title %} – {{ ticket.title }}{% endif %}</title>
 </head>
 
 <body>
@@ -19,28 +18,35 @@
 
   <header class="header">
     <h1 class="title">
-      <span class="ticket-number">Ticket {{ ticket.number }}</span>{% if ticket.title %}<span class="subject"> — {{ ticket.title }}</span>{% endif %}
+      <span class="ticket-number">{{ _("pdf.ticket") }} {{ ticket.number }}</span>{% if ticket.title %}<span class="subject"> — {{ ticket.title }}</span>{% endif %}
     </h1>
     {% block ticket_meta %}{% endblock %}
   </header>
 
-  <main aria-label="Ticket articles">
-    {% set article_count = articles | length %}
-    <p class="article-count muted">{{ article_count }} article{{ "s" if article_count != 1 else "" }}</p>
+  <main aria-label="{{ _("pdf.ticket_articles") }}">
+    <p class="article-count muted">{{ _(plural_key("pdf.article_count", articles_total), included=articles_included, total=articles_total) }}</p>
+
+    {% if articles_omitted %}
+    <aside class="completeness-warning" aria-label="{{ _("pdf.ticket_articles") }}">
+      {{ _(plural_key("pdf.omitted", articles_omitted), omitted=articles_omitted) }}
+    </aside>
+    {% endif %}
 
     {% for article in articles %}
     <article class="article" id="article-{{ article.id }}">
-      <header class="article-header">
-        <span class="article-index muted">#{{ loop.index }}</span>
+      <header>
+        <h2 class="article-header">
+        <span class="article-index muted">{{ _("pdf.article") }} {{ loop.index }}</span>
         <span class="timestamp">{{ fmt_dt(article.created_at) }}</span>
         <span class="dot" aria-hidden="true">·</span>
         <span class="sender">{{ article.sender if article.sender else "—" }}</span>
         <span class="badge {{ 'badge--internal' if article.internal else 'badge--external' }}">
-          {{ "Internal" if article.internal else "External" }}
+          {{ _("pdf.internal") if article.internal else _("pdf.external") }}
         </span>
         {% if article.subject %}
         <span class="article-subject">{{ article.subject }}</span>
         {% endif %}
+        </h2>
       </header>
 
       <div class="body">
@@ -54,15 +60,15 @@
       </div>
 
       {% if article.attachments %}
-      <aside class="article-attachments" aria-label="Attachments">
-        <h3 class="subheading">Attachments ({{ article.attachments | length }})</h3>
+      <aside class="article-attachments" aria-label="{{ _("pdf.attachments") }}">
+        <h3 class="subheading">{{ _("pdf.attachments") }} ({{ article.attachments | length }})</h3>
         <ul class="attachment-list">
           {% for att in article.attachments %}
           <li class="attachment-item">
-            <span class="attachment-name">{{ att.filename if att.filename else "Unnamed file" }}</span>
+            <span class="attachment-name">{{ att.filename if att.filename else _("pdf.unnamed_file") }}</span>
             <span class="attachment-meta">
               {% if att.content_type %}{{ att.content_type }}{% endif %}
-              {% if att.size %}{% if att.content_type %} · {% endif %}{{ att.size }} B{% endif %}
+              {% if att.size is not none %}{% if att.content_type %} · {% endif %}{{ att.size | format_file_size }}{% endif %}
               {% if att.attachment_id %} · id {{ att.attachment_id }}{% endif %}
             </span>
           </li>
@@ -71,9 +77,9 @@
       </aside>
       {% endif %}
 
-</article>
+    </article>
     {% else %}
-    <p class="muted">No articles.</p>
+    <p class="muted">{{ _("pdf.no_articles") }}</p>
     {% endfor %}
 
     {% block after_articles %}{% endblock %}

@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import re
@@ -38,22 +37,18 @@ class _BodyTextExtractor(HTMLParser):
     _BLOCK_TAGS = frozenset({"br", "div", "li", "p", "pre", "tr"})
 
     def __init__(self) -> None:
-        """Implement the   init   operation."""
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        """Implement the handle starttag operation."""
         if tag.lower() in self._BLOCK_TAGS:
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        """Implement the handle endtag operation."""
         if tag.lower() in self._BLOCK_TAGS:
             self.parts.append("\n")
 
     def handle_data(self, data: str) -> None:
-        """Implement the handle data operation."""
         self.parts.append(data)
 
 
@@ -127,7 +122,6 @@ async def build_snapshot(
     ticket: ZammadTicket | None = None,
     tags: TagList | None = None,
 ) -> Snapshot:
-    """Implement the build snapshot operation."""
     if ticket is None:
         ticket = await client.get_ticket(ticket_id)
     if tags is None:
@@ -139,8 +133,7 @@ async def build_snapshot(
 
     custom_fields = (
         ticket.preferences.custom_fields
-        if ticket.preferences is not None
-        and isinstance(ticket.preferences.custom_fields, dict)
+        if ticket.preferences is not None and isinstance(ticket.preferences.custom_fields, dict)
         else {}
     )
 
@@ -157,4 +150,5 @@ async def build_snapshot(
             custom_fields=custom_fields,
         ),
         articles=snapshot_articles,
+        articles_total=len(snapshot_articles),
     )

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ _("admin.overview") }} · {{ _("admin.service_name") }}{% endblock %}
+{% block content %}
+<div data-overview>
+<div class="page-heading">
+  <div><p class="breadcrumb">{{ _("admin.service_name") }}</p><h1>{{ _("admin.overview") }}</h1></div>
+  <p class="refresh-time">{{ _("admin.last_refresh") }}: <time datetime="{{ now_iso }}" data-last-refresh>{{ now_display }}</time></p>
+</div>
+<div class="banner banner--warning" role="note">{{ _("admin.process_local") }}</div>
+{% if staged_revision %}<div class="banner banner--warning" role="status"><strong>{{ _("admin.restart_required") }}</strong><br><code>{{ staged_revision }}</code></div>{% endif %}
+<div class="overview-layout">
+  <section aria-labelledby="service-status-title">
+    <h2 id="service-status-title">{{ _("admin.status") }}</h2>
+    <dl class="fact-list">
+      <div><dt>{{ _("admin.status") }}</dt><dd><span class="status-badge status-badge--success">{{ _("admin.healthy") }}</span></dd></div>
+      <div><dt>{{ _("admin.version") }}</dt><dd>{{ version }}</dd></div>
+      <div><dt>{{ _("admin.started") }}</dt><dd><time datetime="{{ process_started_iso }}">{{ process_started_display }}</time></dd></div>
+      <div><dt>{{ _("admin.active_revision") }}</dt><dd><code>{{ active_revision }}</code></dd></div>
+    </dl>
+    <button class="button" type="button" data-storage-check>{{ _("admin.storage_check") }}</button>
+    <div class="inline-result" data-storage-result data-success="{{ _("admin.storage_ok") }}" data-error="{{ _("admin.storage_unavailable") }}" aria-live="polite"></div>
+  </section>
+  <section aria-labelledby="capacity-title">
+    <h2 id="capacity-title">{{ _("admin.capacity") }}</h2>
+    <dl class="fact-list">
+      <div><dt>{{ _("admin.running") }}</dt><dd data-admission-running>{{ admission.running }}</dd></div>
+      <div><dt>{{ _("admin.pending") }}</dt><dd data-admission-pending>{{ admission.pending }}</dd></div>
+      <div><dt>{{ _("admin.limit") }}</dt><dd>{{ admission.max_running }} + {{ admission.max_pending }}</dd></div>
+    </dl>
+  </section>
+</div>
+<section aria-labelledby="failures-title">
+  <h2 id="failures-title">{{ _("admin.recent_failures") }}</h2>
+  {% if failures %}
+  <div class="table-region" role="region" aria-labelledby="failures-title" tabindex="0">
+    <table><thead><tr><th>{{ _("admin.time") }}</th><th>{{ _("admin.ticket_id") }}</th><th>{{ _("admin.classification") }}</th><th>{{ _("admin.message") }}</th></tr></thead>
+    <tbody>{% for item in failures %}<tr><td>{{ item.created_display }}</td><td><a href="/admin/jobs/{{ item.ticket_id }}">{{ item.ticket_id }}</a></td><td>{{ item.classification or "—" }}</td><td>{{ item.message or "—" }}</td></tr>{% endfor %}</tbody></table>
+  </div>
+  {% else %}<p class="empty-state">{{ _("admin.no_failures") }}</p>{% endif %}
+</section>
+<div class="inline-result" data-refresh-status data-error="{{ _("admin.refresh_failed") }}" aria-live="polite"></div>
+</div>
+{% endblock %}

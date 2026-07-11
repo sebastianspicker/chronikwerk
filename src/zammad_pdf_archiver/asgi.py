@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 from zammad_pdf_archiver.app.server import create_app
