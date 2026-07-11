@@ -1,10 +1,11 @@
 import {defineConfig, devices} from '@playwright/test';
-import {mkdirSync} from 'node:fs';
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
-const runtimeRoot = `/private/tmp/zpa-browser-${process.pid}`;
+const archiveRoot = mkdtempSync(join(tmpdir(), 'zpa-browser-archive-'));
+const adminRoot = mkdtempSync(join(tmpdir(), 'zpa-browser-admin-'));
 const python = process.env.PYTHON || 'python';
-mkdirSync(`${runtimeRoot}/archive`, {recursive: true});
-mkdirSync(`${runtimeRoot}/admin`, {recursive: true});
 
 export default defineConfig({
   testDir: './test/browser',
@@ -33,11 +34,11 @@ export default defineConfig({
       ZAMMAD__BASE_URL: 'https://zammad.example.invalid',
       ZAMMAD__API_TOKEN: 'browser-test-token',
       ZAMMAD__WEBHOOK_HMAC_SECRET: 'browser-test-webhook-secret',
-      STORAGE__ROOT: `${runtimeRoot}/archive`,
+      STORAGE__ROOT: archiveRoot,
       HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS: 'true',
       ADMIN__ENABLED: 'true',
       ADMIN__ACCESS_TOKEN: 'browser-test-admin-token-at-least-32-characters',
-      ADMIN__STATE_DIR: `${runtimeRoot}/admin`,
+      ADMIN__STATE_DIR: adminRoot,
       ADMIN__COOKIE_SECURE: 'false'
     }
   }
