@@ -10,18 +10,25 @@ set `ARCHIVER_ENV_FILE` in that file to its installed path.
 - Mounted archive storage path, for example an SMB/CIFS mount.
 - Zammad API token and webhook HMAC secret.
 - Optional PKCS#12/PFX signing material when signing is enabled.
+- A persistent admin-state directory and TLS proxy before the admin feature is enabled.
 
 ## Suggested Layout
 
 - Repository and compose files: `/opt/zammad-ticket-archiver`
 - Environment and secrets: `/etc/zammad-archiver`
 - Archive mount: `/mnt/archive` or another dedicated path
+- Admin revision state: `/var/lib/zammad-pdf-archiver/admin`
 
 ```bash
-sudo mkdir -p /opt/zammad-ticket-archiver
 sudo mkdir -p /etc/zammad-archiver/secrets
-sudo rsync -a --delete ./ /opt/zammad-ticket-archiver/
+sudo git clone --branch <release-tag> --depth 1 \
+  https://github.com/sebastianspicker/zammad-ticket-archiver.git \
+  /opt/zammad-ticket-archiver
 ```
+
+Deploy a clean tagged checkout or a published image. Do not copy a developer working
+tree: it may contain ignored credentials, local configuration, archives, reports, or tool
+state that do not belong on the deployment host.
 
 ## Configure Environment
 
@@ -76,6 +83,29 @@ services:
 cd /opt/zammad-ticket-archiver
 sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
 curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz"
+```
+
+## Optional administration application
+
+Keep `ADMIN__ENABLED=false` until the documented web and PDF release gates pass. Before
+enabling it, provision the Compose `admin-state` volume (or an equivalent writable
+systemd path), place the service behind TLS and the existing trusted-network boundary,
+and set a high-entropy token outside Git:
+
+```bash
+ADMIN__ENABLED=true
+ADMIN__ACCESS_TOKEN=CHANGE-ME-AT-LEAST-32-CHARACTERS
+ADMIN__STATE_DIR=/var/lib/zammad-pdf-archiver/admin
+ADMIN__COOKIE_SECURE=true
+```
+
+The UI can stage allowlisted non-secret values but cannot restart the service. After a
+stage operation, restart externally and verify that Overview shows the revision as
+active. Offline recovery commands are:
+
+```bash
+zammad-archiver-cli list-config-revisions
+zammad-archiver-cli stage-config-rollback <full-revision-hash>
 ```
 
 ## CIFS/SMB Storage

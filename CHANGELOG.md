@@ -13,6 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticated job history, and one production image with signing support.
 - Document that graceful shutdown drains admitted work while a process crash may
   lose accepted background work.
+- Replace the historical dashboard with a disabled-by-default German/English admin
+  application for operational status, volatile job history, acknowledged retries,
+  and staged non-secret configuration revisions.
+- Render one localized archival PDF layout with semantic headings, explicit article
+  coverage, A4-safe long-content handling, DejaVu Sans, bookmarks, and tagged
+  WeasyPrint `pdf/ua-1` output.
+
+### Added
+- Process-local admin sessions with idle and absolute expiry, strict cookies, CSRF,
+  CSP, no-store responses, and inline reauthentication that preserves non-secret
+  configuration drafts.
+- Atomic managed-configuration overlays with optimistic concurrency, bounded revision
+  history, external-restart truthfulness, and offline list/rollback commands.
+- Playwright/axe, production-image PDF, and pinned veraPDF validation gates.
+
+### Removed
+- Redis queue and DLQ behavior, the historical decorative dashboard, alternate PDF
+  template variants, demo assets, and obsolete local operations helpers.
+
+### Security
+- Require `cryptography>=48.0.1` so signing installations do not use wheels affected
+  by GHSA-537c-gmf6-5ccf.
 
 ## [0.2.0-rc.2] - 2026-04-09
 

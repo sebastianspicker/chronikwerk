@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from zammad_pdf_archiver import cli
+from zammad_pdf_archiver.config.managed import ManagedConfigStore
 
 
 def test_main_without_command_prints_help(capsys, monkeypatch) -> None:
@@ -45,3 +46,56 @@ def test_dump_config_redacts_secret(capsys, monkeypatch, tmp_path) -> None:
     assert cli.main() == 0
     data = json.loads(capsys.readouterr().out)
     assert data["zammad"]["api_token"] == "[redacted]"
+
+
+def test_cli_rollback_revalidates_historical_overlay(capsys, monkeypatch, tmp_path) -> None:
+    for key in (
+        "ZAMMAD__BASE_URL",
+        "ZAMMAD__API_TOKEN",
+        "ZAMMAD__WEBHOOK_HMAC_SECRET",
+        "STORAGE__ROOT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    state_dir = tmp_path / "admin"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "zammad:",
+                "  base_url: https://zammad.example.local",
+                "  api_token: test-token",
+                "  webhook_hmac_secret: test-secret",
+                "storage:",
+                f"  root: {tmp_path}",
+                "admin:",
+                f"  state_dir: {state_dir}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = ManagedConfigStore(state_dir)
+    invalid = store.stage(
+        {"pdf": {"max_articles": -1}},
+        expected_revision=store.current_revision(),
+        request_id="invalid",
+    )
+    current = store.stage(
+        {"pdf": {"max_articles": 100}},
+        expected_revision=invalid["revision"],
+        request_id="current",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "zammad-pdf-archiver",
+            "stage-config-rollback",
+            invalid["revision"],
+            "--config",
+            str(config),
+        ],
+    )
+
+    assert cli.main() == 1
+    assert "Failed to stage configuration rollback" in capsys.readouterr().err
+    assert store.current_revision() == current["revision"]

@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,7 +14,6 @@ def job_history(
     limit: int = 100,
     ticket_id: int | None = None,
 ) -> dict[str, object]:
-    """Implement the job history operation."""
     settings = getattr(request.app.state, "settings", None)
     if settings is None or not settings.observability.history_enabled:
         raise HTTPException(status_code=404, detail="not_found")

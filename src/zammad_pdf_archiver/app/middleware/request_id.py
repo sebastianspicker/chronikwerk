@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import re
@@ -16,10 +15,8 @@ _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 CallNext = Callable[[Request], Awaitable[Response]]
 
 
-class RequestIdMiddleware(BaseHTTPMiddleware):  # pylint: disable=too-few-public-methods
-    """Implement the RequestIdMiddleware operation."""
+class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
-        """Implement the dispatch operation."""
         request_id = (request.headers.get(_REQUEST_ID_HEADER) or "").strip()
         if not _REQUEST_ID_RE.fullmatch(request_id):
             request_id = str(uuid.uuid4())

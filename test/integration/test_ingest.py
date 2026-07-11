@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# Route imports occur after app construction so each test can patch its live handler.
-# pylint: disable=import-outside-toplevel,wrong-import-order
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import hashlib
 import hmac
 import json
@@ -11,14 +7,13 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from test.support.credentials import fake_credential
 from test.support.process_ticket_helpers import noop_process_ticket
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.constants import FORCE_REPROCESS_KEY
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.config.settings import Settings
 
-_TEST_WEBHOOK_SECRET = fake_credential("webhook")
+_TEST_WEBHOOK_SECRET = "test-webhook-secret"
 
 
 def _test_settings(storage_root: str, *, overrides: dict[str, Any] | None = None) -> Settings:
@@ -26,7 +21,9 @@ def _test_settings(storage_root: str, *, overrides: dict[str, Any] | None = None
 
 
 def _signed_headers(body: bytes, headers: dict[str, str] | None = None) -> dict[str, str]:
-    digest = hmac.new(_TEST_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    digest = hmac.new(
+        _TEST_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256
+    ).hexdigest()
     signed = {
         "Content-Type": "application/json",
         "X-Hub-Signature": f"sha256={digest}",
@@ -215,7 +212,7 @@ def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
 
     response = _post_signed(client, "/ingest", {"ticket": {"id": True}})
     assert response.status_code == 422
-    assert not calls
+    assert calls == []
 
 
 def test_ingest_batch_uses_per_item_delivery_ids_when_header_present(tmp_path, monkeypatch) -> None:
@@ -382,9 +379,9 @@ def test_batch_ingest_exceeds_max_size(tmp_path, monkeypatch) -> None:
     """POST /ingest/batch with 101 items returns 422 (batch too large)."""
 
     async def _stub_process_ticket(
-        _delivery_id: str | None, _payload: dict[str, Any], _settings: Settings
+        delivery_id: str | None, payload: dict[str, Any], settings: Settings
     ) -> None:
-        return None  # pragma: no cover — should never be called
+        pass  # pragma: no cover — should never be called
 
     app = create_app(_test_settings(str(tmp_path)))
     import zammad_pdf_archiver.app.routes.ingest as ingest_route

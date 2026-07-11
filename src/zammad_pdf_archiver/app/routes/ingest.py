@@ -1,4 +1,3 @@
-"""Project module."""
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +14,7 @@ from zammad_pdf_archiver.app.constants import (
     REQUEST_ID_KEY,
 )
 from zammad_pdf_archiver.app.jobs.admission import AdmissionClosed, JobAdmission
+from zammad_pdf_archiver.app.jobs.history import record_history_event
 from zammad_pdf_archiver.app.jobs.process_ticket import process_ticket
 from zammad_pdf_archiver.app.jobs.shutdown import is_shutting_down, track_task
 from zammad_pdf_archiver.app.responses import api_error, settings_or_503, verify_bearer_token
@@ -30,7 +30,7 @@ log = structlog.get_logger(__name__)
 MAX_BATCH_SIZE: int = 100
 
 
-class IngestPayload(BaseModel):  # pylint: disable=too-few-public-methods
+class IngestPayload(BaseModel):
     """Minimal webhook payload schema: require resolvable ticket id; allow extra fields."""
 
     model_config = ConfigDict(extra="allow")
@@ -47,7 +47,6 @@ class IngestPayload(BaseModel):  # pylint: disable=too-few-public-methods
         return self
 
     def resolved_ticket_id(self) -> int | None:
-        """Implement the resolved ticket id operation."""
         return extract_ticket_id(self.model_dump())
 
 
@@ -106,6 +105,7 @@ def _schedule_background_task(
     settings: Settings,
     admission: JobAdmission,
 ) -> bool:
+    ticket_id = extract_ticket_id(payload)
     if not admission.try_reserve():
         return False
     try:
@@ -121,6 +121,14 @@ def _schedule_background_task(
         admission.cancel_reservation()
         raise
     track_task(task)
+    record_history_event(
+        "accepted",
+        ticket_id,
+        delivery_id=delivery_id,
+        request_id=(
+            str(payload.get(REQUEST_ID_KEY)) if payload.get(REQUEST_ID_KEY) is not None else None
+        ),
+    )
     return True
 
 
@@ -141,8 +149,6 @@ def _resolve_settings_or_error(request: Request) -> tuple[Settings | None, JSONR
     if settings is None:
         return None, api_error(503, "settings not configured", code="settings_not_configured")
     return settings, None
-
-
 
 
 @router.post("/ingest", status_code=202)
@@ -262,16 +268,21 @@ async def retry_ticket(
         missing_detail="retry_token_not_configured",
     )
 
+    if not schedule_retry(request, ticket_id=ticket_id, settings=settings):
+        return _overload_error()
+
+    return JSONResponse(status_code=202, content={"status": "accepted", "ticket_id": ticket_id})
+
+
+def schedule_retry(request: Request, *, ticket_id: int, settings: Settings) -> bool:
+    """Schedule one forced retry for existing and admin route adapters."""
     payload_for_job: dict[str, Any] = {"ticket_id": ticket_id}
     payload_for_job[REQUEST_ID_KEY] = getattr(request.state, "request_id", None)
     payload_for_job[FORCE_REPROCESS_KEY] = True
     admission: JobAdmission = request.app.state.admission
-    if not _schedule_background_task(
+    return _schedule_background_task(
         delivery_id=None,  # Retry does not need deduplication
         payload=payload_for_job,
         settings=settings,
         admission=admission,
-    ):
-        return _overload_error()
-
-    return JSONResponse(status_code=202, content={"status": "accepted", "ticket_id": ticket_id})
+    )

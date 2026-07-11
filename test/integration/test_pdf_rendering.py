@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
+from io import BytesIO
 
 from zammad_pdf_archiver.adapters.pdf.render_pdf import render_pdf
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
@@ -69,6 +70,17 @@ def test_render_pdf_default_template_produces_pdf_bytes() -> None:
 
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 5_000
+
+
+def test_render_pdf_is_tagged_and_has_bcp47_language() -> None:
+    from pyhanko.pdf_utils.reader import PdfFileReader
+
+    pdf_bytes = asyncio.run(render_pdf(_rendering_snapshot(), locale="en_GB"))
+    reader = PdfFileReader(BytesIO(pdf_bytes))
+
+    assert str(reader.root["/Lang"]) == "en-GB"
+    assert bool(reader.root["/MarkInfo"]["/Marked"]) is True
+    assert reader.root.get("/Outlines") is not None
 
 
 def test_render_pdf_does_not_emit_pydyf_identifier_deprecation_warning() -> None:

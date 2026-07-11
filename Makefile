@@ -1,4 +1,4 @@
-.PHONY: dev lint format typecheck test test-fast test-unit test-int test-nfr test-all test-e2e smoke docs-check docker-smoke qa codacy-local build coverage-test config-check clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
+.PHONY: dev lint format typecheck test test-fast test-unit test-int test-nfr test-all test-e2e test-browser pdf-ua-check smoke docs-check docker-smoke qa build coverage-test config-check clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -54,6 +54,15 @@ test-e2e:
 		--compose-file infra/e2e/docker-compose.yml \
 		--dataset infra/e2e/dataset.json
 
+test-browser:
+	npm install --ignore-scripts
+	npx playwright install chromium firefox webkit
+	npm run test:browser
+
+pdf-ua-check:
+	@test -n "$(PDF_FILES)" || (echo "Set PDF_FILES to signed and unsigned fixture paths" && exit 2)
+	bash scripts/ci/verify_pdf_ua.sh $(PDF_FILES)
+
 docs-check:
 	@for p in README.md $$(find docs -name '*.md' -type f | sort); do \
 		test -f $$p || (echo "Missing docs: $$p" && exit 1); \
@@ -67,9 +76,6 @@ qa: lint smoke
 	python -m ruff check src --select C901
 	python -m mypy . --config-file pyproject.toml
 	$(MAKE) coverage-test
-
-codacy-local:
-	bash scripts/ci/run_local_codacy.sh
 
 build:
 	python -m build

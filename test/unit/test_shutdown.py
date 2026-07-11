@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-# The shutdown tests inspect the module-private task registry as their contract.
-# pylint: disable=protected-access
-# ruff: noqa: I001  # Pylint and Ruff classify the in-repository test package differently.
-
 import asyncio
 
 from zammad_pdf_archiver.app.jobs import shutdown as shutdown_module

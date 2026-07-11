@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ session.csrf_token if session else '' }}">
+  <title>{% block title %}{{ _("admin.service_name") }}{% endblock %}</title>
+  <link rel="stylesheet" href="/admin/static/admin.css">
+  <script type="module" src="/admin/static/admin.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">{{ _("admin.skip") }}</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="service-name" href="/admin">{{ _("admin.service_name") }}</a>
+      {% if session %}<span class="service-state"><span aria-hidden="true">●</span> {{ _("admin.healthy") }}</span>{% endif %}
+    </header>
+    {% if session %}
+    <nav class="primary-nav" aria-label="{{ _("admin.primary_nav") }}">
+      <a href="/admin" {% if current == "overview" %}aria-current="page"{% endif %}>{{ _("admin.overview") }}</a>
+      <a href="/admin/jobs" {% if current == "jobs" %}aria-current="page"{% endif %}>{{ _("admin.jobs") }}</a>
+      <a href="/admin/configuration" {% if current == "configuration" %}aria-current="page"{% endif %}>{{ _("admin.configuration") }}</a>
+      <a href="/admin/configuration/revisions" {% if current == "revisions" %}aria-current="page"{% endif %}>{{ _("admin.revisions") }}</a>
+      <div class="nav-actions">
+        <form method="post" action="/admin/locale" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+          <label for="locale" class="visually-hidden">{{ _("admin.language") }}</label>
+          <select id="locale" name="locale" data-auto-submit>
+            <option value="de-DE" {% if locale == "de-DE" %}selected{% endif %}>Deutsch</option>
+            <option value="en-GB" {% if locale == "en-GB" %}selected{% endif %}>English</option>
+          </select>
+        </form>
+        <form method="post" action="/admin/logout" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+          <button class="button button--quiet" type="submit">{{ _("admin.sign_out") }}</button>
+        </form>
+      </div>
+    </nav>
+    {% endif %}
+    <main id="main-content" class="main-content" tabindex="-1">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  {% if session %}<dialog id="reauth-dialog" aria-labelledby="reauth-title">
+    <h2 id="reauth-title">{{ _("admin.sign_in") }}</h2>
+    <p>{{ _("admin.session_expired") }}</p>
+    <form data-reauth-form>
+      <label for="reauth-token">{{ _("admin.access_token") }}</label>
+      <input id="reauth-token" name="access_token" type="password" autocomplete="current-password" required>
+      <div class="button-row">
+        <button class="button button--primary" type="submit">{{ _("admin.sign_in") }}</button>
+        <button class="button" type="button" data-dialog-close>{{ _("admin.close") }}</button>
+      </div>
+      <p class="field-error" data-reauth-error hidden>{{ _("admin.invalid_credentials") }}</p>
+    </form>
+  </dialog>{% endif %}
+</body>
+</html>

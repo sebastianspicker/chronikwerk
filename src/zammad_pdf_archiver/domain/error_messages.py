@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 
-class ErrorMessages:  # pylint: disable=too-few-public-methods
+class ErrorMessages:
     # HTTP/Network errors
-    """Implement the ErrorMessages operation."""
     HTTP_TIMEOUT = "HTTP timeout"
     HTTP_REQUEST_ERROR = "HTTP connection/request error"
     HTTP_UPSTREAM_ERROR = "HTTP {status} from upstream"
@@ -28,7 +27,6 @@ class ErrorMessages:  # pylint: disable=too-few-public-methods
 
 
 def format_http_error(status: int | None, is_auth: bool = False) -> str:
-    """Implement the format http error operation."""
     if status is None:
         return ErrorMessages.HTTP_REQUEST_ERROR
 
@@ -39,7 +37,6 @@ def format_http_error(status: int | None, is_auth: bool = False) -> str:
 
 
 def format_fs_error(errno: int | None, is_temporary: bool = False) -> str:
-    """Implement the format fs error operation."""
     if errno is None:
         return ErrorMessages.FS_GENERIC_ERROR
 

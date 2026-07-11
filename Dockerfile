@@ -18,6 +18,7 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    XDG_CACHE_HOME=/tmp/.cache \
     PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
@@ -34,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system --gid 10001 app \
-  && adduser --system --uid 10001 --ingroup app --home /nonexistent --shell /usr/sbin/nologin app
+  && adduser --system --uid 10001 --ingroup app --home /nonexistent --shell /usr/sbin/nologin app \
+  && install -d -m 0700 -o app -g app /var/lib/zammad-pdf-archiver/admin
 
 COPY --from=builder --chown=app:app /opt/venv /opt/venv
 

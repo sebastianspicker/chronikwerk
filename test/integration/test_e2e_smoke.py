@@ -9,14 +9,6 @@ from datetime import UTC, datetime
 import httpx
 import respx
 
-# Pylint classifies the test package as stdlib; Ruff uses project-local ordering.
-# pylint: disable-next=wrong-import-order
-from test.support.credentials import fake_credential
-from test.support.process_ticket_helpers import (  # pylint: disable=wrong-import-order
-    archive_article_json,
-    archive_ticket_json,
-)
-from zammad_pdf_archiver.app.jobs import process_ticket as process_ticket_module
 from zammad_pdf_archiver.app.jobs import ticket_stores
 from zammad_pdf_archiver.app.jobs.shutdown import clear_shutting_down, wait_for_tasks
 from zammad_pdf_archiver.app.server import create_app
@@ -28,7 +20,7 @@ from zammad_pdf_archiver.domain.state_machine import (
     TRIGGER_TAG,
 )
 
-SECRET = fake_credential("hmac")
+SECRET = "test-secret"
 ZAMMAD__BASE_URL = "https://zammad.example.local"
 
 
@@ -48,7 +40,7 @@ def _called_tag_items(route: respx.Route) -> list[str]:
 def _create_test_app(tmp_path, monkeypatch):
     clear_shutting_down()
     monkeypatch.setenv("ZAMMAD__BASE_URL", ZAMMAD__BASE_URL)
-    monkeypatch.setenv("ZAMMAD__API_TOKEN", fake_credential("api-token"))
+    monkeypatch.setenv("ZAMMAD__API_TOKEN", "test-token")
     monkeypatch.setenv("STORAGE__ROOT", str(tmp_path))
     monkeypatch.setenv("ZAMMAD__WEBHOOK_HMAC_SECRET", SECRET)
     monkeypatch.setenv("HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS", "true")
@@ -77,6 +69,41 @@ async def _post_signed(app, path: str, body: bytes, delivery_id: str) -> httpx.R
 
 def _body(payload) -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _ticket_json(
+    ticket_id: int,
+    *,
+    number: str = "20240123",
+    owner: str = "agent",
+    fallback: str = "fallback-agent",
+    archive_path=None,
+) -> dict[str, object]:
+    return {
+        "id": ticket_id,
+        "number": number,
+        "owner": {"login": owner},
+        "updated_by": {"login": fallback},
+        "preferences": {
+            "custom_fields": {
+                "archive_user_mode": "owner",
+                "archive_path": archive_path or ["A", "B", "C"],
+            }
+        },
+    }
+
+
+def _article_json() -> dict[str, object]:
+    return {
+        "id": 1,
+        "created_at": "2026-02-07T11:59:00Z",
+        "internal": False,
+        "subject": "Hello",
+        "body": "<p>Hello World</p>",
+        "content_type": "text/html",
+        "from": "customer@example.invalid",
+        "attachments": [],
+    }
 
 
 def _register_ticket(zammad, ticket_id: int, json_body: dict[str, object]) -> respx.Route:
@@ -115,6 +142,8 @@ def _register_mutation_routes(zammad) -> tuple[respx.Route, respx.Route, respx.R
 
 
 def _set_fixed_now(monkeypatch) -> datetime:
+    import zammad_pdf_archiver.app.jobs.process_ticket as process_ticket_module
+
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(process_ticket_module, "now_utc", lambda: fixed_now)
     return fixed_now
@@ -128,51 +157,37 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
     body = _body(payload)
 
     with respx.mock(assert_all_called=True) as zammad:
-        ticket_route = _register_ticket(
-            zammad, 123, archive_ticket_json(123, archive_path=["A", "B", "C"])
-        )
+        ticket_route = _register_ticket(zammad, 123, _ticket_json(123))
         tags_route = _register_tags(zammad, 123)
-        _register_articles(zammad, 123, [archive_article_json()])
+        _register_articles(zammad, 123, [_article_json()])
         remove_tag_route, add_tag_route, article_route = _register_mutation_routes(zammad)
 
         response = asyncio.run(
             _post_signed(app, "/ingest", body, "delivery-smoke-e2e-20260207-0001")
         )
 
-        _assert_happy_path(
-            response,
-            tmp_path,
-            fixed_now,
-            (ticket_route, tags_route, article_route, add_tag_route, remove_tag_route),
-        )
+        assert response.status_code == 202
+        assert response.json() == {"status": "accepted", "ticket_id": 123}
 
+        date_iso = fixed_now.date().isoformat()
+        expected_path = tmp_path / "agent" / "A" / "B" / "C" / f"Ticket-20240123_{date_iso}.pdf"
+        assert expected_path.exists()
+        assert expected_path.read_bytes().startswith(b"%PDF")
 
-def _assert_happy_path(
-    response: httpx.Response,
-    tmp_path,
-    fixed_now: datetime,
-    routes: tuple[respx.Route, respx.Route, respx.Route, respx.Route, respx.Route],
-) -> None:
-    ticket_route, tags_route, article_route, add_tag_route, remove_tag_route = routes
-    assert response.status_code == 202
-    assert response.json() == {"status": "accepted", "ticket_id": 123}
-    expected_path = (
-        tmp_path / "agent" / "A" / "B" / "C" / f"Ticket-20240123_{fixed_now.date():%Y-%m-%d}.pdf"
-    )
-    assert expected_path.exists()
-    assert expected_path.read_bytes().startswith(b"%PDF")
-    assert ticket_route.called
-    assert tags_route.called
-    assert article_route.called
+        assert ticket_route.called
+        assert tags_route.called
+        assert article_route.called
 
-    added = _called_tag_items(add_tag_route)
-    removed = _called_tag_items(remove_tag_route)
-    assert PROCESSING_TAG in added
-    assert DONE_TAG in added
-    assert ERROR_TAG not in added
-    assert TRIGGER_TAG in removed
-    assert ERROR_TAG in removed
-    assert PROCESSING_TAG in removed
+        added = _called_tag_items(add_tag_route)
+        removed = _called_tag_items(remove_tag_route)
+
+        assert PROCESSING_TAG in added
+        assert DONE_TAG in added
+        assert ERROR_TAG not in added
+
+        assert TRIGGER_TAG in removed
+        assert ERROR_TAG in removed
+        assert PROCESSING_TAG in removed
 
 
 def test_e2e_smoke_ingest_duplicate_delivery_id_is_idempotent(tmp_path, monkeypatch) -> None:
@@ -183,9 +198,7 @@ def test_e2e_smoke_ingest_duplicate_delivery_id_is_idempotent(tmp_path, monkeypa
     body = _body(payload)
 
     with respx.mock(assert_all_called=True) as zammad:
-        ticket_route = _register_ticket(
-            zammad, 123, archive_ticket_json(123, archive_path=["A", "B", "C"])
-        )
+        ticket_route = _register_ticket(zammad, 123, _ticket_json(123))
         tags_route = _register_tags(zammad, 123)
         _register_articles(zammad, 123, [])
         _, _, article_route = _register_mutation_routes(zammad)
@@ -216,7 +229,7 @@ def test_e2e_smoke_batch_duplicate_delivery_id_is_idempotent(tmp_path, monkeypat
         ticket_101 = _register_ticket(
             zammad,
             101,
-            archive_ticket_json(
+            _ticket_json(
                 101,
                 number="20240101",
                 owner="agent-101",
@@ -227,7 +240,7 @@ def test_e2e_smoke_batch_duplicate_delivery_id_is_idempotent(tmp_path, monkeypat
         ticket_202 = _register_ticket(
             zammad,
             202,
-            archive_ticket_json(
+            _ticket_json(
                 202,
                 number="20240102",
                 owner="agent-202",
