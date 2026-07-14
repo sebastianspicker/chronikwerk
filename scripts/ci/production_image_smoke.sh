@@ -20,7 +20,7 @@ docker run --rm --read-only --tmpfs /tmp:noexec,nosuid,size=64m \
   --mount "type=volume,src=${state_volume},dst=/var/lib/zammad-pdf-archiver/admin" \
   -e ZAMMAD__BASE_URL=https://zammad.example.invalid \
   -e ZAMMAD__API_TOKEN=production-smoke-token \
-  -e ZAMMAD__WEBHOOK_HMAC_SECRET=production-smoke-webhook-secret \
+  -e ZAMMAD__WEBHOOK_HMAC_SECRET=production-smoke-webhook-secret-at-least-32-characters \
   -e STORAGE__ROOT=/tmp/archive \
   -e ADMIN__ENABLED=true \
   -e ADMIN__ACCESS_TOKEN=production-smoke-admin-token-at-least-32-characters \

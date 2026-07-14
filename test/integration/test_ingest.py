@@ -212,6 +212,8 @@ def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
 
     response = _post_signed(client, "/ingest", {"ticket": {"id": True}})
     assert response.status_code == 422
+    response = _post_signed(client, "/ingest", {"ticket_id": True})
+    assert response.status_code == 422
     assert calls == []
 
 

@@ -76,7 +76,7 @@ Edit `.env` with at least:
 ```bash
 ZAMMAD__BASE_URL=https://your-zammad.example.com
 ZAMMAD__API_TOKEN=your-api-token
-ZAMMAD__WEBHOOK_HMAC_SECRET=your-webhook-secret
+ZAMMAD__WEBHOOK_HMAC_SECRET=CHANGE-ME-TO-A-RANDOM-32-BYTE-SECRET
 STORAGE__ROOT=/mnt/archive
 ```
 
@@ -88,6 +88,8 @@ curl http://localhost:8080/healthz
 ```
 
 The service is then ready for Zammad webhooks on `POST /ingest`.
+Authentication secrets must be at least 32 characters and must not retain the
+example placeholder values.
 
 ## Zammad Workflow
 

@@ -13,14 +13,17 @@ from starlette.requests import Request
 import zammad_pdf_archiver.adapters.pdf.render_pdf as render_module
 from test.support.settings_factory import make_settings
 from zammad_pdf_archiver.app.jobs import process_ticket as process_module
-from zammad_pdf_archiver.app.jobs.admission import JobAdmission
+from zammad_pdf_archiver.app.jobs.admission import AdmissionClosed, JobAdmission
+from zammad_pdf_archiver.app.jobs.history import read_history, reset_for_tests
 from zammad_pdf_archiver.app.jobs.process_ticket import _TicketJobContext
+from zammad_pdf_archiver.app.jobs.shutdown import clear_shutting_down, set_shutting_down
 from zammad_pdf_archiver.app.jobs.ticket_storage import StorageResult
 from zammad_pdf_archiver.app.routes.ingest import (
     IngestPayload,
     _run_process_ticket_background,
     batch_ingest,
     ingest_webhook,
+    schedule_retry,
 )
 from zammad_pdf_archiver.app.server import create_app
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
@@ -54,9 +57,12 @@ def test_admission_bounds_reservations_and_running_slots() -> None:
 
         await admission.close()
         await first
-        await admission.release()
-        await second
+        with pytest.raises(AdmissionClosed):
+            await second
+        assert admission.pending == 0
         assert admission.running == 1
+        assert not admission.try_reserve()
+
         await admission.release()
         assert admission.running == 0
 
@@ -87,6 +93,46 @@ def test_batch_capacity_rejection_is_atomic(tmp_path) -> None:
         assert response.status_code == 503
         assert response.headers["Retry-After"] == "1"
         assert bytes(response.body).find(b"job_capacity_exhausted") >= 0
+
+    asyncio.run(run())
+
+
+def test_retry_is_not_scheduled_after_shutdown_starts(tmp_path) -> None:
+    settings = make_settings(str(tmp_path))
+    app = create_app(settings)
+    set_shutting_down()
+    try:
+        assert not schedule_retry(_request(app, "/retry/1"), ticket_id=1, settings=settings)
+        assert app.state.admission.pending == 0
+        assert app.state.admission.running == 0
+    finally:
+        clear_shutting_down()
+
+
+def test_batch_records_accepted_history_for_each_created_task(tmp_path, monkeypatch) -> None:
+    async def run() -> None:
+        reset_for_tests()
+        settings = make_settings(str(tmp_path))
+        app = create_app(settings)
+        gate = asyncio.Event()
+
+        async def blocked_process(**_kwargs) -> None:
+            await gate.wait()
+
+        monkeypatch.setattr(
+            "zammad_pdf_archiver.app.routes.ingest._run_process_ticket_background",
+            blocked_process,
+        )
+        response = await batch_ingest(
+            _request(app, "/ingest/batch"),
+            [IngestPayload(ticket_id=11), IngestPayload(ticket_id=12)],
+        )
+
+        assert response.status_code == 202
+        accepted = read_history(10, statuses={"accepted"})
+        assert {item["ticket_id"] for item in accepted} == {11, 12}
+        gate.set()
+        await asyncio.sleep(0)
 
     asyncio.run(run())
 

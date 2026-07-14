@@ -218,7 +218,7 @@ def sign_pdf(
     # Import lazily so the rest of the service stays importable even if pyHanko isn't installed.
     try:
         from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
-        from pyhanko.sign.fields import SigFieldSpec
+        from pyhanko.sign.fields import SigFieldSpec, SigSeedSubFilter
         from pyhanko.sign.signers.pdf_signer import PdfSignatureMetadata, PdfSigner
     except ImportError as exc:
         raise _missing_signing_dependency(exc) from exc
@@ -229,7 +229,12 @@ def sign_pdf(
     signer = _get_cached_signer(pfx)
 
     field_name = "Signature1"
-    meta = PdfSignatureMetadata(field_name=field_name, reason=reason, location=location)
+    meta = PdfSignatureMetadata(
+        field_name=field_name,
+        reason=reason,
+        location=location,
+        subfilter=SigSeedSubFilter.PADES,
+    )
 
     timestamper = None
     if signing.timestamp.enabled:

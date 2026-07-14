@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import socket
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, Self
 
 import httpx
 import pytest
 import respx
 
+import zammad_pdf_archiver.adapters.signing.tsa_rfc3161 as tsa_module
 from zammad_pdf_archiver.config.settings import (
     SigningSettings,
     SigningTimestampRfc3161Settings,
@@ -37,7 +41,8 @@ def _tsa_req() -> Any:
 
 def _make_signing(tsa_url: str) -> SigningSettings:
     return SigningSettings(
-        enabled=False,
+        enabled=True,
+        pfx_path="/private/tmp/test-signing.pfx",  # type: ignore[arg-type]
         timestamp=SigningTimestampSettings(
             enabled=True,
             rfc3161=SigningTimestampRfc3161Settings(tsa_url=tsa_url),  # type: ignore[arg-type]
@@ -86,6 +91,29 @@ def test_tsa_wrong_content_type_is_permanent() -> None:
             asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
 
 
+def test_tsa_connects_to_the_validated_address_with_original_host_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tsa_url = "https://tsa.test/rfc3161"
+    timestamper = build_timestamper(_make_signing(tsa_url))
+    monkeypatch.setattr(
+        "zammad_pdf_archiver.config.transport.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
+
+    with respx.mock:
+        route = respx.post("https://93.184.216.34/rfc3161").mock(
+            return_value=httpx.Response(500)
+        )
+        with pytest.raises(TransientError, match="HTTP 500"):
+            asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
+
+    assert route.calls[0].request.headers["Host"] == "tsa.test"
+    assert route.calls[0].request.extensions["sni_hostname"] == "tsa.test"
+
+
 @pytest.mark.parametrize("trust_env", [False, True])
 def test_tsa_http_client_respects_transport_trust_env(
     monkeypatch: pytest.MonkeyPatch, trust_env: bool
@@ -108,15 +136,17 @@ def test_tsa_http_client_respects_transport_trust_env(
         async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
             return False
 
-        async def post(
+        @asynccontextmanager
+        async def stream(
             self,
+            method: str,
             url: str,
             *,
             content: bytes,
             headers: dict[str, str],
             **kwargs: Any,
-        ) -> httpx.Response:  # noqa: ARG002
-            return httpx.Response(500)
+        ) -> AsyncIterator[httpx.Response]:  # noqa: ARG002
+            yield httpx.Response(500, request=httpx.Request(method, url))
 
     monkeypatch.setattr(httpx, "AsyncClient", _DummyAsyncClient)
 
@@ -129,7 +159,8 @@ def test_tsa_http_client_respects_transport_trust_env(
 def _make_signing_no_url() -> SigningSettings:
     """SigningSettings with timestamp enabled but no TSA URL."""
     return SigningSettings(
-        enabled=False,
+        enabled=True,
+        pfx_path="/private/tmp/test-signing.pfx",  # type: ignore[arg-type]
         timestamp=SigningTimestampSettings(
             enabled=True,
             rfc3161=SigningTimestampRfc3161Settings(tsa_url=None),
@@ -139,7 +170,8 @@ def _make_signing_no_url() -> SigningSettings:
 
 def _make_signing_with_auth(user: str | None, password: str | None) -> SigningSettings:
     return SigningSettings(
-        enabled=False,
+        enabled=True,
+        pfx_path="/private/tmp/test-signing.pfx",  # type: ignore[arg-type]
         timestamp=SigningTimestampSettings(
             enabled=True,
             rfc3161=SigningTimestampRfc3161Settings(
@@ -233,10 +265,17 @@ def test_tsa_ca_bundle_path_is_used_as_verify(
         async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
             return False
 
-        async def post(
-            self, url: str, *, content: bytes, headers: dict[str, str], **kw: Any
-        ) -> httpx.Response:
-            return httpx.Response(500)
+        @asynccontextmanager
+        async def stream(
+            self,
+            method: str,
+            url: str,
+            *,
+            content: bytes,
+            headers: dict[str, str],
+            **kw: Any,
+        ) -> AsyncIterator[httpx.Response]:
+            yield httpx.Response(500, request=httpx.Request(method, url))
 
     monkeypatch.setattr(httpx, "AsyncClient", _DummyClient)
 
@@ -244,6 +283,40 @@ def test_tsa_ca_bundle_path_is_used_as_verify(
         asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
 
     assert captured["verify"] == str(ca_bundle)
+
+
+def test_tsa_response_declared_over_limit_is_rejected_before_body_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _UnreadBody(httpx.AsyncByteStream):
+        was_read = False
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            self.was_read = True
+            yield b"not-read"
+
+    tsa_url = "https://tsa.test/rfc3161"
+    body = _UnreadBody()
+    monkeypatch.setattr(tsa_module, "_MAX_TSA_RESPONSE_BODY_BYTES", 8)
+    timestamper = build_timestamper(
+        _make_signing(tsa_url), allow_private_networks=True
+    )
+
+    with respx.mock:
+        respx.post(tsa_url).mock(
+            return_value=httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "application/timestamp-reply",
+                    "Content-Length": "9",
+                },
+                stream=body,
+            )
+        )
+        with pytest.raises(PermanentError, match="8-byte limit"):
+            asyncio.run(timestamper.async_request_tsa_response(_tsa_req()))
+
+    assert body.was_read is False
 
 
 def test_tsa_rejection_status_raises_permanent() -> None:

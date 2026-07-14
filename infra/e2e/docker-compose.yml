@@ -11,13 +11,13 @@ services:
       SERVER__PORT: 8080
       ZAMMAD__BASE_URL: http://mock:9090
       ZAMMAD__API_TOKEN: e2e-token
-      ZAMMAD__WEBHOOK_HMAC_SECRET: e2e-webhook-secret
+      ZAMMAD__WEBHOOK_HMAC_SECRET: e2e-webhook-hmac-secret-0123456789abcdef
       STORAGE__ROOT: /tmp/archive
       HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP: "true"
       HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS: "true"
       OBSERVABILITY__HISTORY_ENABLED: "true"
-      OBSERVABILITY__HISTORY_BEARER_TOKEN: e2e-history-token
-      RETRY_BEARER_TOKEN: e2e-admin-token
+      OBSERVABILITY__HISTORY_BEARER_TOKEN: e2e-history-bearer-token-0123456789abcdef
+      RETRY_BEARER_TOKEN: e2e-retry-bearer-token-0123456789abcdef
     tmpfs:
       - /tmp/archive:uid=10001,gid=10001,mode=0750
     depends_on:

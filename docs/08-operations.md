@@ -104,8 +104,11 @@ Primary signals:
 
 The default runtime is single-instance and process-local:
 
-- Graceful shutdown waits for admitted work, but a process crash or abrupt
-  termination can lose accepted background work.
+- Graceful shutdown gives admitted work `admission.shutdown_timeout_seconds`
+  to drain before async cancellation. In-flight PDF, signing, and filesystem
+  worker threads cannot be stopped safely, so the service waits for them after
+  cancellation; total shutdown can exceed the configured grace period. A
+  process crash or abrupt termination can lose accepted background work.
 - In-flight ticket locks are process-local.
 - Delivery-ID dedupe is in-memory and resets on restart.
 - A delivery ID is claimed before processing completes, so retry with a new

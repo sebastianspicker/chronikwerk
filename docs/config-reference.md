@@ -32,8 +32,7 @@ Production-like runs must provide:
 - `zammad.base_url` / `ZAMMAD__BASE_URL`
 - `zammad.api_token` / `ZAMMAD__API_TOKEN`
 - `storage.root` / `STORAGE__ROOT`
-- `zammad.webhook_hmac_secret` / `ZAMMAD__WEBHOOK_HMAC_SECRET` for signed
-  webhook mode
+- `zammad.webhook_hmac_secret` / `ZAMMAD__WEBHOOK_HMAC_SECRET`
 
 ## Server
 
@@ -48,7 +47,7 @@ Production-like runs must provide:
 | --- | --- | --- | --- |
 | `zammad.base_url` | required | `ZAMMAD__BASE_URL` | Zammad base URL. |
 | `zammad.api_token` | required | `ZAMMAD__API_TOKEN` | Zammad API token. |
-| `zammad.webhook_hmac_secret` | `null` | `ZAMMAD__WEBHOOK_HMAC_SECRET` | HMAC secret for incoming webhooks. |
+| `zammad.webhook_hmac_secret` | `null` | `ZAMMAD__WEBHOOK_HMAC_SECRET` | HMAC secret for incoming webhooks; at least 32 characters and not a placeholder. |
 | `zammad.timeout_seconds` | `10.0` | `ZAMMAD__TIMEOUT_SECONDS` | Outbound API timeout. |
 | `zammad.verify_tls` | `true` | `ZAMMAD__VERIFY_TLS` | Verify upstream TLS certificates. |
 
@@ -109,10 +108,10 @@ Production-like runs must provide:
 | `observability.log_level` | `INFO` | `OBSERVABILITY__LOG_LEVEL` | Log level. |
 | `observability.log_format` | `null` | `OBSERVABILITY__LOG_FORMAT` | `json` or `human`. |
 | `observability.metrics_enabled` | `false` | `OBSERVABILITY__METRICS_ENABLED` | Mount `/metrics`. |
-| `observability.metrics_bearer_token` | `null` | `OBSERVABILITY__METRICS_BEARER_TOKEN` | Bearer token for `/metrics`. |
+| `observability.metrics_bearer_token` | `null` | `OBSERVABILITY__METRICS_BEARER_TOKEN` | Bearer token for `/metrics`; at least 32 characters when enabled. |
 | `observability.healthz_omit_version` | `false` | `OBSERVABILITY__HEALTHZ_OMIT_VERSION` | Omit service/version from `/healthz`. |
 | `observability.history_enabled` | `false` | `OBSERVABILITY__HISTORY_ENABLED` | Expose authenticated process-local job history. |
-| `observability.history_bearer_token` | `null` | `OBSERVABILITY__HISTORY_BEARER_TOKEN` | Dedicated bearer token required when history is enabled. |
+| `observability.history_bearer_token` | `null` | `OBSERVABILITY__HISTORY_BEARER_TOKEN` | Dedicated bearer token required when history is enabled; at least 32 characters. |
 
 ## Hardening
 
@@ -123,7 +122,8 @@ Production-like runs must provide:
 | `hardening.rate_limit.burst` | `10` | `HARDENING__RATE_LIMIT__BURST` | Burst capacity. |
 | `hardening.rate_limit.include_metrics` | `false` | `HARDENING__RATE_LIMIT__INCLUDE_METRICS` | Include `/metrics` in rate limiting. |
 | `hardening.rate_limit.client_key_header` | `null` | `HARDENING__RATE_LIMIT__CLIENT_KEY_HEADER` | Trusted header for client key behind a proxy. |
-| `hardening.body_size_limit.max_bytes` | `1048576` | `HARDENING__BODY_SIZE_LIMIT__MAX_BYTES` | Request body limit; `0` disables. |
+| `hardening.body_size_limit.max_bytes` | `1048576` | `HARDENING__BODY_SIZE_LIMIT__MAX_BYTES` | Request body limit; `0` selects the non-disableable 32 MiB safety cap. Values above 32 MiB are capped. |
+| `hardening.body_size_limit.timeout_seconds` | `10.0` | `HARDENING__BODY_SIZE_LIMIT__TIMEOUT_SECONDS` | Whole-body deadline for ingest and every body-bearing admin request. |
 | `hardening.webhook.require_delivery_id` | `false` | `HARDENING__WEBHOOK__REQUIRE_DELIVERY_ID` | Require `X-Zammad-Delivery`. |
 | `hardening.transport.trust_env` | `false` | `HARDENING__TRANSPORT__TRUST_ENV` | Allow proxy env vars for outbound HTTP. |
 | `hardening.transport.allow_insecure_http` | `false` | `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP` | Explicitly allow HTTP upstreams for isolated internal/test use. |
@@ -135,7 +135,7 @@ Production-like runs must provide:
 | --- | --- | --- | --- |
 | `admission.max_pending` | `100` | `ADMISSION__MAX_PENDING` | Maximum admitted jobs waiting for a running slot. |
 | `admission.max_running` | `4` | `ADMISSION__MAX_RUNNING` | Maximum ticket pipelines running concurrently. |
-| `admission.shutdown_timeout_seconds` | `5.0` | `ADMISSION__SHUTDOWN_TIMEOUT_SECONDS` | Graceful shutdown drain timeout before cancellation. |
+| `admission.shutdown_timeout_seconds` | `5.0` | `ADMISSION__SHUTDOWN_TIMEOUT_SECONDS` | Grace period before async cancellation. In-flight PDF, signing, and filesystem worker threads are awaited after cancellation and can extend total shutdown time. |
 
 ## Administration
 
@@ -148,7 +148,7 @@ restart and environment-owned fields remain read-only.
 | Key | Default | Env key | Description |
 | --- | --- | --- | --- |
 | `admin.enabled` | `false` | `ADMIN__ENABLED` | Mount the `/admin` HTML and API routes. |
-| `admin.access_token` | `null` | `ADMIN__ACCESS_TOKEN` | External admin token; never stored in a cookie or revision. |
+| `admin.access_token` | `null` | `ADMIN__ACCESS_TOKEN` | External admin token of at least 32 characters; never stored in a cookie or revision. |
 | `admin.state_dir` | `/var/lib/zammad-pdf-archiver/admin` | `ADMIN__STATE_DIR` | Persistent directory for non-secret managed revisions. |
 | `admin.session_idle_seconds` | `1800` | `ADMIN__SESSION_IDLE_SECONDS` | Process-local idle session lifetime. |
 | `admin.session_absolute_seconds` | `28800` | `ADMIN__SESSION_ABSOLUTE_SECONDS` | Absolute session lifetime. |
@@ -159,7 +159,7 @@ restart and environment-owned fields remain read-only.
 
 | Key | Default | Env key | Description |
 | --- | --- | --- | --- |
-| `retry_bearer_token` | `null` | `RETRY_BEARER_TOKEN` | Bearer token for `POST /retry/{ticket_id}`. |
+| `retry_bearer_token` | `null` | `RETRY_BEARER_TOKEN` | Bearer token of at least 32 characters for `POST /retry/{ticket_id}`. |
 
 ## Minimal YAML
 
@@ -167,7 +167,7 @@ restart and environment-owned fields remain read-only.
 zammad:
   base_url: "https://zammad.example.local"
   api_token: "CHANGE-ME"
-  webhook_hmac_secret: "CHANGE-ME"
+  webhook_hmac_secret: "CHANGE-ME-TO-A-RANDOM-32-BYTE-SECRET"
 storage:
   root: "/mnt/archive"
 ```
@@ -177,6 +177,9 @@ storage:
 ```bash
 ZAMMAD__BASE_URL=https://zammad.example.local
 ZAMMAD__API_TOKEN=CHANGE-ME
-ZAMMAD__WEBHOOK_HMAC_SECRET=CHANGE-ME
+ZAMMAD__WEBHOOK_HMAC_SECRET=CHANGE-ME-TO-A-RANDOM-32-BYTE-SECRET
 STORAGE__ROOT=/mnt/archive
 ```
+
+The examples intentionally fail validation until every `CHANGE-ME` value is
+replaced. Generate authentication secrets with at least 32 random characters.

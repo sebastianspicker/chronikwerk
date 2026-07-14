@@ -9,7 +9,6 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from zammad_pdf_archiver.adapters.http_util import drain_stream
 from zammad_pdf_archiver.app.constants import DELIVERY_ID_HEADER, INGEST_PROTECTED_PATHS
 from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.config.settings import Settings
@@ -42,6 +41,16 @@ def _service_misconfigured() -> JSONResponse:
 
 def _missing_delivery_id() -> JSONResponse:
     return api_error(400, "missing_delivery_id", code="missing_delivery_id")
+
+
+async def _send_rejection(
+    response: JSONResponse,
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+) -> None:
+    response.headers["Connection"] = "close"
+    await response(scope, receive, send)
 
 
 def _parse_signature(value: str) -> tuple[bytes, type, str] | None:
@@ -124,16 +133,14 @@ class HmacVerifyMiddleware:
         if (headers.get(DELIVERY_ID_HEADER) or "").strip():
             return False
 
-        await drain_stream(receive)
-        await _missing_delivery_id()(scope, receive, send)
+        await _send_rejection(_missing_delivery_id(), scope, receive, send)
         return True
 
     async def _reject_without_secret(self, scope: Scope, receive: Receive, send: Send) -> bool:
         if self._secret:
             return False
 
-        await drain_stream(receive)
-        await _service_misconfigured()(scope, receive, send)
+        await _send_rejection(_service_misconfigured(), scope, receive, send)
         return True
 
     async def _parse_request_signature(
@@ -145,14 +152,12 @@ class HmacVerifyMiddleware:
     ) -> tuple[bytes, type, str] | None:
         signature_raw = headers.get(_SIGNATURE_HEADER)
         if not signature_raw:
-            await drain_stream(receive)
-            await _forbidden()(scope, receive, send)
+            await _send_rejection(_forbidden(), scope, receive, send)
             return None
 
         parsed = _parse_signature(signature_raw)
         if parsed is None:
-            await drain_stream(receive)
-            await _forbidden()(scope, receive, send)
+            await _send_rejection(_forbidden(), scope, receive, send)
             return None
 
         return parsed
@@ -166,8 +171,7 @@ class HmacVerifyMiddleware:
         send: Send,
     ) -> list[bytes] | None:
         if self._secret is None:
-            await drain_stream(receive)
-            await _service_misconfigured()(scope, receive, send)
+            await _send_rejection(_service_misconfigured(), scope, receive, send)
             return None
         mac = hmac.new(self._secret, digestmod=digest_ctor)
         chunks, disconnected = await _read_body(receive, on_chunk=mac.update)

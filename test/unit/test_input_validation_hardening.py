@@ -22,6 +22,11 @@ def test_ingest_payload_rejects_negative_ticket_id() -> None:
         IngestPayload.model_validate({"ticket_id": -1})
 
 
+def test_ingest_payload_rejects_boolean_ticket_id() -> None:
+    with pytest.raises(ValidationError):
+        IngestPayload.model_validate({"ticket_id": True})
+
+
 def test_ingest_payload_accepts_positive_ticket_id() -> None:
     p = IngestPayload.model_validate({"ticket_id": 42})
     assert p.resolved_ticket_id() == 42

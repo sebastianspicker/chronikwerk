@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Path, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from starlette.responses import JSONResponse
 
 from zammad_pdf_archiver.app.constants import (
@@ -38,6 +38,13 @@ class IngestPayload(BaseModel):
     ticket: dict[str, Any] | None = None
     # Security: reject non-positive ticket IDs at the schema level (defense-in-depth).
     ticket_id: int | None = Field(default=None, ge=1)
+
+    @field_validator("ticket_id", mode="before")
+    @classmethod
+    def _reject_boolean_ticket_id(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("ticket_id must be an integer, not a boolean")
+        return value
 
     @model_validator(mode="after")
     def _require_ticket_id(self) -> IngestPayload:
@@ -105,6 +112,8 @@ def _schedule_background_task(
     settings: Settings,
     admission: JobAdmission,
 ) -> bool:
+    if is_shutting_down():
+        return False
     ticket_id = extract_ticket_id(payload)
     if not admission.try_reserve():
         return False
@@ -247,6 +256,16 @@ async def batch_ingest(
             )
             track_task(task)
             created += 1
+            record_history_event(
+                "accepted",
+                extract_ticket_id(payload_for_job),
+                delivery_id=delivery_id,
+                request_id=(
+                    str(payload_for_job.get(REQUEST_ID_KEY))
+                    if payload_for_job.get(REQUEST_ID_KEY) is not None
+                    else None
+                ),
+            )
     except Exception:
         admission.cancel_reservation(len(jobs) - created)
         raise

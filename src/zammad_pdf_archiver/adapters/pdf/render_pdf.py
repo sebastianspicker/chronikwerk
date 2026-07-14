@@ -1,7 +1,6 @@
 # pylint: disable=import-outside-toplevel
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import warnings
 from collections.abc import Generator
@@ -14,6 +13,7 @@ from zammad_pdf_archiver.adapters.pdf.template_engine import (
     render_html,
 )
 from zammad_pdf_archiver.adapters.pdf.url_fetcher import _safe_url_fetcher
+from zammad_pdf_archiver.domain.async_work import run_sync_cancellation_safe
 from zammad_pdf_archiver.domain.errors import PermanentError
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 
@@ -79,7 +79,7 @@ async def render_pdf(
     timezone: str = "Europe/Berlin",
 ) -> bytes:
     _validate_article_limit(snapshot, max_articles)
-    return await asyncio.to_thread(
+    return await run_sync_cancellation_safe(
         _render_pdf_sync,
         snapshot,
         locale=locale,

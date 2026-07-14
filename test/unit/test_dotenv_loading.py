@@ -29,7 +29,7 @@ def test_dotenv_file_is_loaded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
             [
                 "ZAMMAD__BASE_URL=https://zammad.example.local",
                 "ZAMMAD__API_TOKEN=test-token",
-                "ZAMMAD__WEBHOOK_HMAC_SECRET=test-secret",
+                "ZAMMAD__WEBHOOK_HMAC_SECRET=test-webhook-hmac-secret-0123456789abcdef",
                 f"STORAGE__ROOT={tmp_path.as_posix()}",
                 "",
             ]
@@ -57,7 +57,7 @@ def test_settings_precedence_env_then_yaml_then_dotenv_then_file_secret(
                 "zammad:",
                 "  base_url: https://zammad.example.local",
                 "  api_token: yaml-token",
-                "  webhook_hmac_secret: yaml-secret",
+                "  webhook_hmac_secret: yaml-webhook-hmac-secret-0123456789abcdef",
                 "storage:",
                 f"  root: {tmp_path}",
                 "",
@@ -79,7 +79,7 @@ def test_settings_precedence_env_then_yaml_then_dotenv_then_file_secret(
                 "zammad:",
                 "  base_url: https://zammad.example.local",
                 "  api_token: yaml-token",
-                "  webhook_hmac_secret: yaml-secret",
+                "  webhook_hmac_secret: yaml-webhook-hmac-secret-0123456789abcdef",
                 "storage:",
                 f"  root: {tmp_path}",
                 "",

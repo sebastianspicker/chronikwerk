@@ -18,6 +18,7 @@ from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.validate import ConfigValidationError, validate_settings
 
 _REVISION_RE = re.compile(r"^[a-f0-9]{64}$")
+_MAX_MANAGED_FILE_BYTES = 256 * 1024
 _SECRET_PATHS = {
     "admin.access_token",
     "retry_bearer_token",
@@ -227,7 +228,7 @@ class ManagedConfigStore:
             return {}, revision_for({})
         if self.overlay_path.is_symlink():
             raise ManagedConfigError("Managed configuration file must not be a symlink")
-        if self.overlay_path.stat().st_size > 256 * 1024:
+        if self.overlay_path.stat().st_size > _MAX_MANAGED_FILE_BYTES:
             raise ManagedConfigError("Managed configuration file exceeds 256 KiB")
         data = json.loads(self.overlay_path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -284,14 +285,21 @@ class ManagedConfigStore:
                 "changed_paths": changed_paths,
             }
             revision_path = self.revisions_dir / f"{new_revision}.json"
+            revision_value = {"metadata": metadata, "overlay": overlay}
+            current_value = {"revision": new_revision, "overlay": overlay}
+            # Validate every payload before the first durable mutation. Otherwise an
+            # overlay that fits the inbound request limit can create a revision or
+            # current pointer that our bounded readers subsequently refuse to open.
+            self._payload_bytes(revision_value)
+            self._payload_bytes(current_value)
             self._atomic_write(
                 revision_path,
-                {"metadata": metadata, "overlay": overlay},
+                revision_value,
             )
             try:
                 self._atomic_write(
                     self.overlay_path,
-                    {"revision": new_revision, "overlay": overlay},
+                    current_value,
                 )
             except Exception:
                 revision_path.unlink(missing_ok=True)
@@ -329,7 +337,7 @@ class ManagedConfigStore:
     def _read_revision_file(self, path: Path) -> dict[str, Any]:
         if path.is_symlink() or not path.is_file():
             raise ManagedConfigError("Revision not found or unsafe")
-        if path.stat().st_size > 256 * 1024:
+        if path.stat().st_size > _MAX_MANAGED_FILE_BYTES:
             raise ManagedConfigError("Revision file exceeds 256 KiB")
         data = json.loads(path.read_text(encoding="utf-8"))
         if (
@@ -381,12 +389,19 @@ class ManagedConfigStore:
             os.close(directory_fd)
 
     @staticmethod
-    def _atomic_write(path: Path, value: dict[str, Any]) -> None:
-        if path.is_symlink():
-            raise ManagedConfigError(f"Refusing to replace symlink: {path}")
+    def _payload_bytes(value: dict[str, Any]) -> bytes:
         payload = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
             "utf-8"
         )
+        if len(payload) > _MAX_MANAGED_FILE_BYTES:
+            raise ManagedConfigError("Managed configuration payload exceeds 256 KiB")
+        return payload
+
+    @staticmethod
+    def _atomic_write(path: Path, value: dict[str, Any]) -> None:
+        if path.is_symlink():
+            raise ManagedConfigError(f"Refusing to replace symlink: {path}")
+        payload = ManagedConfigStore._payload_bytes(value)
         fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         temp_path = Path(temp_name)
         try:

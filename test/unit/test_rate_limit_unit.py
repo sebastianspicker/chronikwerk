@@ -152,6 +152,50 @@ def test_rate_limit_middleware_returns_429_on_exhaustion() -> None:
     asyncio.run(_run())
 
 
+def test_rate_limit_middleware_protects_admin_login_posts_only(tmp_path) -> None:
+    async def _run() -> None:
+        downstream = AsyncMock()
+        settings = _make_settings_with_rate_limit(enabled=True, rps=0.0, burst=1)
+        settings = settings.model_copy(
+            update={
+                "admin": settings.admin.model_copy(
+                    update={
+                        "enabled": True,
+                        "access_token": "admin-access-token-that-is-at-least-32-characters",
+                        "state_dir": tmp_path,
+                    }
+                )
+            }
+        )
+        middleware = RateLimitMiddleware(downstream, settings=settings)
+        post_scope: dict[str, Any] = {
+            "type": "http",
+            "method": "POST",
+            "path": "/admin/api/v1/session",
+            "headers": [],
+            "client": ("1.2.3.4", 0),
+        }
+
+        await middleware(post_scope, AsyncMock(), AsyncMock())
+        assert downstream.call_count == 1
+
+        responses: list[int] = []
+
+        async def _send(message: Any) -> None:
+            if message.get("type") == "http.response.start":
+                responses.append(message["status"])
+
+        await middleware(post_scope, AsyncMock(), _send)
+        assert responses == [429]
+        assert downstream.call_count == 1
+
+        get_scope = {**post_scope, "method": "GET", "path": "/admin/login"}
+        await middleware(get_scope, AsyncMock(), AsyncMock())
+        assert downstream.call_count == 2
+
+    asyncio.run(_run())
+
+
 # ===================================================================
 # Helpers
 # ===================================================================

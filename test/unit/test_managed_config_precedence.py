@@ -15,7 +15,7 @@ def _config(tmp_path: Path, state_dir: Path) -> dict[str, object]:
         "zammad": {
             "base_url": "https://zammad.example.invalid",
             "api_token": "token",
-            "webhook_hmac_secret": "webhook-secret",
+            "webhook_hmac_secret": "test-webhook-hmac-secret-0123456789abcdef",
         },
         "storage": {"root": str(tmp_path / "archive")},
         "hardening": {"transport": {"allow_private_networks": True}},
@@ -37,7 +37,10 @@ def test_environment_precedes_managed_overlay_and_yaml(tmp_path: Path, monkeypat
 
     monkeypatch.setenv("ZAMMAD__BASE_URL", "https://zammad.example.invalid")
     monkeypatch.setenv("ZAMMAD__API_TOKEN", "token")
-    monkeypatch.setenv("ZAMMAD__WEBHOOK_HMAC_SECRET", "webhook-secret")
+    monkeypatch.setenv(
+        "ZAMMAD__WEBHOOK_HMAC_SECRET",
+        "test-webhook-hmac-secret-0123456789abcdef",
+    )
     monkeypatch.setenv("STORAGE__ROOT", str(tmp_path / "archive"))
     monkeypatch.setenv("PDF__MAX_ARTICLES", "50")
     assert load_settings(config_path=config_path).pdf.max_articles == 50

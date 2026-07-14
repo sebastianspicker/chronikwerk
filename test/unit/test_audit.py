@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import SecretStr
 
-from zammad_pdf_archiver.config.settings import SigningSettings
+from zammad_pdf_archiver.config.settings import SigningSettings, SigningTimestampSettings
 from zammad_pdf_archiver.domain.audit import AuditRecordInput, build_audit_record
 
 
@@ -48,6 +48,26 @@ def test_build_audit_record_normalizes_timestamp_and_title() -> None:
     from zammad_pdf_archiver._version import __version__
 
     assert audit["service"]["version"] == __version__
+    assert audit["signing"] == {"enabled": False, "tsa_used": False}
+
+
+def test_build_audit_record_does_not_claim_tsa_without_signing() -> None:
+    signing = SigningSettings.model_construct(
+        enabled=False,
+        timestamp=SigningTimestampSettings(enabled=True),
+    )
+
+    audit = build_audit_record(
+        _audit_input(
+            ticket_id=123,
+            ticket_number="T-123",
+            title="Timestamp-only config",
+            storage_path="/mnt/archive/T-123.pdf",
+            sha256="deadbeef",
+        ),
+        signing_settings=signing,
+    )
+
     assert audit["signing"] == {"enabled": False, "tsa_used": False}
 
 

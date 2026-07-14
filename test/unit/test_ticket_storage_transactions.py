@@ -103,6 +103,71 @@ def test_backup_failure_preserves_prior_pair(
     assert not list(tmp_path.rglob("*.bak.*"))
 
 
+def test_rollback_restore_failure_exposes_primary_error_and_backup_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, sidecar = _store(tmp_path, b"old-pdf")
+    original_move = ticket_storage.move_file_within_root
+
+    def fail_sidecar_commit_and_restore(
+        src: Path, dst: Path, *_args: Any, **kwargs: Any
+    ) -> None:
+        if dst == sidecar and src.parent.name.startswith(".tmp-archiving-"):
+            raise OSError("sidecar move failed")
+        if dst == sidecar and src.name.startswith(f"{sidecar.name}.bak."):
+            raise OSError("sidecar restore failed")
+        original_move(src, dst, *_args, **kwargs)
+
+    monkeypatch.setattr(ticket_storage, "move_file_within_root", fail_sidecar_commit_and_restore)
+
+    with pytest.raises(ticket_storage.StorageTransactionError) as raised:
+        _store(tmp_path, b"new-pdf")
+
+    error = raised.value
+    assert isinstance(error.primary_error, OSError)
+    assert str(error.primary_error) == "sidecar move failed"
+    assert [(failure.operation, str(failure.error)) for failure in error.rollback_failures] == [
+        ("rollback_restore", "sidecar restore failed")
+    ]
+    backups = list(tmp_path.rglob(f"{sidecar.name}.bak.*"))
+    assert error.recovery_paths == tuple(backups)
+    assert target.read_bytes() == b"old-pdf"
+    assert not sidecar.exists()
+
+
+def test_rollback_remove_failure_is_reported_with_primary_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store(tmp_path, b"old-pdf")
+    target, sidecar = _paths(tmp_path)
+    original_move = ticket_storage.move_file_within_root
+    original_unlink = ticket_storage.unlink_file_within_root
+
+    def fail_sidecar_commit(src: Path, dst: Path, *_args: Any, **kwargs: Any) -> None:
+        if dst == sidecar and src.parent.name.startswith(".tmp-archiving-"):
+            raise OSError("sidecar move failed")
+        original_move(src, dst, *_args, **kwargs)
+
+    def fail_pdf_rollback_remove(path: Path, *args: Any, **kwargs: Any) -> None:
+        if path == target:
+            raise OSError("pdf rollback remove failed")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(ticket_storage, "move_file_within_root", fail_sidecar_commit)
+    monkeypatch.setattr(ticket_storage, "unlink_file_within_root", fail_pdf_rollback_remove)
+
+    with pytest.raises(ticket_storage.StorageTransactionError) as raised:
+        _store(tmp_path, b"new-pdf")
+
+    error = raised.value
+    assert isinstance(error.primary_error, OSError)
+    assert str(error.primary_error) == "sidecar move failed"
+    assert [(failure.operation, str(failure.error)) for failure in error.rollback_failures] == [
+        ("rollback_remove", "pdf rollback remove failed")
+    ]
+    assert error.recovery_paths == ()
+
+
 def test_attachment_metadata_is_not_archived_as_binary_or_sidecar_entries(
     tmp_path: Path,
 ) -> None:

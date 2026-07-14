@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from importlib import resources
 from typing import Annotated, Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import APIRouter, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -136,18 +136,53 @@ def _html_session(request: Request) -> tuple[AdminSession | None, RedirectRespon
         next_path = request.url.path
         if request.url.query:
             next_path = f"{next_path}?{request.url.query}"
-        return None, RedirectResponse(f"/admin/login?next={next_path}", status_code=303)
+        return None, RedirectResponse(
+            f"/admin/login?{urlencode({'next': next_path})}",
+            status_code=303,
+        )
     return session, None
 
 
 def _safe_next(value: str | None) -> str:
-    if value and value.startswith("/admin") and not value.startswith("//"):
+    if value and (
+        value == "/admin"
+        or value.startswith("/admin?")
+        or value.startswith("/admin/")
+    ):
         return value
     return "/admin"
 
 
+def _safe_admin_referer(request: Request, value: str | None) -> str:
+    if not value:
+        return "/admin"
+    try:
+        target = urlsplit(value)
+        base = urlsplit(str(request.base_url))
+        target_origin = (target.scheme, target.hostname, target.port)
+        base_origin = (base.scheme, base.hostname, base.port)
+    except ValueError:
+        return "/admin"
+    if target_origin != base_origin:
+        return "/admin"
+    relative = target.path
+    if target.query:
+        relative = f"{relative}?{target.query}"
+    return _safe_next(relative)
+
+
+def _next_history_cursor(items: list[dict[str, Any]], limit: int) -> int | None:
+    if len(items) <= limit:
+        return None
+    return int(items[limit - 1]["id"])
+
+
 async def _urlencoded(request: Request) -> dict[str, str]:
-    data = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    try:
+        body = (await request.body()).decode("utf-8")
+    except UnicodeDecodeError:
+        return {}
+    data = parse_qs(body, keep_blank_values=True)
     return {key: values[-1] for key, values in data.items() if values}
 
 
@@ -224,7 +259,14 @@ async def login_form(request: Request) -> Response:
     locale = normalize_locale(data.get("locale"), default=settings.admin.default_locale)
     if not access_token_matches(data.get("access_token", ""), settings.admin.access_token):
         return RedirectResponse(
-            f"/admin/login?error=true&lang={locale}&next={_safe_next(data.get('next'))}",
+            "/admin/login?"
+            + urlencode(
+                {
+                    "error": "true",
+                    "lang": locale,
+                    "next": _safe_next(data.get("next")),
+                }
+            ),
             status_code=303,
         )
     request.app.state.admin_sessions.delete(request.cookies.get(SESSION_COOKIE))
@@ -253,9 +295,7 @@ async def change_locale(request: Request) -> Response:
     if session is None or not csrf_token_matches(data.get("csrf_token"), session):
         return RedirectResponse("/admin/login", status_code=303)
     session.locale = normalize_locale(data.get("locale"), default=session.locale)
-    target = request.headers.get("referer", "/admin")
-    if not target.startswith(str(request.base_url).rstrip("/")):
-        target = "/admin"
+    target = _safe_admin_referer(request, request.headers.get("referer"))
     return RedirectResponse(target, status_code=303)
 
 
@@ -300,7 +340,7 @@ async def jobs_page(
         return redirect or RedirectResponse("/admin/login", status_code=303)
     statuses = {status} if status else None
     items = read_history(51, ticket_id, before_id=before_id, statuses=statuses)
-    next_cursor = int(items[-1]["id"]) if len(items) > 50 else None
+    next_cursor = _next_history_cursor(items, 50)
     return _render(
         "jobs.html",
         request=request,
@@ -505,7 +545,7 @@ async def jobs_api(
         before_id=before_id,
         statuses=set(status or []),
     )
-    next_cursor = int(items[-1]["id"]) if len(items) > limit else None
+    next_cursor = _next_history_cursor(items, limit)
     return JSONResponse(
         {
             "items": items[:limit],

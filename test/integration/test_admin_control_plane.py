@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 
 from test.support.settings_factory import make_settings
@@ -11,12 +13,13 @@ from zammad_pdf_archiver.app.jobs.history import record_history_event, reset_for
 from zammad_pdf_archiver.app.server import create_app
 
 _TOKEN = "admin-access-token-that-is-at-least-32-characters"
+_WEBHOOK_SECRET = "test-webhook-secret-0123456789abcdef"
 
 
 def _settings(tmp_path: Path, *, enabled: bool = True):
     return make_settings(
         str(tmp_path / "archive"),
-        secret="webhook-secret",
+        secret=_WEBHOOK_SECRET,
         overrides={
             "admin": {
                 "enabled": enabled,
@@ -116,6 +119,115 @@ def test_jobs_cursor_filter_and_safe_retry(tmp_path: Path, monkeypatch) -> None:
     )
     assert accepted.status_code == 202
     assert accepted.json()["status"] == "accepted"
+
+
+def test_jobs_cursor_does_not_skip_the_lookahead_item(tmp_path: Path) -> None:
+    reset_for_tests()
+    client, _csrf = _signed_in_client(tmp_path)
+    for ticket_id in range(1, 53):
+        record_history_event("processed", ticket_id, request_id=f"request-{ticket_id}")
+
+    first = client.get("/admin/api/v1/jobs?limit=50")
+    assert first.status_code == 200
+    first_payload = first.json()
+    cursor = first_payload["next_cursor"]
+    assert cursor is not None
+
+    second = client.get(f"/admin/api/v1/jobs?limit=50&before_id={cursor}")
+    assert second.status_code == 200
+    all_ids = [
+        item["ticket_id"]
+        for item in [*first_payload["items"], *second.json()["items"]]
+    ]
+    assert len(all_ids) == 52
+    assert set(all_ids) == set(range(1, 53))
+
+
+def test_locale_redirect_rejects_cross_origin_prefix_match(tmp_path: Path) -> None:
+    client, csrf = _signed_in_client(tmp_path)
+
+    rejected = client.post(
+        "/admin/locale",
+        data={"csrf_token": csrf, "locale": "de-DE"},
+        headers={"Referer": "http://testserver.evil/admin/jobs"},
+        follow_redirects=False,
+    )
+    assert rejected.status_code == 303
+    assert rejected.headers["location"] == "/admin"
+
+    accepted = client.post(
+        "/admin/locale",
+        data={"csrf_token": csrf, "locale": "en-GB"},
+        headers={"Referer": "http://testserver/admin/jobs?status=failed"},
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303
+    assert accepted.headers["location"] == "/admin/jobs?status=failed"
+
+
+@pytest.mark.parametrize(
+    "referer",
+    ["http://testserver:bad/admin", "http://[::1/admin"],
+)
+def test_locale_redirect_rejects_malformed_referer(tmp_path: Path, referer: str) -> None:
+    client, csrf = _signed_in_client(tmp_path)
+
+    response = client.post(
+        "/admin/locale",
+        data={"csrf_token": csrf, "locale": "de-DE"},
+        headers={"Referer": referer},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin"
+
+
+def test_login_round_trip_preserves_deep_link_query(tmp_path: Path) -> None:
+    client = TestClient(create_app(_settings(tmp_path)))
+    next_path = "/admin/jobs?status=failed&before_id=3"
+
+    redirect = client.get(next_path, follow_redirects=False)
+    assert redirect.status_code == 303
+    query = parse_qs(urlsplit(redirect.headers["location"]).query)
+    assert query == {"next": [next_path]}
+
+    login = client.post(
+        "/admin/login",
+        data={"access_token": _TOKEN, "locale": "en-GB", "next": next_path},
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    assert login.headers["location"] == next_path
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected"),
+    [
+        ("/admin", "/admin"),
+        ("/admin?lang=de-DE", "/admin?lang=de-DE"),
+        ("/admin/jobs", "/admin/jobs"),
+        ("/administrator", "/admin"),
+        ("/admin.evil", "/admin"),
+        ("//admin/jobs", "/admin"),
+    ],
+)
+def test_safe_next_is_limited_to_admin_namespace(candidate: str, expected: str) -> None:
+    assert admin_routes._safe_next(candidate) == expected  # noqa: SLF001
+
+
+def test_login_invalid_utf8_form_is_rejected_without_500(tmp_path: Path) -> None:
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    response = client.post(
+        "/admin/login",
+        content=b"access_token=\xff",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/login?error=true")
 
 
 def test_config_redaction_validation_staging_and_conflict(tmp_path: Path) -> None:

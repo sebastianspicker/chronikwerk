@@ -20,7 +20,7 @@ from zammad_pdf_archiver.domain.state_machine import (
     TRIGGER_TAG,
 )
 
-SECRET = "test-secret"
+SECRET = "test-webhook-hmac-secret-0123456789abcdef"
 ZAMMAD__BASE_URL = "https://zammad.example.local"
 
 

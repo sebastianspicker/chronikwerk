@@ -90,7 +90,8 @@ curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz"
 Keep `ADMIN__ENABLED=false` until the documented web and PDF release gates pass. Before
 enabling it, provision the Compose `admin-state` volume (or an equivalent writable
 systemd path), place the service behind TLS and the existing trusted-network boundary,
-and set a high-entropy token outside Git:
+and set a high-entropy token of at least 32 characters outside Git. The
+placeholder below must be replaced:
 
 ```bash
 ADMIN__ENABLED=true

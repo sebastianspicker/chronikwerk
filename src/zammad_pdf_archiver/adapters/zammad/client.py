@@ -8,7 +8,13 @@ from typing import Any, Literal, NoReturn
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from zammad_pdf_archiver.adapters.http_util import timeouts_for
+from zammad_pdf_archiver.adapters.http_util import (
+    ResponseBodyTooLargeError,
+    UnsupportedResponseEncodingError,
+    pin_request_url,
+    read_response_body_limited,
+    timeouts_for,
+)
 from zammad_pdf_archiver.adapters.zammad.errors import (
     AuthError,
     ClientError,
@@ -21,6 +27,8 @@ from zammad_pdf_archiver.config.transport import (
     validate_url_policy,
     validate_url_policy_async,
 )
+
+_MAX_RESPONSE_BODY_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +77,7 @@ class AsyncZammadClient:
         runtime = _runtime or _ZammadRuntimeOptions()
         self._sleep = runtime.sleep
         self._retry = runtime.retry_policy or _RetryPolicy()
+        self._dns_timeout_seconds = min(5.0, float(timeout_seconds))
         self._allow_insecure_http = allow_insecure_http
         # An injected runtime may explicitly opt into private test fixtures;
         # production-owned clients use the safe constructor default.
@@ -85,6 +94,7 @@ class AsyncZammadClient:
             headers={
                 "Authorization": f"Token token={api_token}",
                 "Accept": "application/json",
+                "Accept-Encoding": "identity",
             },
             timeout=timeouts_for(timeout_seconds),
             limits=httpx.Limits(
@@ -218,14 +228,62 @@ class AsyncZammadClient:
 
         while True:
             try:
-                await validate_url_policy_async(
+                resolved_address = await validate_url_policy_async(
                     str(self._base_url),
                     allow_insecure_http=self._allow_insecure_http,
                     allow_private_networks=self._allow_private_networks,
+                    timeout_seconds=self._dns_timeout_seconds,
                 )
-                response = await self._http.request(
-                    method, path, params=params, json=json, headers=headers
+                request_url, pin_headers, extensions = pin_request_url(
+                    self._base_url.join(path),
+                    resolved_address,
                 )
+                request_headers = {**(headers or {}), **pin_headers}
+                async with self._http.stream(
+                    method,
+                    request_url,
+                    params=params,
+                    json=json,
+                    headers=request_headers or None,
+                    extensions=extensions or None,
+                ) as streamed_response:
+                    retry_delay = self._retry_delay_for_response(
+                        streamed_response,
+                        retry_count=retry_count,
+                        max_attempts=max_attempts,
+                        max_retries=retries,
+                    )
+                    if retry_delay is not None:
+                        response = None
+                    elif 200 <= streamed_response.status_code < 300:
+                        try:
+                            content = await read_response_body_limited(
+                                streamed_response,
+                                max_bytes=_MAX_RESPONSE_BODY_BYTES,
+                            )
+                        except ResponseBodyTooLargeError as exc:
+                            raise ClientError(
+                                "Zammad response body exceeded the "
+                                f"{_MAX_RESPONSE_BODY_BYTES}-byte limit "
+                                f"(status={streamed_response.status_code}) at "
+                                f"{streamed_response.request.url!s}"
+                            ) from exc
+                        except UnsupportedResponseEncodingError as exc:
+                            raise ClientError(
+                                "Zammad returned a compressed response despite "
+                                "Accept-Encoding: identity "
+                                f"(status={streamed_response.status_code}) at "
+                                f"{streamed_response.request.url!s}"
+                            ) from exc
+                        response = httpx.Response(
+                            streamed_response.status_code,
+                            headers=streamed_response.headers,
+                            content=content,
+                            request=streamed_response.request,
+                            extensions=streamed_response.extensions,
+                        )
+                    else:
+                        self._raise_for_status(streamed_response)
             except httpx.TimeoutException as exc:
                 retry_count = await self._retry_after_timeout_or_transport(
                     retry_count=retry_count,
@@ -244,21 +302,12 @@ class AsyncZammadClient:
                 )
                 continue
 
-            retry_delay = self._retry_delay_for_response(
-                response,
-                retry_count=retry_count,
-                max_attempts=max_attempts,
-                max_retries=retries,
-            )
             if retry_delay is not None:
                 await self._sleep(retry_delay)
                 retry_count += 1
                 continue
-
-            if 200 <= response.status_code < 300:
+            if response is not None:
                 return response
-
-            self._raise_for_status(response)
 
     async def _retry_after_timeout_or_transport(
         self,
