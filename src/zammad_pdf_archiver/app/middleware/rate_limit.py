@@ -12,6 +12,7 @@ from zammad_pdf_archiver.app.responses import api_error
 from zammad_pdf_archiver.config.settings import Settings
 
 _METRICS_PATH = "/metrics"
+_ADMIN_AUTH_PATHS = frozenset({"/admin/login", "/admin/api/v1/session"})
 
 # Eviction tuning for the in-memory token-bucket store (Bug #P2-1).
 _EVICTION_HEADROOM = 200  # extra entries to evict below max_entries
@@ -121,7 +122,9 @@ def _client_key(scope: Scope, header_name: str | None) -> str:
 
 
 def _rate_limited():
-    return api_error(429, "rate_limited", code="rate_limited")
+    response = api_error(429, "rate_limited", code="rate_limited")
+    response.headers["Connection"] = "close"
+    return response
 
 
 class RateLimitMiddleware:
@@ -131,13 +134,17 @@ class RateLimitMiddleware:
         if settings is None:
             self._enabled = False
             self._paths: frozenset[str] = frozenset()
+            self._admin_auth_paths: frozenset[str] = frozenset()
             self._limiter: _InMemoryTokenBucketLimiter | None = None
             return
 
         config = settings.hardening.rate_limit
         self._enabled = bool(config.enabled)
+        self._admin_auth_paths = _ADMIN_AUTH_PATHS if settings.admin.enabled else frozenset()
         self._paths = frozenset(
-            set(INGEST_PROTECTED_PATHS) | ({_METRICS_PATH} if config.include_metrics else set())
+            set(INGEST_PROTECTED_PATHS)
+            | ({_METRICS_PATH} if config.include_metrics else set())
+            | set(self._admin_auth_paths)
         )
         self._client_key_header: str | None = config.client_key_header or None
         self._limiter = _InMemoryTokenBucketLimiter(rps=config.rps, burst=config.burst)
@@ -147,7 +154,12 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if not self._enabled or scope.get("path") not in self._paths:
+        path = scope.get("path")
+        if (
+            not self._enabled
+            or path not in self._paths
+            or (path in self._admin_auth_paths and scope.get("method") != "POST")
+        ):
             await self.app(scope, receive, send)
             return
 

@@ -115,6 +115,9 @@ class SigningSettings(_BaseSection):
                 "The current implementation requires a PKCS#12/PFX bundle."
             )
 
+        if self.timestamp.enabled and not self.enabled:
+            raise ValueError("Timestamping requires signing.enabled")
+
         if self.timestamp.enabled and self.timestamp.rfc3161.tsa_url is None:
             raise ValueError(
                 "Timestamping is enabled but signing.timestamp.rfc3161.tsa_url is missing"
@@ -156,8 +159,10 @@ class RateLimitSettings(_BaseSection):
 
 
 class BodySizeLimitSettings(_BaseSection):
-    # 0 disables the limit.
+    # 0 selects the middleware's non-disableable absolute safety cap.
     max_bytes: int = Field(default=1024 * 1024, ge=0)
+    # Whole-body deadline, including slow/chunked uploads.
+    timeout_seconds: float = Field(default=10.0, gt=0, le=300)
 
 
 class AdmissionSettings(_BaseSection):

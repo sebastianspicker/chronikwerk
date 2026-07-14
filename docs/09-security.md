@@ -108,7 +108,8 @@ and never stores secret values. The UI cannot restart the service.
 ## Hardening Checklist
 
 - Restrict `/ingest` to trusted Zammad sources at the network edge.
-- Configure and rotate `ZAMMAD__WEBHOOK_HMAC_SECRET`.
+- Configure and rotate a random, non-placeholder `ZAMMAD__WEBHOOK_HMAC_SECRET`
+  of at least 32 characters.
 - Keep body-size and rate-limit controls enabled.
 - Require delivery IDs when Zammad can send them reliably.
 - Protect `/metrics` when enabled.

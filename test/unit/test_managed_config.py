@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -49,7 +50,10 @@ def test_store_rejects_secrets_unknown_fields_and_symlink_state(tmp_path: Path) 
 
 
 def test_candidate_validation_normalizes_locale_and_never_exposes_secret(tmp_path: Path) -> None:
-    settings = make_settings(str(tmp_path), secret="webhook-secret")
+    settings = make_settings(
+        str(tmp_path),
+        secret="test-webhook-hmac-secret-0123456789abcdef",
+    )
     _candidate, normalized = validate_candidate(
         settings,
         {"pdf": {"locale": "en_GB", "max_articles": 12}},
@@ -111,6 +115,35 @@ def test_failed_current_pointer_write_removes_orphan_revision(tmp_path: Path, mo
     assert store.current_revision() == first["revision"]
     assert [item["revision"] for item in store.list_revisions()] == [first["revision"]]
     assert len(list(store.revisions_dir.glob("*.json"))) == 1
+
+
+def test_oversized_stage_is_rejected_before_any_state_change(tmp_path: Path) -> None:
+    store = ManagedConfigStore(tmp_path / "admin")
+    first = store.stage(
+        {"pdf": {"max_articles": 100}},
+        expected_revision=store.current_revision(),
+        request_id="first",
+    )
+    current_bytes = store.overlay_path.read_bytes()
+    revision_bytes = {path.name: path.read_bytes() for path in store.revisions_dir.glob("*.json")}
+
+    # The compact inbound object remains below 256 KiB, while the durable
+    # revision envelope and pretty-printed representation exceed that bound.
+    oversized_overlay = {"workflow": {"trigger_tag": "x" * 262_000}}
+    assert len(json.dumps(oversized_overlay, separators=(",", ":")).encode()) < 256 * 1024
+    with pytest.raises(ManagedConfigError, match="exceeds 256 KiB"):
+        store.stage(
+            oversized_overlay,
+            expected_revision=first["revision"],
+            request_id="oversized",
+        )
+
+    assert store.current_revision() == first["revision"]
+    assert store.load() == {"pdf": {"max_articles": 100}}
+    assert store.overlay_path.read_bytes() == current_bytes
+    assert {
+        path.name: path.read_bytes() for path in store.revisions_dir.glob("*.json")
+    } == revision_bytes
 
 
 def test_restore_of_same_overlay_creates_new_revision(tmp_path: Path) -> None:

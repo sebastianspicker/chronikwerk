@@ -74,3 +74,25 @@ def test_store_ticket_files_sidecar_failure_removes_moved_pdf(
     assert not target.exists()
     assert not sidecar.exists()
     assert not list(target.parent.glob(".tmp-archiving-*"))
+
+
+def test_store_ticket_files_rejects_outside_target_before_creating_temp_directory(
+    tmp_path: Path,
+) -> None:
+    storage_root = tmp_path / "root"
+    settings = _settings(storage_root)
+    target = tmp_path / "outside" / "Ticket-10001.pdf"
+    sidecar = target.with_suffix(".pdf.json")
+
+    with pytest.raises(ValueError, match="escapes root"):
+        ticket_storage.store_ticket_files(
+            pdf_bytes=b"%PDF",
+            snapshot=_snapshot(),
+            target_path=target,
+            sidecar_path=sidecar,
+            ticket_id=100,
+            now=datetime(2025, 1, 1, tzinfo=UTC),
+            settings=settings,
+        )
+
+    assert not target.parent.exists()

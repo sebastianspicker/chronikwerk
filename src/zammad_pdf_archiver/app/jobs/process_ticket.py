@@ -41,6 +41,7 @@ from zammad_pdf_archiver.app.jobs.ticket_stores import (
     try_claim_delivery_id,
 )
 from zammad_pdf_archiver.config.settings import Settings
+from zammad_pdf_archiver.domain.async_work import run_sync_cancellation_safe
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
 from zammad_pdf_archiver.domain.state_machine import (
     TRIGGER_TAG,
@@ -59,6 +60,12 @@ from zammad_pdf_archiver.observability.metrics import (
 )
 
 log = structlog.get_logger(__name__)
+
+_CANCELLATION_CLEANUP_TIMEOUT_SECONDS = 1.0
+
+
+class _CompletedTicketCancellation(asyncio.CancelledError):
+    """Cancellation received after the archive and terminal tags were durable."""
 
 
 @dataclass(frozen=True)
@@ -229,12 +236,20 @@ async def _process_ticket_with_client(
             )
             return result
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            return await _handle_ticket_pipeline_exception(
-                client=client,
-                ctx=ctx,
-                trigger_tag=trigger_tag,
-                exc=exc,
-            )
+            try:
+                return await _handle_ticket_pipeline_exception(
+                    client=client,
+                    ctx=ctx,
+                    trigger_tag=trigger_tag,
+                    exc=exc,
+                )
+            except asyncio.CancelledError:
+                await _cleanup_cancelled_pipeline(
+                    client=client,
+                    ctx=ctx,
+                    trigger_tag=trigger_tag,
+                )
+                raise
         finally:
             if observe_total:
                 total_seconds.observe(perf_counter() - total_start)
@@ -269,30 +284,40 @@ async def _run_ticket_pipeline(
             False,
         )
 
-    await apply_processing(
-        client,
-        ctx.ticket_id,
-        trigger_tag=trigger_tag,
-        force_reprocess=force_reprocess,
-    )
+    try:
+        await apply_processing(
+            client,
+            ctx.ticket_id,
+            trigger_tag=trigger_tag,
+            force_reprocess=force_reprocess,
+        )
 
-    now = now_utc()
-    storage_paths = _resolve_storage_paths(ctx, ticket=ticket, payload=payload, now=now)
-    storage_result = await _render_and_store_ticket(
-        client=client,
-        ctx=ctx,
-        ticket=ticket,
-        tags=tags,
-        storage_paths=storage_paths,
-        now=now,
-    )
-    await _finalize_success(
-        client=client,
-        ctx=ctx,
-        trigger_tag=trigger_tag,
-        now=now,
-        storage_result=storage_result,
-    )
+        now = now_utc()
+        storage_paths = _resolve_storage_paths(ctx, ticket=ticket, payload=payload, now=now)
+        storage_result = await _render_and_store_ticket(
+            client=client,
+            ctx=ctx,
+            ticket=ticket,
+            tags=tags,
+            storage_paths=storage_paths,
+            now=now,
+        )
+        await _finalize_success(
+            client=client,
+            ctx=ctx,
+            trigger_tag=trigger_tag,
+            now=now,
+            storage_result=storage_result,
+        )
+    except _CompletedTicketCancellation:
+        raise
+    except asyncio.CancelledError:
+        await _cleanup_cancelled_pipeline(
+            client=client,
+            ctx=ctx,
+            trigger_tag=trigger_tag,
+        )
+        raise
     return ProcessTicketResult(status="processed", ticket_id=ctx.ticket_id), True
 
 
@@ -349,7 +374,7 @@ async def _render_and_store_ticket(
         settings=ctx.settings,
     )
     target_path, sidecar_path = storage_paths
-    return await asyncio.to_thread(
+    return await run_sync_cancellation_safe(
         store_ticket_files,
         pdf_bytes=pdf_bytes,
         snapshot=snapshot,
@@ -392,21 +417,58 @@ async def _finalize_success(
         raise
 
     if ctx.settings.workflow.acknowledge_on_success:
-        await client.create_internal_article(
-            ctx.ticket_id,
-            f"PDF archived ({VERSION})",
-            success_note_html(
-                storage_dir=str(storage_result.target_path.parent),
-                filename=storage_result.target_path.name,
-                sidecar_path=str(storage_result.sidecar_path),
-                size_bytes=storage_result.size_bytes,
-                sha256_hex=storage_result.sha256_hex,
-                request_id=ctx.request_id,
-                delivery_id=ctx.delivery_id,
-                timestamp_utc=format_timestamp_utc(now),
-            ),
-        )
+        try:
+            await client.create_internal_article(
+                ctx.ticket_id,
+                f"PDF archived ({VERSION})",
+                success_note_html(
+                    storage_dir=str(storage_result.target_path.parent),
+                    filename=storage_result.target_path.name,
+                    sidecar_path=str(storage_result.sidecar_path),
+                    size_bytes=storage_result.size_bytes,
+                    sha256_hex=storage_result.sha256_hex,
+                    request_id=ctx.request_id,
+                    delivery_id=ctx.delivery_id,
+                    timestamp_utc=format_timestamp_utc(now),
+                ),
+            )
+        except asyncio.CancelledError as exc:
+            _record_success_note_warning(ctx, storage_result=storage_result, cancelled=True)
+            _record_success(ctx, storage_result=storage_result)
+            raise _CompletedTicketCancellation from exc
+        except Exception:  # pylint: disable=broad-exception-caught
+            # The archive and terminal tags are already durable. A best-effort
+            # acknowledgement must not convert that success back into an error.
+            _record_success_note_warning(ctx, storage_result=storage_result, cancelled=False)
 
+    _record_success(ctx, storage_result=storage_result)
+
+
+def _record_success_note_warning(
+    ctx: _TicketJobContext,
+    *,
+    storage_result: StorageResult,
+    cancelled: bool,
+) -> None:
+    log_method = log.warning if cancelled else log.exception
+    log_method(
+        "process_ticket.success_note_cancelled_after_completion"
+        if cancelled
+        else "process_ticket.success_note_failed_after_completion",
+        ticket_id=ctx.ticket_id,
+        request_id=ctx.request_id,
+        delivery_id=ctx.delivery_id,
+        storage_path=str(storage_result.target_path),
+    )
+    _record_history(
+        ctx,
+        status="processed_with_warning",
+        classification="Warning",
+        message="Archive completed, but the success note could not be posted",
+    )
+
+
+def _record_success(ctx: _TicketJobContext, *, storage_result: StorageResult) -> None:
     processed_total.inc()
     _record_history(ctx, status="processed")
     log.info(
@@ -415,6 +477,55 @@ async def _finalize_success(
         storage_path=str(storage_result.target_path),
         request_id=ctx.request_id,
         delivery_id=ctx.delivery_id,
+    )
+
+
+async def _cleanup_cancelled_pipeline(
+    *,
+    client: AsyncZammadClient,
+    ctx: _TicketJobContext,
+    trigger_tag: str,
+) -> None:
+    cleanup = asyncio.create_task(
+        apply_error(
+            client,
+            ctx.ticket_id,
+            keep_trigger=True,
+            trigger_tag=trigger_tag,
+        )
+    )
+    cleanup_succeeded = False
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(cleanup),
+            timeout=_CANCELLATION_CLEANUP_TIMEOUT_SECONDS,
+        )
+        cleanup_succeeded = True
+    except TimeoutError:
+        cleanup.cancel()
+        await asyncio.gather(cleanup, return_exceptions=True)
+        log.error(
+            "process_ticket.cancellation_cleanup_timed_out",
+            ticket_id=ctx.ticket_id,
+            request_id=ctx.request_id,
+            delivery_id=ctx.delivery_id,
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        log.exception(
+            "process_ticket.cancellation_cleanup_failed",
+            ticket_id=ctx.ticket_id,
+            request_id=ctx.request_id,
+            delivery_id=ctx.delivery_id,
+        )
+    _record_history(
+        ctx,
+        status="cancelled",
+        classification="Transient",
+        message=(
+            "Processing cancelled; trigger restored for retry"
+            if cleanup_succeeded
+            else "Processing cancelled; tag cleanup did not complete"
+        ),
     )
 
 

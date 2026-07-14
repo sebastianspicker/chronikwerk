@@ -45,7 +45,7 @@ def test_config_example_constructs_and_validates(tmp_path: Path) -> None:
     data["storage"]["root"] = str(tmp_path)
     data["zammad"]["base_url"] = "https://zammad.example.local"
     data["zammad"]["api_token"] = "test-token"
-    data["zammad"]["webhook_hmac_secret"] = "test-secret"
+    data["zammad"]["webhook_hmac_secret"] = "test-webhook-hmac-secret-0123456789abcdef"
     settings = Settings.from_mapping(data)
     from zammad_pdf_archiver.config.validate import validate_settings
 

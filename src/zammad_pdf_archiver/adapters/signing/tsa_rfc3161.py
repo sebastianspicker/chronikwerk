@@ -8,10 +8,18 @@ from asn1crypto import tsp
 from pyhanko.sign.timestamps.api import TimeStamper
 from pyhanko.sign.timestamps.common_utils import set_tsp_headers
 
-from zammad_pdf_archiver.adapters.http_util import timeouts_for
+from zammad_pdf_archiver.adapters.http_util import (
+    ResponseBodyTooLargeError,
+    UnsupportedResponseEncodingError,
+    pin_request_url,
+    read_response_body_limited,
+    timeouts_for,
+)
 from zammad_pdf_archiver.config.settings import SigningSettings
 from zammad_pdf_archiver.config.transport import validate_url_policy_async
 from zammad_pdf_archiver.domain.errors import PermanentError, TransientError
+
+_MAX_TSA_RESPONSE_BODY_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -78,10 +86,15 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
 
     async def _post_tsa_request(self, req: tsp.TimeStampReq) -> httpx.Response:
         try:
-            await validate_url_policy_async(
+            resolved_address = await validate_url_policy_async(
                 self._config.url,
                 allow_insecure_http=self._config.allow_insecure_http,
                 allow_private_networks=self._config.allow_private_networks,
+                timeout_seconds=min(5.0, self._config.timeout_seconds),
+            )
+            request_url, pin_headers, extensions = pin_request_url(
+                httpx.URL(self._config.url),
+                resolved_address,
             )
             auth: tuple[str | bytes, str | bytes] | None = self._config.auth
 
@@ -93,11 +106,38 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
                 follow_redirects=False,
                 auth=auth,
             ) as client:
-                return await client.post(
-                    self._config.url,
+                async with client.stream(
+                    "POST",
+                    request_url,
                     content=req.dump(),
-                    headers=set_tsp_headers({}),
-                )
+                    headers=set_tsp_headers(
+                        {"Accept-Encoding": "identity", **pin_headers}
+                    ),
+                    extensions=extensions or None,
+                ) as streamed_response:
+                    self._validate_http_response(streamed_response)
+                    try:
+                        content = await read_response_body_limited(
+                            streamed_response,
+                            max_bytes=_MAX_TSA_RESPONSE_BODY_BYTES,
+                        )
+                    except ResponseBodyTooLargeError as exc:
+                        raise PermanentError(
+                            "RFC3161 TSA response exceeds the "
+                            f"{_MAX_TSA_RESPONSE_BODY_BYTES}-byte limit"
+                        ) from exc
+                    except UnsupportedResponseEncodingError as exc:
+                        raise PermanentError(
+                            "RFC3161 TSA returned a compressed response despite "
+                            "Accept-Encoding: identity"
+                        ) from exc
+                    return httpx.Response(
+                        streamed_response.status_code,
+                        headers=streamed_response.headers,
+                        content=content,
+                        request=streamed_response.request,
+                        extensions=streamed_response.extensions,
+                    )
         except httpx.RequestError as exc:
             raise TransientError("Error communicating with RFC3161 TSA") from exc
 
@@ -148,7 +188,6 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
 
     async def async_request_tsa_response(self, req: tsp.TimeStampReq) -> tsp.TimeStampResp:
         response = await self._post_tsa_request(req)
-        self._validate_http_response(response)
         tsa_resp = self._parse_tsa_response(response)
         self._validate_tsa_status(tsa_resp)
         self._validate_nonce(req, tsa_resp)

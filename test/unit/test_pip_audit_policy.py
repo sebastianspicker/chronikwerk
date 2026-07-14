@@ -74,6 +74,44 @@ def test_findings_are_evaluated_after_schema_validation(tmp_path: Path) -> None:
     assert module.main() == 1
 
 
+def test_unknown_database_severity_fails_closed(tmp_path: Path) -> None:
+    module = _write_inputs(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "example",
+                    "version": "1.0",
+                    "vulns": [{"id": "CVE-2026-0002", "aliases": []}],
+                }
+            ]
+        },
+        exit_code=1,
+    )
+    module._fetch_osv = lambda _vuln_id: {"database_specific": {"severity": "IMPORTANT"}}
+
+    assert module.main() == 1
+
+
+def test_moderate_database_severity_normalizes_to_medium(tmp_path: Path) -> None:
+    module = _write_inputs(
+        tmp_path,
+        {
+            "dependencies": [
+                {
+                    "name": "example",
+                    "version": "1.0",
+                    "vulns": [{"id": "CVE-2026-0003", "aliases": []}],
+                }
+            ]
+        },
+        exit_code=1,
+    )
+    module._fetch_osv = lambda _vuln_id: {"database_specific": {"severity": "MODERATE"}}
+
+    assert module.main() == 0
+
+
 def test_missing_report_fails_closed(tmp_path: Path) -> None:
     module = _write_inputs(tmp_path, {"dependencies": []})
     (tmp_path / "pip-audit.json").unlink()

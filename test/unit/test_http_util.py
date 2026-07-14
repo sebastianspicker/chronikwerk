@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock
+import httpx
 
-from zammad_pdf_archiver.adapters.http_util import drain_stream, timeouts_for
+from zammad_pdf_archiver.adapters.http_util import (
+    pin_request_url,
+    timeouts_for,
+)
 
 
 def test_timeouts_for_uses_capped_connect_timeout() -> None:
@@ -22,26 +24,12 @@ def test_timeouts_for_short_timeout_uses_total_as_connect() -> None:
     assert t.read == 2.0
 
 
-def test_drain_stream_stops_on_disconnect() -> None:
-    """drain_stream returns when it receives an http.disconnect message."""
-    receive = AsyncMock(return_value={"type": "http.disconnect"})
-    asyncio.run(drain_stream(receive))
-    receive.assert_awaited_once()
+def test_pin_request_url_preserves_host_and_tls_identity() -> None:
+    url, headers, extensions = pin_request_url(
+        httpx.URL("https://example.com:8443/api"),
+        "93.184.216.34",
+    )
 
-
-def test_drain_stream_stops_on_last_body_chunk() -> None:
-    """drain_stream returns after consuming the last body chunk (more_body=False)."""
-    receive = AsyncMock(return_value={"type": "http.request", "more_body": False})
-    asyncio.run(drain_stream(receive))
-    receive.assert_awaited_once()
-
-
-def test_drain_stream_consumes_multiple_chunks() -> None:
-    """drain_stream loops until more_body=False."""
-    chunks = [
-        {"type": "http.request", "body": b"chunk1", "more_body": True},
-        {"type": "http.request", "body": b"chunk2", "more_body": False},
-    ]
-    receive = AsyncMock(side_effect=chunks)
-    asyncio.run(drain_stream(receive))
-    assert receive.await_count == 2
+    assert str(url) == "https://93.184.216.34:8443/api"
+    assert headers == {"Host": "example.com:8443"}
+    assert extensions == {"sni_hostname": "example.com"}

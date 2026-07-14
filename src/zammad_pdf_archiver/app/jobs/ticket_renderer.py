@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -11,6 +10,7 @@ import structlog
 from zammad_pdf_archiver.adapters.pdf.render_pdf import render_pdf
 from zammad_pdf_archiver.adapters.signing.sign_pdf import sign_pdf
 from zammad_pdf_archiver.adapters.snapshot.build_snapshot import build_snapshot
+from zammad_pdf_archiver.domain.async_work import run_sync_cancellation_safe
 from zammad_pdf_archiver.domain.snapshot_models import Snapshot
 from zammad_pdf_archiver.observability.metrics import render_seconds, sign_seconds
 
@@ -77,7 +77,7 @@ async def build_and_render_pdf(
 
     if settings.signing.enabled:
         sign_started = perf_counter()
-        pdf_bytes = await asyncio.to_thread(
+        pdf_bytes = await run_sync_cancellation_safe(
             sign_pdf,
             pdf_bytes,
             signing=settings.signing,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 import respx
 
+import zammad_pdf_archiver.adapters.zammad.client as zammad_client_module
 from zammad_pdf_archiver.adapters.zammad.client import (
     AsyncZammadClient,
     _parse_retry_after_seconds,
@@ -74,6 +76,113 @@ def test_get_ticket_success() -> None:
         asyncio.run(run())
 
 
+def test_success_response_without_content_length_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _ChunkedBody(httpx.AsyncByteStream):
+        chunks_yielded = 0
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for _ in range(100):
+                self.chunks_yielded += 1
+                yield b"x" * (40 * 1024)
+
+    body = _ChunkedBody()
+    monkeypatch.setattr(zammad_client_module, "_MAX_RESPONSE_BODY_BYTES", 64 * 1024)
+
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            _runtime=_test_runtime(),
+        ) as client:
+            with pytest.raises(ClientError, match="65536-byte limit"):
+                await client.get_ticket(123)
+
+    with respx.mock:
+        respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Type": "application/json"},
+                stream=body,
+            )
+        )
+        asyncio.run(run())
+
+    assert body.chunks_yielded < 100
+
+
+def test_success_response_declared_over_limit_is_rejected_before_body_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _UnreadBody(httpx.AsyncByteStream):
+        was_read = False
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            self.was_read = True
+            yield b"{}"
+
+    body = _UnreadBody()
+    monkeypatch.setattr(zammad_client_module, "_MAX_RESPONSE_BODY_BYTES", 8)
+
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            _runtime=_test_runtime(),
+        ) as client:
+            with pytest.raises(ClientError, match="8-byte limit"):
+                await client.get_ticket(123)
+
+    with respx.mock:
+        respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Type": "application/json", "Content-Length": "9"},
+                stream=body,
+            )
+        )
+        asyncio.run(run())
+
+    assert body.was_read is False
+
+
+def test_compressed_success_response_is_rejected_before_body_read() -> None:
+    class _UnreadBody(httpx.AsyncByteStream):
+        was_read = False
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            self.was_read = True
+            yield b"compressed"
+
+    body = _UnreadBody()
+
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            _runtime=_test_runtime(),
+        ) as client:
+            with pytest.raises(ClientError, match="compressed response"):
+                await client.get_ticket(123)
+
+    with respx.mock:
+        route = respx.get("https://zammad.example/api/v1/tickets/123").mock(
+            return_value=httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "application/json",
+                    "Content-Encoding": "gzip",
+                },
+                stream=body,
+            )
+        )
+        asyncio.run(run())
+
+    assert route.calls[0].request.headers["Accept-Encoding"] == "identity"
+    assert body.was_read is False
+
+
 def test_transport_revalidates_dns_before_each_request(monkeypatch) -> None:
     async def run() -> None:
         async with AsyncZammadClient(
@@ -97,7 +206,7 @@ def test_transport_revalidates_dns_before_each_request(monkeypatch) -> None:
         resolve,
     )
     with respx.mock:
-        route = respx.get("https://zammad.example/api/v1/tickets/123").mock(
+        route = respx.get("https://93.184.216.34/api/v1/tickets/123").mock(
             return_value=httpx.Response(
                 200,
                 json={"id": 123, "number": "20240123", "preferences": {"custom_fields": {}}},
@@ -105,6 +214,8 @@ def test_transport_revalidates_dns_before_each_request(monkeypatch) -> None:
         )
         asyncio.run(run())
         assert route.call_count == 1
+        assert route.calls[0].request.headers["Host"] == "zammad.example"
+        assert route.calls[0].request.extensions["sni_hostname"] == "zammad.example"
 
 
 def test_list_tags_success() -> None:

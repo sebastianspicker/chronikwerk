@@ -43,6 +43,18 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
         raise ConfigValidationError(
             [ConfigValidationIssue(path=str(path), message=f"Unable to read config file: {exc}")]
         ) from exc
+    except UnicodeError as exc:
+        raise ConfigValidationError(
+            [ConfigValidationIssue(path=str(path), message="Config file must be valid UTF-8")]
+        ) from exc
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        location = ""
+        if mark is not None:
+            location = f" at line {mark.line + 1}, column {mark.column + 1}"
+        raise ConfigValidationError(
+            [ConfigValidationIssue(path=str(path), message=f"Invalid YAML{location}")]
+        ) from exc
 
     if raw is None:
         return {}
