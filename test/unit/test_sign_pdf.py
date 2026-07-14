@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import io
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -27,6 +28,21 @@ def test_sign_pdf_returns_pdf_bytes(tmp_path: Path) -> None:
     signing = _make_settings(pfx_path=pfx_path, pfx_password="secret")
     signed = sign_pdf(sample_pdf_bytes(), signing)
     assert signed.startswith(b"%PDF-")
+
+
+def test_sign_pdf_uses_pades_subfilter(tmp_path: Path) -> None:
+    from pyhanko.pdf_utils.reader import PdfFileReader
+
+    pfx_path = tmp_path / "test.pfx"
+    write_test_pfx(pfx_path, password="secret")
+
+    signed = sign_pdf(
+        sample_pdf_bytes(),
+        _make_settings(pfx_path=pfx_path, pfx_password="secret"),
+    )
+
+    signature = PdfFileReader(io.BytesIO(signed)).embedded_signatures[0]
+    assert signature.sig_object["/SubFilter"] == "/ETSI.CAdES.detached"
 
 def test_sign_pdf_missing_pfx_path_raises() -> None:
     signing = SigningSettings(enabled=False, pfx_path=None, pfx_password=None)

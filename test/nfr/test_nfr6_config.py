@@ -29,7 +29,7 @@ def test_nfr6_valid_yaml_loads(
                 "zammad:",
                 "  base_url: https://zammad.example.local",
                 "  api_token: test-token",
-                "  webhook_hmac_secret: test-secret",
+                "  webhook_hmac_secret: test-webhook-hmac-secret-0123456789abcdef",
                 "storage:",
                 f"  root: {tmp_path}",
                 "",

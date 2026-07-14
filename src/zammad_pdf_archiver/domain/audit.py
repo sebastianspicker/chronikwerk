@@ -57,7 +57,9 @@ def build_audit_record(
 ) -> dict[str, Any]:
     """Build a JSON-serialisable audit record for a successfully archived ticket."""
     signing_enabled = signing_settings.enabled if signing_settings else False
-    tsa_used = signing_settings.timestamp.enabled if signing_settings else False
+    tsa_used = (
+        signing_enabled and signing_settings is not None and signing_settings.timestamp.enabled
+    )
     cert_fingerprint = (
         _extract_cert_fingerprint(signing_settings)
         if signing_settings is not None and signing_settings.enabled

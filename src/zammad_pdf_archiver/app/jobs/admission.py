@@ -60,8 +60,12 @@ class JobAdmission:
         async with self._condition:
             try:
                 while self._running >= self.max_running:
+                    if self._closing:
+                        raise AdmissionClosed
                     await self._condition.wait()
-            except asyncio.CancelledError:
+                if self._closing:
+                    raise AdmissionClosed
+            except (asyncio.CancelledError, AdmissionClosed):
                 self._pending -= 1
                 self._publish()
                 self._condition.notify_all()

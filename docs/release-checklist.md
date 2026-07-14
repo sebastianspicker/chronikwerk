@@ -93,7 +93,7 @@ docker build -t zammad-pdf-archiver:local .
 docker run --rm -p 8080:8080 \
   -e ZAMMAD__BASE_URL=https://example.invalid \
   -e ZAMMAD__API_TOKEN=x \
-  -e ZAMMAD__WEBHOOK_HMAC_SECRET=x \
+  -e ZAMMAD__WEBHOOK_HMAC_SECRET=local-smoke-webhook-secret-at-least-32-characters \
   -e STORAGE__ROOT=/tmp \
   zammad-pdf-archiver:local
 ```

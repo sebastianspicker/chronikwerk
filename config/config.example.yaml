@@ -8,7 +8,7 @@ server:
 zammad:
   base_url: "https://zammad.example.local"
   api_token: "CHANGE-ME"
-  webhook_hmac_secret: "CHANGE-ME"
+  webhook_hmac_secret: "CHANGE-ME-TO-A-RANDOM-32-BYTE-SECRET"
   timeout_seconds: 10.0
   verify_tls: true
 
@@ -70,6 +70,7 @@ hardening:
     client_key_header: null
   body_size_limit:
     max_bytes: 1048576
+    timeout_seconds: 10.0
   webhook:
     require_delivery_id: false
   transport:

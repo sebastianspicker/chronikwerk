@@ -39,6 +39,7 @@ def test_rate_limit_triggers_on_ingest(tmp_path, monkeypatch) -> None:
     resp = post_signed_json(client, "/ingest", payload)
     assert resp.status_code == 429
     assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}
+    assert resp.headers["connection"] == "close"
     assert resp.headers.get("X-Request-Id")
 
 

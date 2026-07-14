@@ -8,6 +8,16 @@ from pydantic import ValidationError
 from zammad_pdf_archiver.config.settings import Settings
 from zammad_pdf_archiver.config.transport import validate_url_policy
 
+_MIN_AUTH_SECRET_LENGTH = 32
+_PLACEHOLDER_PREFIXES = (
+    "changeme",
+    "example",
+    "replaceme",
+    "yourpassword",
+    "yoursecret",
+    "yourtoken",
+)
+
 
 @dataclass(frozen=True)
 class ConfigValidationIssue:
@@ -27,6 +37,32 @@ class ConfigValidationError(ValueError):
         return "\n".join(lines)
 
 
+def _auth_secret_problem(value: str) -> str | None:
+    if value != value.strip():
+        return "must not contain leading or trailing whitespace"
+    stripped = value.strip()
+    if not stripped:
+        return "is missing"
+    if len(stripped) < _MIN_AUTH_SECRET_LENGTH:
+        return f"must contain at least {_MIN_AUTH_SECRET_LENGTH} characters"
+    normalized = "".join(character for character in stripped.lower() if character.isalnum())
+    if normalized.startswith(_PLACEHOLDER_PREFIXES):
+        return "must not use an example or placeholder value"
+    return None
+
+
+def _append_auth_secret_issue(
+    issues: list[ConfigValidationIssue],
+    *,
+    path: str,
+    value: str,
+    label: str,
+) -> None:
+    problem = _auth_secret_problem(value)
+    if problem is not None:
+        issues.append(ConfigValidationIssue(path=path, message=f"{label} {problem}."))
+
+
 def issues_from_pydantic_error(error: ValidationError) -> list[ConfigValidationIssue]:
     issues: list[ConfigValidationIssue] = []
     for item in error.errors(include_url=False):
@@ -38,14 +74,13 @@ def issues_from_pydantic_error(error: ValidationError) -> list[ConfigValidationI
 
 def _validate_webhook_auth(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     secret = settings.zammad.webhook_hmac_secret
-    secret_value = secret.get_secret_value().strip() if secret is not None else ""
-    if not secret_value:
-        issues.append(
-            ConfigValidationIssue(
-                path="zammad.webhook_hmac_secret",
-                message="Missing webhook HMAC secret. Set ZAMMAD__WEBHOOK_HMAC_SECRET.",
-            )
-        )
+    secret_value = secret.get_secret_value() if secret is not None else ""
+    _append_auth_secret_issue(
+        issues,
+        path="zammad.webhook_hmac_secret",
+        value=secret_value,
+        label="Webhook HMAC secret",
+    )
 
 
 def _validate_delivery_id_requirement(
@@ -110,23 +145,32 @@ def _validate_tsa_transport(
 def _validate_observability(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     if settings.observability.metrics_enabled:
         token = settings.observability.metrics_bearer_token
-        token_value = token.get_secret_value().strip() if token is not None else ""
-        if not token_value:
-            issues.append(
-                ConfigValidationIssue(
-                    path="observability.metrics_bearer_token",
-                    message="Metrics enabled but observability.metrics_bearer_token is missing.",
-                )
-            )
+        _append_auth_secret_issue(
+            issues,
+            path="observability.metrics_bearer_token",
+            value=token.get_secret_value() if token is not None else "",
+            label="Metrics bearer token",
+        )
     if settings.observability.history_enabled:
         token = settings.observability.history_bearer_token
-        if token is None or not token.get_secret_value().strip():
-            issues.append(
-                ConfigValidationIssue(
-                    path="observability.history_bearer_token",
-                    message="History enabled but observability.history_bearer_token is missing.",
-                )
-            )
+        _append_auth_secret_issue(
+            issues,
+            path="observability.history_bearer_token",
+            value=token.get_secret_value() if token is not None else "",
+            label="History bearer token",
+        )
+
+
+def _validate_retry_auth(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    token = settings.retry_bearer_token
+    if token is None:
+        return
+    _append_auth_secret_issue(
+        issues,
+        path="retry_bearer_token",
+        value=token.get_secret_value(),
+        label="Retry bearer token",
+    )
 
 
 def _validate_log_level(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
@@ -144,14 +188,12 @@ def _validate_admin(settings: Settings, issues: list[ConfigValidationIssue]) -> 
     if not settings.admin.enabled:
         return
     token = settings.admin.access_token
-    token_value = token.get_secret_value() if token is not None else ""
-    if len(token_value) < 32:
-        issues.append(
-            ConfigValidationIssue(
-                path="admin.access_token",
-                message="Admin enabled but access token is missing or shorter than 32 characters.",
-            )
-        )
+    _append_auth_secret_issue(
+        issues,
+        path="admin.access_token",
+        value=token.get_secret_value() if token is not None else "",
+        label="Admin access token",
+    )
 
 
 def validate_settings(settings: Settings) -> None:
@@ -160,6 +202,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_delivery_id_requirement(settings, issues)
     _validate_transport(settings, issues)
     _validate_observability(settings, issues)
+    _validate_retry_auth(settings, issues)
     _validate_log_level(settings, issues)
     _validate_admin(settings, issues)
     if issues:
