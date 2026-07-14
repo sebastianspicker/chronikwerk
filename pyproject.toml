@@ -34,7 +34,7 @@ dependencies = [
     "httpx>=0.27,<1.0",
     "structlog>=24.0,<26.0",
     "prometheus-client>=0.20,<1.0",
-    "weasyprint>=68.0,<69",
+    "weasyprint>=68.0,<70",
 ]
 
 [project.optional-dependencies]
