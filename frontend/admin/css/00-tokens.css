@@ -1,0 +1,70 @@
+/* Chronikwerk Admin: design tokens (Instrument Ledger) */
+:root {
+  color-scheme: light;
+
+  /* Archive ink family: cool institutional navy */
+  --ink-950: #06101f;
+  --ink-900: #0b1a2e;
+  --ink-800: #14253d;
+  --ink-600: #3d5169;
+  --ink-500: #5a6d84;
+  --ink-400: #7a8da3;
+  --ink-200: #c5d0de;
+  --ink-100: #e4ebf3;
+  --ink-50: #f2f5f9;
+
+  /* Canvas */
+  --canvas: #f7f9fc;
+  --surface: #ffffff;
+
+  /* Process blue: live instrumentation only */
+  --process: #0b57d0;
+  --process-deep: #0845a8;
+  --process-soft: #e8f0ff;
+
+  /* Semantic colors, always paired with text */
+  --ok: #0a6b3a;
+  --ok-bg: #e6f5ec;
+  --ok-edge: #9dd4b4;
+  --warn: #8a5a0a;
+  --warn-bg: #fff6e0;
+  --warn-edge: #e8c878;
+  --fault: #a61f2c;
+  --fault-bg: #fceced;
+  --fault-edge: #e8a0a6;
+
+  /* Type */
+  --sans: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "SFMono-Regular", ui-monospace, Consolas, "Liberation Mono", Menlo, monospace;
+
+  /* Geometry */
+  --content: 1280px;
+  --control-height: 42px;
+  --radius: 6px;
+  --shadow-tight: 0 1px 0 rgba(6, 16, 31, 0.04), 0 1px 2px rgba(6, 16, 31, 0.04);
+
+  /* Compatibility aliases (legacy template / JS styles) */
+  --ink: var(--ink-900);
+  --muted: var(--ink-500);
+  --white: var(--surface);
+  --cobalt: var(--process);
+  --cobalt-dark: var(--process-deep);
+  --cobalt-soft: var(--process-soft);
+  --rule: var(--ink-100);
+  --rule-strong: var(--ink-200);
+  --ice: var(--ink-50);
+  --ice-strong: var(--ink-100);
+  --success: var(--ok);
+  --success-bg: var(--ok-bg);
+  --warning: var(--warn);
+  --warning-bg: var(--warn-bg);
+  --error: var(--fault);
+  --error-bg: var(--fault-bg);
+  --body: var(--sans);
+
+  font-family: var(--sans);
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--ink-900);
+  background: var(--canvas);
+}

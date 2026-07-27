@@ -16,6 +16,14 @@ updates:
       prefix: "deps"
     open-pull-requests-limit: 10
 
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 5
+
   - package-ecosystem: docker
     directory: /
     schedule:

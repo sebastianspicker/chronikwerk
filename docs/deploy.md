@@ -1,140 +1,144 @@
-# Deployment (production)
+# Deployment
 
-This repo ships production artifacts:
+This project ships Docker and Docker Compose files for a single-host deployment. Use
+one external environment file for both Compose interpolation and the container;
+set `CHRONIKWERK_ENV_FILE` in that file to its installed path.
 
-- `Dockerfile` (prod image)
-- `docker-compose.yml` (prod compose)
-- `infra/systemd/zammad-archiver.service` + `infra/systemd/zammad-archiver.env` (optional systemd wrapper)
+## Prerequisites
 
-The service exposes a health endpoint at `GET /healthz`.
+- Linux host with Docker Engine and Docker Compose 2.24.0 or newer.
+- Mounted archive storage path, for example an SMB/CIFS mount.
+- Zammad API token and webhook HMAC secret.
+- Optional PKCS#12/PFX signing material when signing is enabled.
+- A persistent admin-state directory and TLS proxy before the admin feature is enabled.
 
-## 1) Prerequisites
+## Suggested Layout
 
-- Linux host with Docker Engine + Docker Compose v2 plugin (`docker compose ...`)
-- A mounted archive storage path on the host (e.g. a CIFS/SMB mount) that will be bind-mounted into the container
-- Optional signing material (PKCS#12/PFX) available on disk if signing is enabled
-
-## 2) Install files on the server
-
-Suggested layout:
-
-- Code + compose: `/opt/zammad-ticket-archiver`
-- Config/env/secrets: `/etc/zammad-archiver`
-
-Example:
+- Repository and compose files: `/opt/chronikwerk`
+- Environment and secrets: `/etc/chronikwerk`
+- Archive mount: `/mnt/archive` or another dedicated path
+- Admin revision state: `/var/lib/chronikwerk/admin`
 
 ```bash
-sudo mkdir -p /opt/zammad-ticket-archiver
-sudo mkdir -p /etc/zammad-archiver/secrets
-
-sudo rsync -a --delete ./ /opt/zammad-ticket-archiver/
+sudo install -d -m 0755 /opt/chronikwerk
+sudo install -d -m 0750 /etc/chronikwerk/secrets
 ```
 
-## 3) Configure environment
+Extract a reviewed source release into `/opt/chronikwerk`, or use a reviewed image when one
+is available. Do not copy a developer working tree: it may contain ignored credentials,
+local configuration, archives, reports, or tool state that do not belong on the deployment
+host.
 
-Copy the template and edit:
+## Configure Environment
+
+Copy a template and edit it on the target host:
 
 ```bash
-sudo install -m 0640 -o root -g root infra/systemd/zammad-archiver.env /etc/zammad-archiver/zammad-archiver.env
-sudo ${EDITOR:-vi} /etc/zammad-archiver/zammad-archiver.env
+cd /opt/chronikwerk
+sudo install -m 0640 -o root -g root infra/systemd/chronikwerk.env.example /etc/chronikwerk/chronikwerk.env
+sudo ${EDITOR:-vi} /etc/chronikwerk/chronikwerk.env
 ```
 
-Minimum required values:
+Minimum values:
 
-- `ZAMMAD_BASE_URL`
-- `ZAMMAD_API_TOKEN`
-- `STORAGE_ROOT`
+- `ZAMMAD__BASE_URL`
+- `ZAMMAD__API_TOKEN`
+- `ZAMMAD__WEBHOOK_HMAC_SECRET`
+- `STORAGE__ROOT`
 
-Config file (optional):
+The portable aliases `ZAMMAD_ORIGIN` and `ZAMMAD_API_TOKEN` may replace the
+first two nested keys. Use one form only, or keep duplicate normalized values
+identical; conflicting duplicates fail startup.
 
-- If you keep `CONFIG_PATH=./config/config.yaml`, create `/opt/zammad-ticket-archiver/config/config.yaml`.
-- If you want an absolute path, set `CONFIG_PATH=/etc/zammad-archiver/config.yaml` and bind-mount it (see below).
-
-## 4) Optional signing material (PFX)
-
-Create the secret file:
+Keep this line in the installed file and update it if the location changes:
 
 ```bash
-sudo install -m 0640 -o root -g root /dev/null /etc/zammad-archiver/secrets/signing.pfx
-# Copy your real PFX into place:
-sudo cp /path/to/your/signing.pfx /etc/zammad-archiver/secrets/signing.pfx
+CHRONIKWERK_ENV_FILE=/etc/chronikwerk/chronikwerk.env
 ```
 
-Then in `/etc/zammad-archiver/zammad-archiver.env` set:
+## Optional Signing Material
 
-- `SIGNING_ENABLED=true`
-- `SIGNING_PFX_PATH=/run/secrets/signing.pfx`
-- `SIGNING_PFX_PASSWORD=...` (if needed)
+Store the real PFX outside the repository:
 
-Add a compose override to mount the file into the container:
+```bash
+sudo install -m 0640 -o root -g root /path/to/signing.pfx /etc/chronikwerk/secrets/signing.pfx
+```
+
+Then configure:
+
+```bash
+SIGNING__ENABLED=true
+SIGNING__PFX_PATH=/run/secrets/signing.pfx
+SIGNING__PFX_PASSWORD=CHANGE-ME
+```
+
+Save this local-only override as `/opt/chronikwerk/docker-compose.override.yml`. Docker
+Compose loads it with the checked-in `docker-compose.yml` when the commands below run from
+`/opt/chronikwerk`.
 
 ```yaml
 services:
-  zammad-pdf-archiver:
+  chronikwerk:
     volumes:
-      - /etc/zammad-archiver/secrets/signing.pfx:/run/secrets/signing.pfx:ro
+      - /etc/chronikwerk/secrets/signing.pfx:/run/secrets/signing.pfx:ro
 ```
 
-## 5) CIFS mount example (brief)
+Do not commit the host-specific override or signing file.
 
-If your archive storage is a CIFS/SMB share, mount it on the host and point `STORAGE_ROOT` to the mountpoint.
-
-One-off mount (placeholder helper; review options before production):
+## Start
 
 ```bash
-sudo -E bash -lc 'source /etc/zammad-archiver/zammad-archiver.env; scripts/ops/mount-cifs.sh'
+cd /opt/chronikwerk
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env up -d --build
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env exec -T chronikwerk \
+  python -c 'import os,urllib.request; p=os.getenv("SERVER__PORT","8080"); print(urllib.request.urlopen(f"http://127.0.0.1:{p}/healthz", timeout=2).read().decode())'
 ```
 
-For a persistent mount, prefer `/etc/fstab` with a credentials file (not shown here).
+Production Compose publishes the service on `127.0.0.1` by default so plaintext
+HTTP is reachable only by a same-host TLS proxy. Set `CHRONIKWERK_PUBLISH_HOST` to a
+different host address only when an approved ingress and firewall provide the
+equivalent boundary; setting it to `0.0.0.0` exposes the plaintext application
+port on every host interface.
 
-## 6) Start with Docker Compose (manual)
+## Optional administration application
+
+Keep `ADMIN__ENABLED=false` until the documented web and PDF release gates pass. Before
+enabling it, provision the Compose `admin-state` volume (or an equivalent writable
+systemd path), place the service behind TLS and the existing trusted-network boundary,
+and set a high-entropy token of at least 32 characters outside Git. The
+placeholder below must be replaced:
 
 ```bash
-cd /opt/zammad-ticket-archiver
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env ps
+ADMIN__ENABLED=true
+ADMIN__ACCESS_TOKEN=CHANGE-ME-AT-LEAST-32-CHARACTERS
+ADMIN__STATE_DIR=/var/lib/chronikwerk/admin
+ADMIN__COOKIE_SECURE=true
 ```
 
-Health check:
+The UI can stage allowlisted non-secret values but cannot restart the service. After a
+stage operation, restart externally and verify that Overview shows the revision as
+active. Offline recovery commands are:
 
 ```bash
-curl -fsS "http://127.0.0.1:${SERVER_PORT:-8080}/healthz"
+chronikwerk-admin list-config-revisions
+chronikwerk-admin stage-config-rollback <full-revision-hash>
 ```
 
-## 7) Start with systemd (optional)
+## CIFS/SMB Storage
 
-Install the unit:
+Mount the share on the host and point `STORAGE__ROOT` at the mountpoint.
+
+Example one-off mount:
 
 ```bash
-sudo install -m 0644 infra/systemd/zammad-archiver.service /etc/systemd/system/zammad-archiver.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now zammad-archiver.service
-sudo systemctl status zammad-archiver.service
+sudo mount -t cifs //fileserver/archive /mnt/archive \
+  -o credentials=/etc/chronikwerk/cifs.creds,uid=10001,gid=10001,iocharset=utf8,file_mode=0640,dir_mode=0750,noserverino
 ```
 
-Notes:
+For production, prefer `/etc/fstab` or a managed mount unit with credentials
+stored outside the repository.
 
-- The unit assumes the repo is deployed to `/opt/zammad-ticket-archiver`. Adjust `WorkingDirectory=` in the unit
-  if you use a different path.
-- The unit runs `docker compose up -d` on start and `docker compose down` on stop.
+## Operations
 
-## 8) Update and rollback
-
-Update (rebuild + recreate container):
-
-```bash
-cd /opt/zammad-ticket-archiver
-sudo rsync -a --delete /path/to/updated/repo/ ./
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
-```
-
-Rollback (re-deploy previous revision and rebuild):
-
-```bash
-cd /opt/zammad-ticket-archiver
-sudo git checkout <known-good-commit-or-tag>
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
-```
-
-If you want true “no-build” rollbacks, publish versioned images to a registry and pin `image:` tags instead of
-building on the server.
+Start/stop, rollback, health checks, troubleshooting, and on-call steps live in
+[08 - Operations](08-operations.md).

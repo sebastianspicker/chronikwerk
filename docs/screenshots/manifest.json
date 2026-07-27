@@ -1,0 +1,64 @@
+{
+  "base_revision": "33a718ebb834fdb3c83ca6f708cc1fc55db7509d",
+  "candidate_version": "0.3.0a1",
+  "fixture": "synthetic local configuration with empty volatile history",
+  "images": [
+    {
+      "locale": "en-GB",
+      "path": "admin-overview.png",
+      "route": "/admin",
+      "sha256": "df418c02d557ab872bc9c665ad85a5856385722b342ef75c8b3d9c29392a2882",
+      "viewport": {
+        "height": 1050,
+        "width": 1440
+      }
+    },
+    {
+      "locale": "de-DE",
+      "path": "admin-configuration.png",
+      "route": "/admin/configuration",
+      "sha256": "1cde5022d2ab5d890c2fee4f27500eb2ef4483bfd98197f55862f1bf1b1e8cbd",
+      "viewport": {
+        "height": 2400,
+        "width": 1440
+      }
+    }
+  ],
+  "rendered_at_utc": "2026-07-23T15:31:51Z",
+  "renderer": {
+    "browser": "Chromium 149.0.7827.55",
+    "browser_verified": false,
+    "javascript_executed": false,
+    "playwright": "1.61.1"
+  },
+  "schema_version": 2,
+  "source": "authenticated FastAPI TestClient HTML and shipped admin CSS, rendered in headless Chromium with JavaScript removed",
+  "source_files": {
+    "scripts/docs/render_admin_screenshots.py": "458af1fc422e904bf391e4057b68cb29fb81a6f220eeca892f85390bdddab086",
+    "src/chronikwerk/_version.py": "13389430d7928764c46089a0055433b649424d44127013fa06ff96d1ea0832fa",
+    "src/chronikwerk/app/admin/__init__.py": "b2041784cc0ba4e3e432796d39b66aefa0f85da93b4b592a918c0322733da9bb",
+    "src/chronikwerk/app/admin/_config_routes.py": "7577793682d082fabf0348d3cd1757b6c67e8bef9ef80c9b0e5f1e180c365663",
+    "src/chronikwerk/app/admin/_page_routes.py": "150ad4e908d72349c265ccfc6e5099c212999a31de8fd39bc36d125cf90fc130",
+    "src/chronikwerk/app/admin/_revision_routes.py": "7b7e8b1659bdc7dc6a998a0e5e2420a502a13e8f3e732b86471921d5a9527f4a",
+    "src/chronikwerk/app/admin/_route_support.py": "9831962c7f3149a9335c378f0e3030b16a8254433ccc2c053d3b81a39cf0b5bc",
+    "src/chronikwerk/app/admin/_status_routes.py": "d81c95f3e7b8ec8f300f11a7ad31bccb8da28ab013a2660cc33f361b2836a37b",
+    "src/chronikwerk/app/admin/auth.py": "21c5c33e742071a79751e6b04bcf4047b59166a320fafb02ead2fe9eae3c5e6c",
+    "src/chronikwerk/app/admin/routes.py": "87ed61de36f27f46547e5b02ebd614a600daa5c842324a7c30a641a27a8aa98a",
+    "src/chronikwerk/app/admin/security.py": "3503430510688909d5d34bd216b40113b85e6fb0a0cef2bbb714b8228a794ac7",
+    "src/chronikwerk/app/admin/templates.py": "2a8cae7f94191c86951bc8d96be4c79f574d683ab7cefe897b38f26acbbc5a8a",
+    "src/chronikwerk/app/server.py": "c889e4f89fd1b4da552bd4b5729fe3d533b201a6592a414d7157a63e894ddc82",
+    "src/chronikwerk/config/managed.py": "cecec5724dc64d53d6b247f69f6ea0768326304ba3f6eed0341ca8976248ae81",
+    "src/chronikwerk/config/settings.py": "08654304c9d304e08fd5c2e323dde19f07652331145a53f475ab5710437c5901",
+    "src/chronikwerk/i18n.py": "fe38d2459a386b5dd5dbb7564e8ebbc90f0f3d11f96116320b1c14dbf8abbacd",
+    "src/chronikwerk/static/admin/admin.css": "2d749b692f41514848770e9f5a40efebb22349dd4d746b6dd6b4ded597fd17c4",
+    "src/chronikwerk/static/admin/chronikwerk-mark.svg": "41a8ed46aa7e2270347a48d08285a1a9acb76abdc5ce17891b6d3d0aa1688d70",
+    "src/chronikwerk/templates/admin/base.html": "8f898470b6b83726e55ea043386c39d8877bfff7b6555803bbba00350dbc588f",
+    "src/chronikwerk/templates/admin/configuration.html": "878b9233220e51f316abb29459f45c998bb7905b06209c0d8badbe1375c62db9",
+    "src/chronikwerk/templates/admin/job_detail.html": "98504a947253946f63b2d30eade2a327a163d8ef1b535581e5cde73ff9e91a72",
+    "src/chronikwerk/templates/admin/jobs.html": "88b05ad0ff9845349c86ecea43488fa83c382f96cf735a727405a6ec56abbf42",
+    "src/chronikwerk/templates/admin/login.html": "5c9778b93534fd8446c41f0eb06735d8f8dfc0d74c302ac152d6d861d426b336",
+    "src/chronikwerk/templates/admin/overview.html": "5166dc4bda8a5ffe2a953e1b054d2c579261e4c337a88052ba02aee342ae2226",
+    "src/chronikwerk/templates/admin/revisions.html": "70597d909e82733ca296e07450703c8f03271dc84997e8d863a4ddb2bf5b4896"
+  },
+  "source_state": "unfrozen_local_candidate"
+}

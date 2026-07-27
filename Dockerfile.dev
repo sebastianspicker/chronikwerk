@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# Provide the full editable toolchain used by the source-mounted development service.
+FROM python:3.14.6-slim
 
 WORKDIR /app
 
@@ -18,9 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
 
-RUN python -m pip install --no-cache-dir -U pip \
-  && python -m pip install --no-cache-dir ".[dev,redis]"
+RUN python -m pip install --no-cache-dir ".[dev]"
 
 EXPOSE 8080
 
-CMD ["bash", "-lc", "PYTHONPATH=/app/src python -m zammad_pdf_archiver"]
+CMD ["chronikwerk"]

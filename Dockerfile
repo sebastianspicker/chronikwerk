@@ -1,4 +1,5 @@
-FROM python:3.12-slim AS builder
+# Build the signed-capable production service separately from its minimal runtime image.
+FROM python:3.14.6-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -11,14 +12,14 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
 
-RUN python -m pip install --no-cache-dir -U pip uv \
-  && uv pip install --no-cache-dir ".[redis]"
+RUN python -m pip install --no-cache-dir ".[signing]"
 
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14.6-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    XDG_CACHE_HOME=/tmp/.cache \
     PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
@@ -35,14 +36,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system --gid 10001 app \
-  && adduser --system --uid 10001 --ingroup app --home /nonexistent --shell /usr/sbin/nologin app
+  && adduser --system --uid 10001 --ingroup app --home /nonexistent --shell /usr/sbin/nologin app \
+  && install -d -m 0700 -o app -g app /var/lib/chronikwerk/admin
 
 COPY --from=builder --chown=app:app /opt/venv /opt/venv
 
-COPY --chown=app:app config/ /app/config/
+# Only the public template belongs in the image. Local config/config.yaml and
+# signing material are supplied at runtime and excluded from the build context.
+COPY --chown=app:app config/config.example.yaml /app/config/config.example.yaml
 
 USER app:app
 
 EXPOSE 8080
 
-CMD ["zammad-pdf-archiver"]
+CMD ["chronikwerk"]

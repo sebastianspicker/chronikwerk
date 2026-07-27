@@ -1,0 +1,14 @@
+{
+  "format": [
+    "python",
+    "typescript"
+  ],
+  "ignore": [
+    "**/build/**",
+    "**/node_modules/**",
+    "src/chronikwerk/static/admin/admin.js"
+  ],
+  "gitignore": true,
+  "mode": "mild",
+  "noTips": true
+}

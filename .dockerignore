@@ -7,11 +7,36 @@
 .vscode
 .idea
 .cursor
+.aider*
+.windsurf
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Hidden local state
+.*
 
 # Environment and secrets
 .env
 .env.*
-!.env.example
+
+# Local YAML configuration and signing material
+docker-compose.override.yml
+docker-compose.override.yaml
+config/config.yaml
+config/*.yaml
+!config/config.example.yaml
+config/*.yml
+!config/config.example.yml
+config/*.local.yaml
+config/*.local.yml
+config/*.override.yaml
+config/*.override.yml
+*.pfx
+*.p12
+*.pem
+*.key
 
 # Python artifacts
 __pycache__
@@ -23,6 +48,14 @@ build
 .eggs
 .mypy_cache
 .ruff_cache
+node_modules
+package.json
+package-lock.json
+playwright.config.ts
+tsconfig*.json
+frontend
+test-results
+playwright-report
 .pytest_cache
 htmlcov
 .coverage
@@ -35,7 +68,6 @@ venv
 docs
 
 # Tests (not needed in production image)
-test
 tests
 
 # Development files
@@ -50,6 +82,56 @@ Makefile
 # Pre-commit
 .pre-commit-config.yaml
 
-# Local audit / codex
+# Local tool state
+.local
+private
 .claude
 .codex
+.agents
+.serena
+.codacy
+audit
+plans
+prompts
+scratch
+conversations
+transcripts
+evaluations
+evals
+task-reports
+remediation
+reports
+secrets
+credentials
+admin-state
+state
+
+# Local data, reports, and backup material
+archive
+data
+exports
+output
+examples
+infra
+scripts
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.dump
+*.backup
+*.bak
+*.orig
+*.rej
+*.sarif
+*.pdf
+*.pdf.json
+*.p7s
+*.tsr
+codacy.json
+codacy-*.json
+RELEASE_EVIDENCE_*.md
+CODEBASE_AUDIT_REPORT_*.md
+REMEDIATION_PLAN_*.md

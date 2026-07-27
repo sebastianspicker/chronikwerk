@@ -11,13 +11,23 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+npm-debug.log*
+*.tsbuildinfo
 .coverage
+.coverage.*
 .coverage_html/
 coverage.xml
+junit*.xml
 htmlcov/
+.hypothesis/
 
 # Virtualenvs / tooling
 .venv/
+/.venv*/
 venv/
 pip-wheel-metadata/
 
@@ -25,17 +35,65 @@ pip-wheel-metadata/
 .env
 .env.*
 !.env.example
+/infra/systemd/*.env
 .envrc
 .python-version
 .direnv/
+.netrc
+.npmrc
+.pypirc
+secrets/
+credentials/
+
+# Local YAML configuration and signing material
+/docker-compose.override.yml
+/docker-compose.override.yaml
+config/config.yaml
+config/*.yaml
+!config/config.example.yaml
+config/*.yml
+!config/config.example.yml
+config/*.local.yaml
+config/*.local.yml
+config/*.override.yaml
+config/*.override.yml
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.csr
+*.jks
+*.keystore
 
 # OS
 .DS_Store
 Thumbs.db
+.AppleDouble
+._*
+.Spotlight-V100/
+*.swp
+*.swo
+*~
 
 # Local runtime artifacts
 *.log
 coverage.json
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.dump
+*.backup
+*.bak
+*.orig
+*.rej
+*.pdf
+*.pdf.json
+*.p7s
+*.tsr
 
 # IDEs
 .idea/
@@ -43,20 +101,64 @@ coverage.json
 .cursor/
 .kilo/
 
-# AI development artifacts (local use)
-audit/
-docs/audit/
-plans/
-progress.md
-.claude/
-.codex/
-.agents/
-.github/codex/
-.github/workflows/codex.yml
-AGENTS.md
-AUDIT.md
-HARNESS_PRINCIPLES.md
-code_review.md
-docs/agent/
-docs/source-audit/
-scripts/topology_inventory.sh
+# Local/private data
+/archive/
+/data/
+/exports/
+/output/
+/private/
+/admin-state/
+/state/
+
+# Local audit, analysis, and planning artifacts
+/audit/
+/docs/audit/
+/docs/archive/
+/docs/agent/
+/docs/source-audit/
+/plans/
+/prompts/
+/scratch/
+/conversations/
+/transcripts/
+/evaluations/
+/evals/
+/task-reports/
+/remediation/
+/reports/
+/.jscpd/
+/*.sarif
+/*-local.json
+/*-local.sarif
+/codacy.json
+/codacy-*.json
+/pip-audit-*.json
+/RELEASE_EVIDENCE_*.md
+/CODEBASE_AUDIT_REPORT_*.md
+/REMEDIATION_PLAN_*.md
+
+# Local development automation state
+/progress.md
+/PLAN.md
+/PROMPT.md
+/SCRATCH.md
+/TASKS.md
+/.aider*
+/.windsurf/
+/.claude/
+/.codex/
+/.codegraph/
+/.agents/
+/.impeccable/
+/.serena/
+/.codacy/
+/.github/codex/
+/.github/workflows/codex.yml
+/.github/copilot-instructions.md
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/AUDIT.md
+/HARNESS_PRINCIPLES.md
+/code_review.md
+/scripts/topology_inventory.sh

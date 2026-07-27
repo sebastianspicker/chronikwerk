@@ -1,14 +1,13 @@
 # =============================================================================
-# Production Docker Compose for zammad-pdf-archiver
+# Production Docker Compose for Chronikwerk
 # =============================================================================
 #
 # Usage:
-#   1. Copy .env.example to .env and edit with your values
-#   2. docker compose up -d --build
+#   1. Create an external env file and set CHRONIKWERK_ENV_FILE to its path
+#   2. docker compose --env-file "$CHRONIKWERK_ENV_FILE" up -d --build
 #   3. curl http://localhost:8080/healthz
 #
 # For dev/hot-reload, use: docker compose -f docker-compose.dev.yml up --build
-# For the self-contained demo: docker compose -f docker-compose.demo.yml up -d --build
 #
 # Note: the `env_file` object form below requires Docker Compose >= 2.24.0.
 # If your client reports parse errors around `path` or `required`, upgrade Compose.
@@ -16,34 +15,41 @@
 # See README.md and docs/deploy.md for full deployment instructions.
 # =============================================================================
 
+name: chronikwerk
+
 services:
-  zammad-pdf-archiver:
-    image: zammad-pdf-archiver:local
+  chronikwerk:
+    image: chronikwerk:local
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${PUBLISH_PORT:-${SERVER_PORT:-8080}}:${SERVER_PORT:-8080}"
+      # Loopback-only by default: terminate TLS at a trusted local reverse proxy.
+      - "${CHRONIKWERK_PUBLISH_HOST:-127.0.0.1}:${SERVER__PORT:-8080}:${SERVER__PORT:-8080}"
     env_file:
       # Docker Compose >= 2.24.0 required for `path` + `required`.
-      - path: "${ARCHIVER_ENV_FILE:-.env}"
+      - path: "${CHRONIKWERK_ENV_FILE:-.env}"
         required: false
     environment:
-      # Sane defaults -- override in .env or host environment.
-      SERVER_HOST: "${SERVER_HOST:-0.0.0.0}"
-      SERVER_PORT: "${SERVER_PORT:-8080}"
-      STORAGE_ROOT: "${STORAGE_ROOT:-/mnt/archive}"
-      SIGNING_PFX_PATH: "${SIGNING_PFX_PATH:-/run/secrets/signing.pfx}"
+      # Sane defaults -- override in the external env file or host environment.
+      SERVER__HOST: "${SERVER__HOST:-0.0.0.0}"
+      SERVER__PORT: "${SERVER__PORT:-8080}"
+      STORAGE__ROOT: "${STORAGE__ROOT:-/mnt/archive}"
+      SIGNING__PFX_PATH: "${SIGNING__PFX_PATH:-/run/secrets/signing.pfx}"
+      ADMIN__STATE_DIR: "${ADMIN__STATE_DIR:-/var/lib/chronikwerk/admin}"
     volumes:
-      # Config file (optional). Set CONFIG_PATH=./config/config.yaml in .env to enable.
+      # Config file (optional). Set CONFIG_PATH in the external env file to enable.
       - ./config:/app/config:ro
 
       # Archive storage: bind-mount the host path where PDFs should be written.
-      # The host path is typically a CIFS/SMB mount (see scripts/ops/mount-cifs.sh).
-      - "${STORAGE_ROOT:-/mnt/archive}:${STORAGE_ROOT:-/mnt/archive}:rw"
+      # The host path is typically a CIFS/SMB mount managed by the host OS.
+      - "${STORAGE__ROOT:-/mnt/archive}:${STORAGE__ROOT:-/mnt/archive}:rw"
 
-      # Signing material (uncomment when SIGNING_ENABLED=true):
-      # - /etc/zammad-archiver/secrets/signing.pfx:/run/secrets/signing.pfx:ro
+      # Persistent non-secret managed revisions. Required before enabling admin.
+      - admin-state:/var/lib/chronikwerk/admin:rw
+
+      # Signing material (uncomment when SIGNING__ENABLED=true):
+      # - /etc/chronikwerk/secrets/signing.pfx:/run/secrets/signing.pfx:ro
 
     # Security hardening: read-only root filesystem, no privilege escalation.
     read_only: true
@@ -57,10 +63,13 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os,urllib.request; p=os.getenv('SERVER_PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()\"",
+          "python -c \"import os,urllib.request; p=os.getenv('SERVER__PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()\"",
         ]
       interval: 10s
       timeout: 3s
       retries: 10
       start_period: 10s
     restart: unless-stopped
+
+volumes:
+  admin-state:

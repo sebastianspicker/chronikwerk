@@ -1,34 +1,72 @@
+"""Run the disposable Docker stack and prove its public ingest-to-archive path."""
+
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import shutil
 import socket
 import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-DEFAULT_PROJECT = "zammad-archiver-e2e"
-DEFAULT_COMPOSE_FILE = Path("docker-compose.demo.yml")
-DEFAULT_DATASET = Path("examples/demo/mock_university_dataset.json")
+if TYPE_CHECKING:
+    from .docker_api_checks import (
+        PROCESSED_STATUS,
+        E2EFailure,
+        assert_artifacts,
+        assert_expected_statuses,
+        assert_mock_state,
+        expected_processed_ticket_ids,
+        expected_statuses_from_dataset,
+        latest_status_by_ticket,
+    )
+else:
+    _checks = import_module(
+        f"{__package__}.docker_api_checks" if __package__ else "docker_api_checks"
+    )
+    PROCESSED_STATUS = _checks.PROCESSED_STATUS
+    E2EFailure = _checks.E2EFailure
+    assert_artifacts = _checks.assert_artifacts
+    assert_expected_statuses = _checks.assert_expected_statuses
+    assert_mock_state = _checks.assert_mock_state
+    expected_processed_ticket_ids = _checks.expected_processed_ticket_ids
+    expected_statuses_from_dataset = _checks.expected_statuses_from_dataset
+    latest_status_by_ticket = _checks.latest_status_by_ticket
+
+__all__ = [
+    "E2EFailure",
+    "PROCESSED_STATUS",
+    "assert_artifacts",
+    "assert_expected_statuses",
+    "assert_mock_state",
+    "expected_processed_ticket_ids",
+    "expected_statuses_from_dataset",
+    "latest_status_by_ticket",
+]
+
+DEFAULT_PROJECT = "chronikwerk-e2e"
+DEFAULT_COMPOSE_FILE = Path("infra/e2e/docker-compose.yml")
+DEFAULT_DATASET = Path("infra/e2e/dataset.json")
 DEFAULT_ARCHIVER_URL = "http://127.0.0.1:18080"
 DEFAULT_MOCK_URL = "http://127.0.0.1:18090"
-DEFAULT_ADMIN_TOKEN = "demo-admin-token"
-DEFAULT_REDIS_PORT = 16379
+DEFAULT_ADMIN_TOKEN = "e2e-retry-bearer-token-0123456789abcdef"
+DEFAULT_HISTORY_TOKEN = "e2e-history-bearer-token-0123456789abcdef"
+DEFAULT_HMAC_SECRET = "e2e-webhook-hmac-secret-0123456789abcdef"
 DEFAULT_TIMEOUT_SECONDS = 90.0
 RETRY_TICKET_ID = 1104
-PROCESSED_STATUS = "processed"
-
-
-class E2EFailure(RuntimeError):
-    """Raised when the Docker API E2E lane cannot prove the expected behavior."""
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse local-only stack coordinates and deterministic test credentials."""
     parser = argparse.ArgumentParser(description="Run Docker API E2E smoke test")
     parser.add_argument("--project", default=DEFAULT_PROJECT)
     parser.add_argument("--compose-file", type=Path, default=DEFAULT_COMPOSE_FILE)
@@ -36,7 +74,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--archiver-url", default=DEFAULT_ARCHIVER_URL)
     parser.add_argument("--mock-url", default=DEFAULT_MOCK_URL)
     parser.add_argument("--admin-token", default=DEFAULT_ADMIN_TOKEN)
-    parser.add_argument("--redis-port", type=int, default=DEFAULT_REDIS_PORT)
+    parser.add_argument("--history-token", default=DEFAULT_HISTORY_TOKEN)
+    parser.add_argument("--hmac-secret", default=DEFAULT_HMAC_SECRET)
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--keep-stack", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -44,6 +83,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _load_dataset(path: Path) -> dict[str, Any]:
+    """Load the fixture contract before Docker is allowed to mutate local state."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise E2EFailure("dataset phase: dataset must be a JSON object")
@@ -53,96 +93,22 @@ def _load_dataset(path: Path) -> dict[str, Any]:
     return payload
 
 
-def expected_statuses_from_dataset(dataset: dict[str, Any]) -> dict[int, str]:
-    seed_plan = dataset.get("seed_plan")
-    if not isinstance(seed_plan, list):
-        raise E2EFailure("dataset phase: dataset.seed_plan must be a list")
-
-    expected: dict[int, str] = {}
-    for index, item in enumerate(seed_plan):
-        if not isinstance(item, dict):
-            raise E2EFailure(f"dataset phase: seed_plan[{index}] must be an object")
-        try:
-            ticket_id = int(item["ticket_id"])
-            status = str(item["expected_status"]).strip()
-        except (KeyError, TypeError, ValueError) as exc:
-            raise E2EFailure(
-                f"dataset phase: seed_plan[{index}] must define ticket_id and expected_status"
-            ) from exc
-        if not status:
-            raise E2EFailure(f"dataset phase: seed_plan[{index}].expected_status is empty")
-        expected[ticket_id] = status
-    return expected
-
-
-def latest_status_by_ticket(history_payload: dict[str, Any]) -> dict[int, str]:
-    items = history_payload.get("items")
-    if not isinstance(items, list):
-        raise E2EFailure("history phase: admin history payload has no items list")
-
-    statuses: dict[int, str] = {}
-    # /admin/api/history returns newest first; keep the first status per ticket.
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        raw_ticket_id = item.get("ticket_id")
-        raw_status = item.get("status")
-        if raw_ticket_id is None or raw_status is None:
-            continue
-        try:
-            ticket_id = int(raw_ticket_id)
-        except (TypeError, ValueError):
-            continue
-        status = str(raw_status)
-        statuses.setdefault(ticket_id, status)
-    return statuses
-
-
-def assert_expected_statuses(
-    history_payload: dict[str, Any],
-    expected: dict[int, str],
-) -> None:
-    latest = latest_status_by_ticket(history_payload)
-    mismatches: list[str] = []
-    for ticket_id, expected_status in sorted(expected.items()):
-        actual = latest.get(ticket_id)
-        if actual != expected_status:
-            mismatches.append(
-                f"ticket {ticket_id}: expected {expected_status!r}, got {actual!r}"
-            )
-    if mismatches:
-        raise E2EFailure("history phase: terminal status mismatch: " + "; ".join(mismatches))
-
-
-def assert_artifacts(
-    artifact_payload: dict[str, Any],
-    expected_ticket_ids: set[int],
-) -> None:
-    pdf_count = int(artifact_payload.get("pdf_count", 0))
-    bad_pdfs = [str(path) for path in artifact_payload.get("bad_pdfs", [])]
-    sidecar_ticket_ids = {int(value) for value in artifact_payload.get("sidecar_ticket_ids", [])}
-    missing_sidecars = sorted(expected_ticket_ids - sidecar_ticket_ids)
-
-    if pdf_count < len(expected_ticket_ids):
-        raise E2EFailure(
-            f"artifact phase: expected at least {len(expected_ticket_ids)} PDFs, got {pdf_count}"
-        )
-    if bad_pdfs:
-        raise E2EFailure("artifact phase: PDFs without %PDF header: " + ", ".join(bad_pdfs))
-    if missing_sidecars:
-        raise E2EFailure(
-            "artifact phase: missing sidecars for ticket IDs "
-            + ", ".join(str(ticket_id) for ticket_id in missing_sidecars)
-        )
-
-
 def _compose_base(project: str, compose_file: Path) -> list[str]:
+    """Build the shared Compose prefix so setup and teardown target one project."""
     return ["docker", "compose", "-p", project, "-f", str(compose_file)]
 
 
 def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        list(args),
+    """Run only resolved Docker commands, keeping subprocess inputs constrained."""
+    command = list(args)
+    if not command or command[0] != "docker":
+        raise E2EFailure("internal error: only docker commands are supported")
+    docker = shutil.which("docker")
+    if docker is None:
+        raise E2EFailure("startup phase: docker executable not found")
+    # Docker path is resolved and args are fixed by this script.
+    return subprocess.run(  # nosec B603
+        [docker, *command[1:]],
         capture_output=True,
         text=True,
         check=False,
@@ -150,6 +116,7 @@ def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _run_checked(args: Sequence[str], *, phase: str) -> str:
+    """Convert Compose failures into phase-labelled E2E failures with useful output."""
     proc = _run_command(args)
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
@@ -160,6 +127,7 @@ def _run_checked(args: Sequence[str], *, phase: str) -> str:
 
 
 def _port_from_url(url: str) -> int:
+    """Resolve explicit and scheme-default ports before starting the stack."""
     parsed = httpx.URL(url)
     port = parsed.port
     if port is None:
@@ -168,6 +136,7 @@ def _port_from_url(url: str) -> int:
 
 
 def _assert_ports_available(urls: Sequence[str], *, extra_ports: Sequence[int] = ()) -> None:
+    """Fail before Compose startup rather than colliding with an unrelated service."""
     blocked: list[str] = []
     ports = [_port_from_url(url) for url in urls]
     ports.extend(int(port) for port in extra_ports)
@@ -183,6 +152,7 @@ def _assert_ports_available(urls: Sequence[str], *, extra_ports: Sequence[int] =
 
 
 def _wait_http_ok(client: httpx.Client, label: str, url: str, *, timeout_s: float) -> None:
+    """Poll a health endpoint until it proves readiness or the bounded deadline expires."""
     deadline = time.monotonic() + timeout_s
     last_error = ""
     while time.monotonic() < deadline:
@@ -191,7 +161,7 @@ def _wait_http_ok(client: httpx.Client, label: str, url: str, *, timeout_s: floa
             if response.status_code == 200:
                 return
             last_error = f"HTTP {response.status_code}"
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             last_error = str(exc)
         time.sleep(1.0)
     raise E2EFailure(f"readiness phase: {label} not ready at {url}: {last_error}")
@@ -204,11 +174,21 @@ def _request_json(
     *,
     headers: dict[str, str] | None = None,
     json_body: Any | None = None,
+    hmac_secret: str | None = None,
 ) -> tuple[int, Any]:
-    response = client.request(method, url, headers=headers, json=json_body)
+    """Issue JSON requests and attach the HMAC over the exact serialized bytes."""
+    request_headers = dict(headers or {})
+    content: bytes | None = None
+    if json_body is not None:
+        content = json.dumps(json_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        request_headers.setdefault("Content-Type", "application/json")
+        if hmac_secret is not None:
+            digest = hmac.new(hmac_secret.encode("utf-8"), content, hashlib.sha256).hexdigest()
+            request_headers["X-Hub-Signature"] = f"sha256={digest}"
+    response = client.request(method, url, headers=request_headers, content=content)
     try:
         return response.status_code, response.json()
-    except Exception:
+    except json.JSONDecodeError:
         return response.status_code, {"raw": response.text}
 
 
@@ -216,18 +196,19 @@ def _wait_for_statuses(
     client: httpx.Client,
     *,
     archiver_url: str,
-    admin_token: str,
+    history_token: str,
     expected: dict[int, str],
     timeout_s: float,
 ) -> dict[str, Any]:
+    """Poll volatile history until its terminal states satisfy the fixture oracle."""
     deadline = time.monotonic() + timeout_s
     last_error = ""
     while time.monotonic() < deadline:
         status_code, payload = _request_json(
             client,
             "GET",
-            f"{archiver_url}/admin/api/history?limit=200",
-            headers={"Authorization": f"Bearer {admin_token}"},
+            f"{archiver_url}/jobs/history?limit=200",
+            headers={"Authorization": f"Bearer {history_token}"},
         )
         if status_code == 200 and isinstance(payload, dict):
             try:
@@ -247,8 +228,10 @@ def _seed_dataset(
     archiver_url: str,
     mock_url: str,
     dataset: dict[str, Any],
+    hmac_secret: str,
 ) -> None:
-    reset_code, reset_payload = _request_json(client, "POST", f"{mock_url}/__demo/reset")
+    """Reset the double then submit every signed webhook delivery in the seed plan."""
+    reset_code, reset_payload = _request_json(client, "POST", f"{mock_url}/__e2e/reset")
     if reset_code != 200:
         raise E2EFailure(f"ingest phase: mock reset failed ({reset_code}): {reset_payload}")
 
@@ -263,6 +246,7 @@ def _seed_dataset(
             f"{archiver_url}/ingest",
             headers={"X-Zammad-Delivery": delivery_id},
             json_body={"ticket": {"id": ticket_id}, "user": {"login": user_login}},
+            hmac_secret=hmac_secret,
         )
         if status_code != 202:
             raise E2EFailure(
@@ -277,26 +261,19 @@ def _retry_ticket(
     admin_token: str,
     ticket_id: int,
 ) -> None:
+    """Exercise the protected retry endpoint for the intentionally skipped fixture."""
     status_code, payload = _request_json(
         client,
         "POST",
-        f"{archiver_url}/admin/api/retry/{ticket_id}",
+        f"{archiver_url}/retry/{ticket_id}",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    if status_code != 200 or not isinstance(payload, dict) or payload.get("status") != "accepted":
+    if status_code != 202 or not isinstance(payload, dict) or payload.get("status") != "accepted":
         raise E2EFailure(f"admin retry phase: HTTP {status_code}: {payload}")
 
 
-def expected_processed_ticket_ids(expected_statuses: dict[int, str]) -> set[int]:
-    return {
-        ticket_id
-        for ticket_id, status in expected_statuses.items()
-        if status == PROCESSED_STATUS
-    }
-
-
-def _inspect_artifacts(project: str, compose_file: Path) -> dict[str, Any]:
-    inspector = r"""
+_ARTIFACT_INSPECTOR_SCRIPT = r"""
+import hashlib
 import json
 from pathlib import Path
 
@@ -304,31 +281,42 @@ root = Path("/tmp/archive")
 pdfs = sorted(root.rglob("*.pdf"))
 sidecars = sorted(root.rglob("*.pdf.json"))
 bad_pdfs = [str(path) for path in pdfs if not path.read_bytes().startswith(b"%PDF")]
-ticket_ids = []
+artifacts = []
 for path in sidecars:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        raw_ticket_id = int(payload["ticket_id"])
+        pdf_path = Path(str(path)[:-5])
+        pdf_sha256 = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+        artifacts.append({
+            "ticket_id": raw_ticket_id,
+            "pdf": str(pdf_path),
+            "sidecar": str(path),
+            "sha256": payload.get("sha256"),
+            "pdf_sha256": pdf_sha256,
+        })
+    except (KeyError, ValueError, json.JSONDecodeError, OSError, UnicodeDecodeError):
         continue
-    raw_ticket_id = payload.get("ticket_id")
-    if raw_ticket_id is not None:
-        ticket_ids.append(int(raw_ticket_id))
 print(json.dumps({
     "pdf_count": len(pdfs),
     "sidecar_count": len(sidecars),
     "bad_pdfs": bad_pdfs,
-    "sidecar_ticket_ids": sorted(set(ticket_ids)),
+    "artifacts": artifacts,
 }, sort_keys=True))
 """
+
+
+def _inspect_artifacts(project: str, compose_file: Path) -> dict[str, Any]:
+    """Inspect files inside the archiver container to avoid host-volume assumptions."""
     stdout = _run_checked(
         [
             *_compose_base(project, compose_file),
             "exec",
             "-T",
-            "archiver-demo",
+            "archiver",
             "python",
             "-c",
-            inspector,
+            _ARTIFACT_INSPECTOR_SCRIPT,
         ],
         phase="artifact",
     )
@@ -342,6 +330,7 @@ print(json.dumps({
 
 
 def _print_dry_run(args: argparse.Namespace, dataset: dict[str, Any]) -> int:
+    """Describe the destructive Docker sequence without starting any containers."""
     expected = expected_statuses_from_dataset(dataset)
     print("DRY RUN: Docker API E2E smoke")
     print(f"- Compose project: {args.project}")
@@ -349,12 +338,11 @@ def _print_dry_run(args: argparse.Namespace, dataset: dict[str, Any]) -> int:
     print(f"- Start: docker compose -p {args.project} -f {args.compose_file} up -d --build")
     print(f"- Wait for: GET {args.mock_url}/healthz")
     print(f"- Wait for: GET {args.archiver_url}/healthz")
-    print(f"- Required Redis port: 127.0.0.1:{args.redis_port}")
-    print(f"- Reset mock: POST {args.mock_url}/__demo/reset")
+    print(f"- Reset mock: POST {args.mock_url}/__e2e/reset")
     for ticket_id, status in sorted(expected.items()):
         print(f"- POST /ingest ticket_id={ticket_id} expected={status}")
-    print(f"- POST /admin/api/retry/{RETRY_TICKET_ID} expected={PROCESSED_STATUS}")
-    print("- Inspect /tmp/archive in archiver-demo for PDFs and sidecars")
+    print(f"- POST /retry/{RETRY_TICKET_ID} expected={PROCESSED_STATUS}")
+    print("- Inspect /tmp/archive in archiver for valid PDFs, sidecars, and checksums")
     print(
         f"- Tear down unless --keep-stack: "
         f"docker compose -p {args.project} down -v --remove-orphans"
@@ -362,7 +350,106 @@ def _print_dry_run(args: argparse.Namespace, dataset: dict[str, Any]) -> int:
     return 0
 
 
+def _prepare_stack(args: argparse.Namespace, compose_file: Path) -> list[str]:
+    """Remove a stale project and reserve ports before the real startup phase."""
+    base = _compose_base(args.project, compose_file)
+    _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
+    _assert_ports_available(
+        [args.archiver_url, args.mock_url],
+    )
+    return base
+
+
+def _wait_for_stack_ready(args: argparse.Namespace, client: httpx.Client) -> None:
+    """Require both the mock upstream and archiver health endpoints before ingest."""
+    _wait_http_ok(
+        client,
+        "mock-zammad",
+        f"{args.mock_url}/healthz",
+        timeout_s=args.timeout_seconds,
+    )
+    _wait_http_ok(
+        client,
+        "archiver",
+        f"{args.archiver_url}/healthz",
+        timeout_s=args.timeout_seconds,
+    )
+
+
+def _exercise_ingest_flow(
+    args: argparse.Namespace,
+    client: httpx.Client,
+    *,
+    dataset: dict[str, Any],
+    expected: dict[int, str],
+) -> dict[int, str]:
+    """Run initial deliveries, then retry the planned skipped ticket to completion."""
+    print("E2E: seeding ingest requests")
+    _seed_dataset(
+        client,
+        archiver_url=args.archiver_url,
+        mock_url=args.mock_url,
+        dataset=dataset,
+        hmac_secret=args.hmac_secret,
+    )
+
+    print("E2E: waiting for initial terminal statuses")
+    _wait_for_statuses(
+        client,
+        archiver_url=args.archiver_url,
+        history_token=args.history_token,
+        expected=expected,
+        timeout_s=args.timeout_seconds,
+    )
+
+    print(f"E2E: retrying skipped ticket {RETRY_TICKET_ID}")
+    _retry_ticket(
+        client,
+        archiver_url=args.archiver_url,
+        admin_token=args.admin_token,
+        ticket_id=RETRY_TICKET_ID,
+    )
+    expected_after_retry = dict(expected)
+    expected_after_retry[RETRY_TICKET_ID] = PROCESSED_STATUS
+    _wait_for_statuses(
+        client,
+        archiver_url=args.archiver_url,
+        history_token=args.history_token,
+        expected=expected_after_retry,
+        timeout_s=args.timeout_seconds,
+    )
+    return expected_after_retry
+
+
+def _verify_artifacts(
+    args: argparse.Namespace,
+    *,
+    compose_file: Path,
+    expected_after_retry: dict[int, str],
+) -> None:
+    """Validate container-side PDF and sidecar evidence after processing completes."""
+    print("E2E: inspecting archived artifacts")
+    artifacts = _inspect_artifacts(args.project, compose_file)
+    assert_artifacts(artifacts, expected_processed_ticket_ids(expected_after_retry))
+
+
+def _verify_mock_state(
+    client: httpx.Client,
+    *,
+    mock_url: str,
+    expected_processed: set[int],
+) -> None:
+    """Read the mock's state endpoint and assert Zammad-facing side effects."""
+    status_code, payload = _request_json(client, "GET", f"{mock_url}/__e2e/state")
+    if status_code != 200 or not isinstance(payload, dict):
+        raise E2EFailure(
+            f"mock verification phase: invalid state response: {status_code}: {payload}"
+        )
+    assert_mock_state(payload, expected_processed)
+
+
 def run(args: argparse.Namespace) -> int:
+    """Coordinate the bounded E2E lifecycle and always clean up by default."""
     compose_file = args.compose_file.expanduser().resolve()
     dataset = _load_dataset(args.dataset.expanduser().resolve())
     expected = expected_statuses_from_dataset(dataset)
@@ -370,68 +457,31 @@ def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         return _print_dry_run(args, dataset)
 
-    base = _compose_base(args.project, compose_file)
-    _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
-    _assert_ports_available(
-        [args.archiver_url, args.mock_url],
-        extra_ports=[args.redis_port],
-    )
+    base = _prepare_stack(args, compose_file)
 
     try:
-        print("E2E: starting Docker demo stack")
+        print("E2E: starting Docker test stack")
         _run_checked([*base, "up", "-d", "--build"], phase="startup")
 
         with httpx.Client(timeout=20.0) as client:
-            _wait_http_ok(
+            _wait_for_stack_ready(args, client)
+            expected_after_retry = _exercise_ingest_flow(
+                args,
                 client,
-                "mock-zammad",
-                f"{args.mock_url}/healthz",
-                timeout_s=args.timeout_seconds,
-            )
-            _wait_http_ok(
-                client,
-                "archiver",
-                f"{args.archiver_url}/healthz",
-                timeout_s=args.timeout_seconds,
-            )
-
-            print("E2E: seeding ingest requests")
-            _seed_dataset(
-                client,
-                archiver_url=args.archiver_url,
-                mock_url=args.mock_url,
                 dataset=dataset,
-            )
-
-            print("E2E: waiting for initial terminal statuses")
-            _wait_for_statuses(
-                client,
-                archiver_url=args.archiver_url,
-                admin_token=args.admin_token,
                 expected=expected,
-                timeout_s=args.timeout_seconds,
+            )
+            _verify_mock_state(
+                client,
+                mock_url=args.mock_url,
+                expected_processed=expected_processed_ticket_ids(expected_after_retry),
             )
 
-            print(f"E2E: retrying skipped ticket {RETRY_TICKET_ID}")
-            _retry_ticket(
-                client,
-                archiver_url=args.archiver_url,
-                admin_token=args.admin_token,
-                ticket_id=RETRY_TICKET_ID,
-            )
-            expected_after_retry = dict(expected)
-            expected_after_retry[RETRY_TICKET_ID] = PROCESSED_STATUS
-            _wait_for_statuses(
-                client,
-                archiver_url=args.archiver_url,
-                admin_token=args.admin_token,
-                expected=expected_after_retry,
-                timeout_s=args.timeout_seconds,
-            )
-
-        print("E2E: inspecting archived artifacts")
-        artifacts = _inspect_artifacts(args.project, compose_file)
-        assert_artifacts(artifacts, expected_processed_ticket_ids(expected_after_retry))
+        _verify_artifacts(
+            args,
+            compose_file=compose_file,
+            expected_after_retry=expected_after_retry,
+        )
         print("E2E: PASS")
         return 0
     finally:
@@ -442,6 +492,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """Translate expected E2E assertion failures into a stable CLI exit status."""
     args = _parse_args()
     try:
         return run(args)

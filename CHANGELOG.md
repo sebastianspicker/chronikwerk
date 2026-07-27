@@ -2,10 +2,97 @@
 
 All notable changes to this project are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Python package versions use PEP 440 (for example, `0.3.0a1`), while Git prerelease
+tags use the public form `v0.3.0-alpha.1`.
 
 ## [Unreleased]
+
+## [0.3.0-alpha.1]
+
+### Changed
+- Rebrand public documentation, GitHub links, deployment identifiers, and container
+  operator commands as Chronikwerk. Existing installations require the documented
+  stopped-service manual state copy; no automatic migration runs.
+- Raise the supported Python baseline to 3.14 and pin CI and container builds to
+  Python 3.14.6.
+- Move the administration browser source and Playwright configuration/tests to
+  TypeScript 7.0.2 with a complete npm lock while continuing to ship a compiled
+  JavaScript asset.
+- Replace the Python-only C901 release check with repository-owned complexity and
+  duplication gates spanning shipped Python, TypeScript, and CI/E2E helpers.
+- Align the public alpha documentation, GitHub community files, ignore policy, and
+  administration screenshot provenance with the current implementation.
+- Rename the systemd environment template to `chronikwerk.env.example`, keep the
+  operator-edited form ignored, and declare the validated Linux package target.
+- Freeze the supported deployment/runtime contract: one process-local service,
+  attachment metadata only, sanitized rich HTML, SHA-256-only webhook HMAC,
+  authenticated job history, and one production image with signing support.
+- Document that graceful shutdown drains admitted work while a process crash may
+  lose accepted background work.
+- Replace the historical dashboard with a disabled-by-default German/English admin
+  application for operational status, volatile job history, acknowledged retries,
+  and staged non-secret configuration revisions.
+- Render one localized archival PDF layout with semantic headings, explicit article
+  coverage, A4-safe long-content handling, DejaVu Sans, bookmarks, and tagged
+  WeasyPrint `pdf/ua-1` output.
+
+### Added
+- Public alpha documentation, current administration screenshots, and a tag-gated
+  prerelease workflow that validates alpha, beta, and release-candidate versions.
+- Process-local admin sessions with idle and absolute expiry, strict cookies, CSRF,
+  CSP, no-store responses, and inline reauthentication that preserves non-secret
+  configuration drafts.
+- Atomic managed-configuration overlays with optimistic concurrency, bounded revision
+  history, external-restart truthfulness, and offline list/rollback commands.
+- Playwright/axe, production-image PDF, and pinned veraPDF validation gates.
+
+### Removed
+- Redis queue and DLQ behavior, the historical decorative dashboard, alternate PDF
+  template variants, demo assets, and obsolete local operations helpers.
+
+### Security
+- Require `cryptography>=48.0.1` so signing installations do not use wheels affected
+  by GHSA-537c-gmf6-5ccf.
+- Bind strict-mode webhook signatures to the normalized delivery ID, bound the
+  process-local replay set, and keep legacy body-only signatures in non-strict mode.
+- Default production Compose publishing to loopback, make deep health probes
+  single-flight, and fail closed when metrics authentication is misconfigured.
+- Reject unsafe managed-state directory ownership/permissions, symlinked ancestors,
+  and post-initialization path substitution; fully redact escaped quoted and compound
+  Python/JSON credential representations.
+- Keep the GitHub Docker workflow build-only, without registry credentials,
+  package-write permission, or image publication.
+
+### Fixed
+- Reduce high-complexity request, ingest, administration, managed-configuration,
+  and E2E control flow without changing their public contracts.
+- Consolidate stable runtime and test helpers and remove code proven unreachable
+  after the modernization.
+- Reject batch admission once shutdown begins, honor the effective private-network
+  policy for injected Zammad test runtimes, and keep retained managed-revision
+  chains valid after pruning.
+- Isolate end-to-end smoke settings from developer process and dotenv configuration
+  so acknowledgement and idempotency assertions remain deterministic.
+- Keep runtime status, admin pages, audit sidecars, and ticket notes on the same version
+  as Python package metadata instead of reading stale editable-install metadata.
+- Correct browser-test TypeScript narrowing and resolve macOS temporary paths before
+  managed-state validation.
+- Accept dated Keep-a-Changelog headings in prerelease validation, preserve local
+  virtual environments during maintenance, and keep browser/static-analysis fixtures on the
+  supported Python and secret-validation contracts.
+- Keep synchronous filesystem/signing work attached across repeated task
+  cancellation until its side effects finish.
+- Reload preserved-mtime PFX rotations and record audit fingerprints from the
+  exact signer used for the stored PDF; reject cached certificates immediately
+  after their validity window ends.
+- Disambiguate lossy username, archive-segment, and ticket-number sanitization
+  so distinct raw values cannot overwrite the same archive location.
+- Serialize native WeasyPrint rendering across worker threads to prevent
+  process-level crashes during concurrent batch jobs.
+- Abort revision pruning on unsafe or failed history reads, preserve primary
+  transaction errors across cleanup failures, and report committed stages as
+  successful when only retention cleanup fails.
 
 ## [0.2.0-rc.2] - 2026-04-09
 
@@ -65,4 +152,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic storage writes for PDFs and audit sidecar JSON.
 - Ops scripts for signature verification and CIFS mount helpers.
 - Unit and integration test suite.
-- Complete English documentation in `docs/`.
+- Initial English operator and architecture documentation in `docs/`.

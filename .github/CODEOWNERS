@@ -1,12 +1,21 @@
 # Require review for CI/CD and security-sensitive paths.
-# Adjust the team/user handles to match your GitHub org.
 
 /.github/                @sebastianspicker
 /.dockerignore           @sebastianspicker
+/.gitignore              @sebastianspicker
+/.codacy.yaml            @sebastianspicker
+/.pre-commit-config.yaml @sebastianspicker
+/CHANGELOG.md            @sebastianspicker
+/CODE_OF_CONDUCT.md      @sebastianspicker
+/CONTRIBUTING.md         @sebastianspicker
 /Dockerfile              @sebastianspicker
 /Dockerfile.dev          @sebastianspicker
 /docker-compose*.yml     @sebastianspicker
+/package-lock.json       @sebastianspicker
+/package.json            @sebastianspicker
 /pyproject.toml          @sebastianspicker
-/.pre-commit-config.yaml @sebastianspicker
+/RELEASE_STATUS.md       @sebastianspicker
 /SECURITY.md             @sebastianspicker
 /docs/09-security.md     @sebastianspicker
+/docs/release-checklist.md @sebastianspicker
+/scripts/ci/             @sebastianspicker

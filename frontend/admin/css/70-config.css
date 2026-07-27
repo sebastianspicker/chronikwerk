@@ -1,0 +1,140 @@
+/* Configuration workspace + revision audit */
+.config-group {
+  background: var(--surface);
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-tight);
+  margin: 18px 0 0;
+  padding: 0;
+}
+
+.config-group legend {
+  align-items: baseline;
+  background: var(--ink-50);
+  border-bottom: 1px solid var(--ink-100);
+  display: flex;
+  gap: 12px;
+  padding: 14px 18px;
+  width: 100%;
+}
+
+.config-group legend span {
+  font-size: 0.95rem;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.config-group legend small {
+  color: var(--ink-500);
+  font-family: var(--mono);
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-left: auto;
+  text-transform: uppercase;
+}
+
+.config-field {
+  align-items: start;
+  border-bottom: 1px solid var(--ink-100);
+  display: grid;
+  gap: 10px 24px;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(280px, 1.1fr);
+  padding: 14px 18px;
+}
+
+.config-field:last-child {
+  border-bottom: 0;
+}
+
+.field-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: var(--control-height);
+}
+
+.field-heading label {
+  min-width: 0;
+}
+
+.config-field > input,
+.config-field > select {
+  width: 100%;
+}
+
+.config-field .field-error {
+  grid-column: 2;
+}
+
+.config-actions {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius);
+  bottom: 10px;
+  box-shadow: var(--shadow-tight);
+  display: grid;
+  gap: 12px 20px;
+  grid-template-columns: minmax(190px, 0.5fr) minmax(340px, 1.5fr) auto;
+  margin: 24px 0;
+  padding: 14px 16px;
+  position: sticky;
+  z-index: 10;
+}
+
+.change-count {
+  color: var(--ink-500);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  margin: 0;
+}
+
+.config-actions .checkbox {
+  margin: 0;
+}
+
+.form-error-summary:focus {
+  outline-color: var(--fault);
+}
+
+.review-panel {
+  background: var(--surface);
+  border: 1px solid var(--ink-100);
+  border-radius: var(--radius);
+  border-top: 5px solid var(--process);
+  box-shadow: var(--shadow-tight);
+  margin-top: 34px;
+  padding: 22px;
+}
+
+.review-panel h2 {
+  margin-bottom: 8px;
+}
+
+.review-panel .table-region {
+  margin-block: 16px;
+}
+
+/* Revision audit */
+.route-page--audit .table-region {
+  margin-top: 24px;
+}
+
+.route-page--audit table {
+  min-width: 1040px;
+}
+
+.route-page--audit td:last-child {
+  min-width: 300px;
+}
+
+.route-page--audit td form {
+  display: grid;
+  gap: 12px;
+}
+
+.route-page--audit td .button {
+  justify-self: start;
+}

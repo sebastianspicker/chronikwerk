@@ -1,0 +1,39 @@
+# Run the production image against a deterministic local Zammad double for release E2E checks.
+services:
+  archiver:
+    image: chronikwerk:e2e
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "18080:8080"
+    environment:
+      SERVER__HOST: 0.0.0.0
+      SERVER__PORT: 8080
+      ZAMMAD__BASE_URL: http://mock:9090
+      ZAMMAD__API_TOKEN: e2e-token
+      ZAMMAD__WEBHOOK_HMAC_SECRET: e2e-webhook-hmac-secret-0123456789abcdef
+      STORAGE__ROOT: /tmp/archive
+      HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP: "true"
+      HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS: "true"
+      OBSERVABILITY__HISTORY_ENABLED: "true"
+      OBSERVABILITY__HISTORY_BEARER_TOKEN: e2e-history-bearer-token-0123456789abcdef
+      RETRY_BEARER_TOKEN: e2e-retry-bearer-token-0123456789abcdef
+    tmpfs:
+      - /tmp/archive:uid=10001,gid=10001,mode=0750
+    depends_on:
+      mock:
+        condition: service_healthy
+
+  mock:
+    image: chronikwerk:e2e
+    command: ["uvicorn", "mock_zammad:app", "--host", "0.0.0.0", "--port", "9090"]
+    ports:
+      - "18090:9090"
+    volumes:
+      - ./mock_zammad.py:/app/mock_zammad.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz')"]
+      interval: 2s
+      timeout: 2s
+      retries: 20

@@ -1,41 +1,125 @@
 # Contributing
 
-Thanks for contributing to **zammad-pdf-archiver**.
+## Scope
 
-## Development workflow
+Keep each change focused on one behavior or documentation contract. Preserve the
+single-process alpha model unless the change explicitly replaces it and includes migration,
+failure, and deployment tests.
 
-1. Create a fork and a feature branch.
-2. Implement the change (keep PRs small and focused).
-3. Run local checks:
-   - `make lint`
-   - `make test`
-4. Open a pull request with:
-   - a clear problem statement / intent
-   - any operational impact documented in `docs/08-operations.md` and/or `docs/09-security.md`
+Changes that affect operation, configuration, storage, authentication, PDF output, or the
+Zammad workflow must update the corresponding reference under `docs/`.
 
-## Code style
+## Development setup
 
-- Python: `>=3.12` (see `pyproject.toml`)
-- Linting: `ruff`
-- Typing: `mypy` (optional but recommended for non-trivial changes)
+Requirements:
 
-## Releases
+- Python 3.14 or newer
+- Node.js 24 through 26
+- WeasyPrint system libraries
+- Docker for image and end-to-end checks
 
-Goal: reproducible releases (sdist/wheel) and optionally Docker images.
+Create the development environment:
 
-See `docs/release-checklist.md` for the step-by-step release procedure.
+```bash
+python3.14 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[dev]"
+npm ci --ignore-scripts
+```
 
-1. Local checks:
-   - `make lint`
-   - `make test`
-   - optional: `mypy src`
-2. Version + changelog:
-   - update `CHANGELOG.md`
-   - update version in `pyproject.toml`
-3. Tag:
-   - `git tag vX.Y.Z`
-   - `git push origin vX.Y.Z`
-4. CI artifacts:
-   - CI builds `sdist` + `wheel` as workflow artifacts.
-   - Docker builds an image on pushes to `main` and tags `v*`.
-     - Pushing to GHCR is optional and only happens if secrets are configured.
+CI and the container images currently use Python 3.14.6. CI uses Node.js 24.18.0.
+
+## Workflow
+
+1. Reproduce the behavior or identify the source contract.
+2. Make the smallest change that fixes the underlying cause.
+3. Add or update tests at the narrowest useful layer.
+4. Run the focused test while editing.
+5. Run `make PYTHON=.venv/bin/python verify-core`.
+6. Run the additional checks required by the changed surface.
+7. Update public documentation when a command, setting, endpoint, path, or operational
+   behavior changes.
+
+Use the Makefile targets rather than duplicating their command lines in new scripts.
+
+## Code and documentation checks
+
+| Check | Command |
+| --- | --- |
+| Ruff lint | `make PYTHON=.venv/bin/python lint` |
+| Ruff formatting | `make PYTHON=.venv/bin/python format` |
+| Mypy | `make PYTHON=.venv/bin/python typecheck` |
+| Static and unit tests | `make PYTHON=.venv/bin/python test-fast` |
+| All Python tests | `make PYTHON=.venv/bin/python test-all` |
+| Coverage threshold | `make PYTHON=.venv/bin/python coverage-test` |
+| Complexity limits | `make complexity` |
+| Duplication limits | `make duplication` |
+| Administration assets | `make frontend-check` |
+| Documentation integrity | `make docs-check` |
+| Maintained-code documentation | `make code-docs-check` |
+| Non-container gate | `make PYTHON=.venv/bin/python verify-core` |
+| Container and end-to-end gate | `make PYTHON=.venv/bin/python verify` |
+
+`make format` changes Python files. Run it only when the resulting formatting diff belongs
+to the change.
+
+Browser work requires:
+
+```bash
+make browser-setup
+make test-browser
+```
+
+PDF structure work requires representative signed and unsigned files:
+
+```bash
+make pdf-ua-check PDF_FILES="unsigned.pdf signed.pdf"
+```
+
+The PDF check requires veraPDF 1.30.1. Passing the repository checks does not replace manual
+assistive-technology review or validation against the deployment filesystem and Zammad
+instance.
+
+## Pull requests
+
+A pull request should state:
+
+- the problem and the behavior being changed;
+- the affected runtime, configuration, storage, or security boundary;
+- tests and checks run, with exact results;
+- checks not run and the reason;
+- migration or rollback steps when persistent data or configuration changes;
+- screenshots only when they come from the maintained capture command.
+
+Do not include unrelated formatting or refactoring. Do not weaken validation, security
+defaults, or failure handling to make a test pass.
+
+## Sensitive and local files
+
+Never commit:
+
+- `.env` files or local YAML overrides;
+- API, HMAC, bearer, PFX, or timestamp credentials;
+- real ticket payloads, PDFs, sidecars, or production logs;
+- administration state and configuration revisions;
+- local reports, browser profiles, virtual environments, caches, or test output.
+
+Use placeholders in examples. Keep operational evidence outside tracked public
+documentation.
+
+## Release changes
+
+Release work follows [docs/release-checklist.md](docs/release-checklist.md). The required
+local baseline is:
+
+```bash
+make verify
+make code-docs-check
+make test-browser
+make pdf-ua-check PDF_FILES="unsigned.pdf signed.pdf"
+```
+
+The current workflows build Python distributions and a local container image. The Docker
+workflow does not publish to a registry.
+
+Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

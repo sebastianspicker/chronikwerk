@@ -1,112 +1,148 @@
 # 09 - Security
 
-This document summarizes the service threat model and implemented mitigations.
+Security summary for the FastAPI webhook service.
 
-## 1. Trust Boundaries
+## Trust Boundaries
 
 ```mermaid
 flowchart LR
   Z["Zammad"] -->|"Webhook"| I["Ingress: /ingest"]
-  OP["Operators"] -->|"Config + secrets"| I
-  A["Admin / Ops clients"] -->|"Bearer auth: /admin/api/* + /jobs/{ticket_id} + /jobs/queue/stats + /jobs/history + /jobs/queue/dlq/drain"| I
+  OP["Operators"] -->|"Session + CSRF"| A["Optional /admin control plane"]
+  DEP["Deployment environment"] -->|"Config + secrets"| I
+  A -->|"Non-secret staged overlay"| I
   I -->|"API token"| ZA["Zammad API"]
-  I -->|"Queue + history streams"| R["Redis (optional)"]
   I -->|"Write output"| FS["Archive filesystem"]
   I -->|"Optional RFC3161"| TSA["TSA endpoint"]
 ```
 
-## 2. Security-Relevant Assets
+## Security-Relevant Assets
 
-- webhook secret (`WEBHOOK_HMAC_SECRET` / legacy `WEBHOOK_SHARED_SECRET`)
-- Zammad API token (`ZAMMAD_API_TOKEN`)
-- signing material (`SIGNING_PFX_PATH`, `SIGNING_PFX_PASSWORD`)
-- TSA credentials (`TSA_USER`, `TSA_PASS`)
-- archive outputs (PDFs + sidecar checksums)
+- `ZAMMAD__WEBHOOK_HMAC_SECRET`
+- `ZAMMAD__API_TOKEN` (portable alias: `ZAMMAD_API_TOKEN`)
+- `RETRY_BEARER_TOKEN`
+- `OBSERVABILITY__METRICS_BEARER_TOKEN`
+- `OBSERVABILITY__HISTORY_BEARER_TOKEN`
+- `SIGNING__PFX_PATH` and `SIGNING__PFX_PASSWORD`
+- `SIGNING__TIMESTAMP__RFC3161__USER`
+- `SIGNING__TIMESTAMP__RFC3161__PASSWORD`
+- `ADMIN__ACCESS_TOKEN`
+- archived PDFs and audit sidecars
 
-## 3. Threats and Mitigations
+## Implemented Mitigations
 
-### Threat: forged webhook requests
+### Forged Webhooks
 
-Mitigations:
-- HMAC verification (`X-Hub-Signature: sha1=<hex>` or `sha256=<hex>`) using `hmac.compare_digest`
-- fail-closed default when no webhook secret is configured
-- unsigned mode requires explicit opt-in
+- HMAC verification for `/ingest` and `/ingest/batch`.
+- Startup validation requires a random, non-placeholder webhook secret containing at
+  least 32 characters. There is no supported unsigned mode.
+- The middleware retains a defensive fail-closed `503` response if an application is
+  constructed without validated settings.
+- SHA-256 HMAC signatures are required; SHA-1 is not accepted.
 
-### Threat: replayed/duplicate webhook delivery
+### Replay and Duplicate Delivery
 
-Mitigations:
-- in-memory TTL dedupe keyed by `X-Zammad-Delivery`
-- optional strict delivery ID requirement
+- Best-effort in-memory dedupe keyed by `X-Zammad-Delivery`, with a fail-closed
+  10,000-entry process-local bound.
+- Optional strict delivery-ID mode authenticates the normalized delivery ID as
+  part of the SHA-256 HMAC input, so a captured body/signature cannot be replayed
+  under a fresh ID. The canonical byte format is documented in `docs/api.md`.
 
-Residual risk:
-- dedupe state is process-local and reset on restart
+Residual risk: dedupe state is process-local and resets on restart.
 
-### Threat: path traversal or arbitrary file write
+### Path Traversal and Unsafe Writes
 
-Mitigations:
-- strict segment validation and deterministic sanitization
-- root confinement (`ensure_within_root`)
-- symlink traversal rejection under storage root
-- atomic replace writes
+- Path segment validation and deterministic sanitization.
+- Root confinement under `storage.root`.
+- Symlink rejection under the storage root.
+- Atomic PDF and sidecar writes.
 
-### Threat: secret leakage in logs or ticket notes
+Residual risk: filesystem behavior still depends on the mounted storage and OS.
 
-Mitigations:
-- recursive event redaction for secret-like keys and secret objects
-- free-text secret scrubbing in exception messages
-- ticket error notes use scrubbed exception text
+### Secret Leakage
 
-Redaction is best-effort (known keys and common patterns). Operators should avoid logging full config or raw exception traces in production; custom secret key names may need to be added to the redaction allowlist.
+- Structured events and exception messages are scrubbed for known secret-like
+  values, including compound client credentials and escaped quoted values.
+- Ticket error notes use scrubbed exception text.
 
-### Threat: request flood / oversized payload DoS
+Residual risk: redaction is best-effort. Do not log raw config or full exception
+objects in production.
 
-Mitigations:
-- body size limit middleware (`MAX_BODY_BYTES`)
-- token-bucket rate limiting (`RATE_LIMIT_*`)
+Repository policy ignores local environment files, YAML overrides, credential and
+signing material, archive PDFs, admin state, local evidence, and development
+tool state. Public examples contain placeholders only. A clean checkout or published
+image, not a developer working tree, is the deployment input.
 
-### Threat: unsafe upstream transport settings
+### Request Flooding and Oversized Payloads
 
-Mitigations:
-- plaintext HTTP upstreams blocked by default
-- TLS verification disable blocked by default
-- loopback/link-local upstream hosts blocked by default
-- explicit hardening overrides required for unsafe modes
+- Request body size limit middleware.
+- Token-bucket rate limiting.
+- Deep storage health probes are single-flight; concurrent deep requests fail
+  with `503` instead of queueing more filesystem work.
 
-### Threat: archive tampering on shared storage
+Residual risk: deep probes are unauthenticated, perform a temporary archive-storage
+write, and are not rate-limited across sequential requests. Keep them on a trusted
+operator path.
 
-Mitigations in application:
-- deterministic paths
-- controlled write flow
-- SHA-256 sidecar checksum
-- optional cryptographic PDF signing/timestamping
+### Unsafe Upstream Transport
 
-Operational controls required:
-- least-privilege share credentials and ACLs
-- snapshot/immutability policy at storage layer
-- periodic integrity verification
+- HTTPS and certificate verification are required by default. Set
+  `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP=true` only for an explicitly
+  isolated test/internal deployment.
+- Loopback, private, link-local, unspecified, reserved, and multicast address
+  literals are rejected. DNS names are resolved off the event loop before the
+  first outbound request and every returned address is checked; resolution
+  failure is fail-closed. `HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS=true`
+  is an explicit test/internal override.
+- `trust_env` remains opt-in. Proxy configuration and DNS rebinding can still
+  change the effective network path; enforce egress policy at the host or
+  proxy boundary for production.
 
-## 4. Residual Risks
+### Job History
 
-- no distributed durable dedupe store
-- no built-in immutable/WORM enforcement
-- **TOCTOU on symlink check:** the storage layer rejects paths that traverse symlinks under the root, but the check happens before the write. A symlink can be created between the check and the write (time-of-check to time-of-use race). For high-assurance deployments, use a dedicated mount or filesystem controls; the application cannot fully remove this risk.
-- **O_NOFOLLOW (Bugs #14/#41):** Final file open uses `O_NOFOLLOW` where the platform provides it (`os.O_NOFOLLOW`). On platforms where `O_NOFOLLOW` is not defined (e.g. some Windows builds), it is passed as `0` and the kernel may follow a symlink at the target path. Symlink rejection under the storage root is still performed before write; this residual risk applies only to the last path component. Operators on such platforms should use a dedicated mount or avoid symlinks in the archive tree.
-- **Delivery ID dedupe is in-memory only:** duplicate webhook deliveries can be processed again after a process restart; no durable idempotency store.
-- **TEMPLATES_ROOT:** when set (env), the process loads HTML templates from that path. Only the process owner should set it; point it to a controlled directory.
-- archive long-term trust depends on external trust and storage controls
+`/jobs/history` is disabled by default. To expose it, enable
+`OBSERVABILITY__HISTORY_ENABLED=true` and provide a dedicated non-blank
+`OBSERVABILITY__HISTORY_BEARER_TOKEN`; configuration fails closed when the
+token is missing.
 
-## 5. Hardening Checklist
+### Administration application
 
-- restrict network access to `/ingest` to trusted sources
-- configure and rotate webhook HMAC secret
-- keep body/rate limits enabled and tuned
-- require delivery IDs when available
-- protect `/metrics` access when enabled (set `METRICS_BEARER_TOKEN` or restrict by network)
-- when behind a reverse proxy, set `RATE_LIMIT_CLIENT_KEY_HEADER=X-Forwarded-For` so rate limits apply per client IP (trust proxy to set the header)
-- secure and monitor storage mount permissions
-- keep signing/TSA credentials in secrets management, not source-controlled files
+The `/admin` surface is absent unless explicitly enabled. Enabling it without an access
+token of at least 32 characters fails startup validation. Login uses a constant-time token
+comparison and creates a random process-local session; the access token never enters the
+cookie. Cookies are `HttpOnly`, `SameSite=Strict`, scoped to `/admin`, and secure by
+default. Sessions have idle and absolute lifetimes and disappear on restart.
 
-## 6. See also
+State-changing operations require a per-session CSRF token. Admin responses are
+`no-store` and enforce a same-origin CSP, frame denial, `nosniff`, and no-referrer policy.
+Managed configuration is restricted to an explicit non-secret registry, rejects unknown
+and environment-owned fields, writes atomically with an `If-Match` revision precondition,
+and never stores secret values. Existing managed-state directories must be owned by the
+service identity and must not be group- or world-writable. Every POSIX path component is
+opened without following symlinks, and directory identities are rechecked before reads,
+writes, pruning, or rollback. The UI cannot restart the service.
 
-- [`docs/release-checklist.md`](release-checklist.md) – release and deployment safety checks.
-- [`docs/api.md`](api.md) – public API and webhook contract.
+## Hardening Checklist
+
+- Restrict `/ingest` to trusted Zammad sources at the network edge.
+- Configure and rotate a random, non-placeholder `ZAMMAD__WEBHOOK_HMAC_SECRET`
+  of at least 32 characters.
+- Keep body-size and rate-limit controls enabled.
+- Require delivery IDs when Zammad can send them reliably.
+- Protect `/metrics` when enabled.
+- Keep admin disabled until the release gates pass; when enabled, place it behind TLS and
+  the existing trusted-network boundary and rotate `ADMIN__ACCESS_TOKEN` externally.
+- Keep signing/TSA credentials outside the repository.
+- Mount the PFX as a bounded, read-only regular file with service-account ownership;
+  do not use a symlink or group- or world-writable key file.
+- Use a dedicated archive mount and service identity.
+- Block `/docs`, `/redoc`, and `/openapi.json` at the trusted proxy when interactive API
+  documentation is not required. These endpoints are unauthenticated in this candidate.
+- Treat service logs and internal Zammad notes as sensitive operational data. They can
+  contain delivery identifiers and absolute archive paths.
+- Monitor archive write failures and ticket `pdf:error` notes.
+
+## See Also
+
+- [API reference](api.md)
+- [Operations runbook](08-operations.md)
+- [Release checklist](release-checklist.md)
