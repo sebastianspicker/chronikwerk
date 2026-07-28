@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-# ruff: noqa: I001
 import asyncio
 import hashlib
 import hmac
@@ -11,12 +10,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from tests.support.settings_factory import make_settings
 from fastapi.testclient import TestClient
+
 from chronikwerk.adapters.zammad.models import TagList
-from chronikwerk.config.settings import Settings
 from chronikwerk.app.jobs.ticket_renderer import RenderedTicket
+from chronikwerk.config.settings import Settings
 from chronikwerk.domain.errors import TransientError
+from tests.support.settings_factory import make_settings
 
 TEST_WEBHOOK_SECRET = "test-webhook-secret"
 
