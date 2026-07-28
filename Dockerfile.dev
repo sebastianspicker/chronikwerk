@@ -1,6 +1,9 @@
 # Provide the full editable toolchain used by the source-mounted development service.
 FROM python:3.14.6-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # System deps (WeasyPrint + basic tooling)
@@ -21,6 +24,15 @@ COPY src/ /app/src/
 
 RUN python -m pip install --no-cache-dir ".[dev]"
 
+RUN addgroup --system --gid 10001 app \
+  && adduser --system --uid 10001 --ingroup app --home /nonexistent --shell /usr/sbin/nologin app \
+  && install -d -m 0700 -o app -g app /mnt/archive /var/lib/chronikwerk/admin
+
+USER app:app
+
 EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=10 \
+  CMD python -c "import os,urllib.request; p=os.getenv('SERVER__PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()"
 
 CMD ["chronikwerk"]
