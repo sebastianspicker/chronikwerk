@@ -3,15 +3,18 @@
 import { qs } from './dom';
 
 export const csrfToken = (): string =>
-  qs<HTMLMetaElement>('meta[name="csrf-token"]')?.content || '';
+  qs<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
+
+const requiresCsrfToken = (method: string | undefined): boolean =>
+  !['GET', 'HEAD'].includes((method ?? 'GET').toUpperCase());
 
 export async function adminFetch(
   url: RequestInfo | URL,
   options: RequestInit = {},
 ): Promise<Response> {
   // Centralize CSRF and session expiry so individual controls cannot forget either boundary.
-  const headers = new Headers(options.headers || {});
-  if (!['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) {
+  const headers = new Headers(options.headers ?? {});
+  if (requiresCsrfToken(options.method)) {
     headers.set('X-CSRF-Token', csrfToken());
   }
   if (options.body && !headers.has('Content-Type')) {
