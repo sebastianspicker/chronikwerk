@@ -84,6 +84,47 @@ def _resolve_client_options(
     return options or ZammadClientOptions(**keyword_options)
 
 
+def _resolve_connection_arguments(
+    *,
+    base_url: str | None,
+    api_token: str | None,
+    connection: ZammadConnection | None,
+    options: ZammadClientOptions | None,
+    keyword_options: _ZammadClientOptionKeywords,
+) -> tuple[str | None, str | None, ZammadClientOptions | None]:
+    if connection is None:
+        return base_url, api_token, options
+    if base_url is not None or api_token is not None:
+        raise TypeError("connection cannot be combined with base_url or api_token")
+    if options is not None or keyword_options:
+        raise TypeError("connection cannot be combined with transport options")
+    return (
+        connection.origin,
+        connection.api_token.get_secret_value(),
+        ZammadClientOptions(
+            timeout_seconds=connection.timeout_seconds,
+            verify_tls=True,
+            trust_env=connection.trust_environment,
+            allow_insecure_http=connection.allow_insecure_http,
+            allow_private_networks=connection.allow_private_origin,
+        ),
+    )
+
+
+def _require_safe_direct_transport(
+    transport_options: ZammadClientOptions,
+    runtime: _ZammadRuntimeOptions | None,
+    *,
+    configured_connection: bool,
+) -> None:
+    if runtime is None and not configured_connection and (
+        not transport_options.verify_tls or transport_options.allow_insecure_http
+    ):
+        raise ValueError(
+            "Unsafe Zammad transport options require the private injected test runtime"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class _RequestAttempt:
     retry_count: int
@@ -104,19 +145,14 @@ class AsyncZammadClient:
         _runtime: _ZammadRuntimeOptions | None = None,
         **keyword_options: Unpack[_ZammadClientOptionKeywords],
     ) -> None:
-        if connection is not None:
-            if base_url is not None or api_token is not None:
-                raise TypeError("connection cannot be combined with base_url or api_token")
-            if options is not None or keyword_options:
-                raise TypeError("connection cannot be combined with transport options")
-            base_url = connection.origin
-            api_token = connection.api_token.get_secret_value()
-            options = ZammadClientOptions(
-                timeout_seconds=connection.timeout_seconds,
-                verify_tls=True,
-                trust_env=connection.trust_environment,
-                allow_private_networks=connection.allow_private_origin,
-            )
+        configured_connection = connection is not None
+        base_url, api_token, options = _resolve_connection_arguments(
+            base_url=base_url,
+            api_token=api_token,
+            connection=connection,
+            options=options,
+            keyword_options=keyword_options,
+        )
         if base_url is None or api_token is None:
             raise TypeError("base_url and api_token are required when connection is not provided")
         url = httpx.URL(base_url)
@@ -128,13 +164,12 @@ class AsyncZammadClient:
         self._base_url = url.copy_with(path=base_path)
 
         transport_options = _resolve_client_options(options, keyword_options)
+        _require_safe_direct_transport(
+            transport_options,
+            _runtime,
+            configured_connection=configured_connection,
+        )
         runtime = _runtime or _ZammadRuntimeOptions()
-        if _runtime is None and (
-            not transport_options.verify_tls or transport_options.allow_insecure_http
-        ):
-            raise ValueError(
-                "Unsafe Zammad transport options require the private injected test runtime"
-            )
         self._sleep = runtime.sleep
         self._retry = runtime.retry_policy or _RetryPolicy()
         self._dns_timeout_seconds = min(5.0, float(transport_options.timeout_seconds))

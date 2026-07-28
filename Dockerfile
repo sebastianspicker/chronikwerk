@@ -49,4 +49,7 @@ USER app:app
 
 EXPOSE 8080
 
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=10 \
+  CMD python -c "import os,urllib.request; p=os.getenv('SERVER__PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()"
+
 CMD ["chronikwerk"]

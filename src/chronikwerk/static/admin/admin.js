@@ -19,10 +19,11 @@ function initDialogClose() {
 }
 
 // frontend/admin/http.ts
-var csrfToken = () => qs('meta[name="csrf-token"]')?.content || "";
+var csrfToken = () => qs('meta[name="csrf-token"]')?.content ?? "";
+var requiresCsrfToken = (method) => !["GET", "HEAD"].includes((method ?? "GET").toUpperCase());
 async function adminFetch(url, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (!["GET", "HEAD"].includes((options.method || "GET").toUpperCase())) {
+  const headers = new Headers(options.headers ?? {});
+  if (requiresCsrfToken(options.method)) {
     headers.set("X-CSRF-Token", csrfToken());
   }
   if (options.body && !headers.has("Content-Type")) {
@@ -42,27 +43,29 @@ var configDraftKey = "chronikwerk-admin-config-draft";
 function configControl(row) {
   return qs('input:not([type="checkbox"]), select', row);
 }
+var draftValue = (values, path) => Object.entries(values).find(([candidate]) => candidate === path)?.[1];
 function formSecurityAcknowledged(form) {
   return form.elements.security_acknowledged.checked;
 }
 function preserveConfigDraft() {
   const form = qs("[data-config-form]");
   if (!form) return;
-  const values = {};
+  const entries = [];
   qsa(".config-field", form).forEach((row) => {
     const control = configControl(row);
     const path = row.dataset.path;
-    if (control && !control.disabled && path) values[path] = control.value;
+    if (control && !control.disabled && path) entries.push([path, control.value]);
   });
   try {
     window.sessionStorage.setItem(
       configDraftKey,
       JSON.stringify({
-        values,
+        values: Object.fromEntries(entries),
         securityAcknowledged: formSecurityAcknowledged(form)
       })
     );
   } catch {
+    return;
   }
 }
 function restoreConfigDraft() {
@@ -76,9 +79,8 @@ function restoreConfigDraft() {
     qsa(".config-field", form).forEach((row) => {
       const control = configControl(row);
       const path = row.dataset.path;
-      if (control && !control.disabled && path && Object.hasOwn(draft.values, path)) {
-        control.value = String(draft.values[path]);
-      }
+      const value = path ? draftValue(draft.values, path) : void 0;
+      if (control && !control.disabled && value !== void 0) control.value = String(value);
     });
     form.elements.security_acknowledged.checked = Boolean(draft.securityAcknowledged);
   } catch {
@@ -103,160 +105,177 @@ var configEntry = (row) => {
   return [path, value];
 };
 var configValues = (form) => {
-  const values = {};
+  const entries = [];
   for (const row of qsa(".config-field", form)) {
     const entry = configEntry(row);
-    if (entry) values[entry[0]] = entry[1];
+    if (entry) entries.push(entry);
   }
-  return values;
+  return Object.fromEntries(entries);
 };
-function showConfigStageResult(form, response, data) {
+var changedConfigFieldCount = (form) => qsa(".config-field", form).filter((row) => {
+  const control = configControl(row);
+  if (!control || control.disabled) return false;
+  const value = parsedConfigValue(row.dataset.kind, control.value);
+  const original = JSON.parse(row.dataset.original ?? "null");
+  return JSON.stringify(value) !== JSON.stringify(original);
+}).length;
+var updateConfigChangeCount = (form) => {
+  const output = qs("[data-change-count]", form);
+  if (!output) return;
+  const count = changedConfigFieldCount(form);
+  if (count === 0) output.textContent = output.dataset.zero ?? "";
+  else if (count === 1) output.textContent = output.dataset.one ?? "";
+  else output.textContent = (output.dataset.many ?? "").replace("{count}", String(count));
+};
+var clearValidationFeedback = (form, errorSummary) => {
+  qsa(".config-field", form).forEach((row) => {
+    qs("[data-field-error]", row)?.setAttribute("hidden", "");
+    configControl(row)?.removeAttribute("aria-invalid");
+  });
+  if (errorSummary) errorSummary.hidden = true;
+};
+var showConfigStageResult = (form, response, data) => {
   const result = qs("[data-config-result]");
   if (!result) return;
   result.textContent = response.ok ? `${result.dataset.success ?? ""} ${data.revision ?? ""}`.trim() : data.message ?? "";
   result.className = `inline-result ${response.ok ? "banner--success" : "banner--error"}`;
   if (response.ok && data.revision) form.dataset.revision = data.revision;
-}
+};
+var showValidationError = (form, path, message) => {
+  const row = qsa(".config-field", form).find((node) => node.dataset.path === path);
+  if (!row) return;
+  const error = qs("[data-field-error]", row);
+  if (error) {
+    error.textContent = message;
+    error.hidden = false;
+  }
+  configControl(row)?.setAttribute("aria-invalid", "true");
+};
+var showValidationErrors = (form, errorSummary, data) => {
+  for (const { path, message } of data.errors ?? []) showValidationError(form, path, message);
+  if (!errorSummary) return;
+  errorSummary.textContent = data.message ?? data.errors?.map(({ message }) => message).join(" ") ?? "";
+  errorSummary.hidden = false;
+  errorSummary.focus();
+};
+var configReviewRow = (path, before, after) => {
+  const row = document.createElement("tr");
+  [path, JSON.stringify(before), JSON.stringify(after)].forEach((value) => {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    row.append(cell);
+  });
+  return row;
+};
+var updateConfigReviewState = (review, diffLength) => {
+  const empty = diffLength === 0;
+  const status = qs("[data-config-review-status]", review);
+  const region = qs("[data-config-diff-region]", review);
+  const stageButton = qs("[data-config-stage]", review);
+  if (status) {
+    status.textContent = "";
+    if (empty) status.textContent = review.dataset.noChanges ?? "";
+  }
+  if (region) region.hidden = empty;
+  if (stageButton) stageButton.disabled = empty;
+};
+var showConfigReview = (form, data) => {
+  const tbody = qs("[data-config-diff]");
+  const review = qs("[data-config-review]");
+  if (!tbody || !review) return;
+  const diff = data.diff ?? [];
+  tbody.replaceChildren(...diff.map((item) => configReviewRow(item.path, item.before, item.after)));
+  updateConfigReviewState(review, diff.length);
+  review.hidden = false;
+  review.scrollIntoView({ block: "start" });
+};
+var requestConfigValidation = async (form, errorSummary) => {
+  try {
+    const response = await adminFetch("/admin/api/v1/config/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        values: configValues(form),
+        security_acknowledged: formSecurityAcknowledged(form)
+      })
+    });
+    return { response, data: await response.json() };
+  } catch (error) {
+    const sessionExpired = error instanceof Error && error.message === "session_expired";
+    if (!sessionExpired && errorSummary) {
+      errorSummary.textContent = errorSummary.dataset.networkError ?? "";
+      errorSummary.hidden = false;
+      errorSummary.focus();
+    }
+    return null;
+  }
+};
+var stageValidatedConfig = async (form, overlay, button) => {
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const response = await adminFetch("/admin/api/v1/config/staged", {
+      method: "PUT",
+      headers: { "If-Match": form.dataset.revision ?? "" },
+      body: JSON.stringify({ overlay, security_acknowledged: formSecurityAcknowledged(form) })
+    });
+    showConfigStageResult(form, response, await response.json());
+  } catch (error) {
+    const sessionExpired = error instanceof Error && error.message === "session_expired";
+    const result = qs("[data-config-result]");
+    if (!sessionExpired && result) {
+      result.textContent = result.dataset.networkError ?? "";
+      result.className = "inline-result banner--error";
+    }
+  } finally {
+    button.removeAttribute("aria-busy");
+    button.disabled = false;
+  }
+};
 function initConfigForm() {
-  const configForm = qs("[data-config-form]");
-  let validatedOverlay = null;
   restoreConfigDraft();
-  const updateConfigChangeCount = () => {
-    if (!configForm) return;
-    const count = qsa(".config-field", configForm).filter((row) => {
-      const control = configControl(row);
-      if (!control || control.disabled) return false;
-      const value = parsedConfigValue(row.dataset.kind, control.value);
-      const original = JSON.parse(row.dataset.original ?? "null");
-      return JSON.stringify(value) !== JSON.stringify(original);
-    }).length;
-    const output = qs("[data-change-count]", configForm);
-    if (!output) return;
-    if (count === 0) output.textContent = output.dataset.zero ?? "";
-    else if (count === 1) output.textContent = output.dataset.one ?? "";
-    else output.textContent = (output.dataset.many ?? "").replace("{count}", String(count));
-  };
+  const form = qs("[data-config-form]");
+  if (!form) return;
+  let validatedOverlay = null;
   const invalidateConfigReview = () => {
     validatedOverlay = null;
     const review = qs("[data-config-review]");
     if (review) review.hidden = true;
-    updateConfigChangeCount();
+    updateConfigChangeCount(form);
   };
-  configForm?.addEventListener("input", invalidateConfigReview);
-  configForm?.addEventListener("change", invalidateConfigReview);
-  updateConfigChangeCount();
-  configForm?.addEventListener("submit", async (event) => {
+  const validateConfigForm = async (event) => {
     event.preventDefault();
     const submit = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
-    const errorSummary = qs("[data-config-errors]", configForm);
-    qsa(".config-field", configForm).forEach((row) => {
-      const error = qs("[data-field-error]", row);
-      const control = configControl(row);
-      if (error) error.hidden = true;
-      control?.removeAttribute("aria-invalid");
-    });
-    if (errorSummary) errorSummary.hidden = true;
+    const errorSummary = qs("[data-config-errors]", form);
+    clearValidationFeedback(form, errorSummary);
     if (submit) {
       submit.disabled = true;
       submit.setAttribute("aria-busy", "true");
     }
-    let response;
-    let data;
-    try {
-      response = await adminFetch("/admin/api/v1/config/validate", {
-        method: "POST",
-        body: JSON.stringify({
-          values: configValues(configForm),
-          security_acknowledged: formSecurityAcknowledged(configForm)
-        })
-      });
-      data = await response.json();
-    } catch (error) {
-      const sessionExpired = error instanceof Error && error.message === "session_expired";
-      if (!sessionExpired && errorSummary) {
-        errorSummary.textContent = errorSummary.dataset.networkError ?? "";
-        errorSummary.hidden = false;
-        errorSummary.focus();
-      }
-      return;
-    } finally {
-      if (submit) {
-        submit.removeAttribute("aria-busy");
-        submit.disabled = false;
-      }
+    const result = await requestConfigValidation(form, errorSummary);
+    if (submit) {
+      submit.removeAttribute("aria-busy");
+      submit.disabled = false;
     }
-    if (!response.ok) {
-      (data.errors ?? []).forEach((item) => {
-        const row = qsa(".config-field", configForm).find(
-          (node) => node.dataset.path === item.path
-        );
-        const error = row ? qs("[data-field-error]", row) : null;
-        const control = row ? configControl(row) : null;
-        if (error) {
-          error.textContent = item.message;
-          error.hidden = false;
-        }
-        control?.setAttribute("aria-invalid", "true");
-      });
-      if (errorSummary) {
-        errorSummary.textContent = data.message ?? data.errors?.map(({ message }) => message).join(" ") ?? "";
-        errorSummary.hidden = false;
-        errorSummary.focus();
-      }
+    if (!result) return;
+    if (!result.response.ok) {
+      showValidationErrors(form, errorSummary, result.data);
       return;
     }
-    validatedOverlay = data.overlay ?? null;
-    const tbody = qs("[data-config-diff]");
-    const review = qs("[data-config-review]");
-    if (!tbody || !review) return;
-    const diff = data.diff ?? [];
-    tbody.replaceChildren(...diff.map((item) => {
-      const row = document.createElement("tr");
-      [item.path, JSON.stringify(item.before), JSON.stringify(item.after)].forEach((value) => {
-        const cell = document.createElement("td");
-        cell.textContent = value;
-        row.append(cell);
-      });
-      return row;
-    }));
-    const status = qs("[data-config-review-status]", review);
-    const region = qs("[data-config-diff-region]", review);
-    const stageButton = qs("[data-config-stage]", review);
-    if (status) status.textContent = diff.length === 0 ? review.dataset.noChanges ?? "" : "";
-    if (region) region.hidden = diff.length === 0;
-    if (stageButton) stageButton.disabled = diff.length === 0;
-    review.hidden = false;
-    review.scrollIntoView({ block: "start" });
+    validatedOverlay = result.data.overlay ?? null;
+    showConfigReview(form, result.data);
+  };
+  form.addEventListener("input", invalidateConfigReview);
+  form.addEventListener("change", invalidateConfigReview);
+  form.addEventListener("submit", (event) => {
+    void validateConfigForm(event);
   });
-  async function stageValidatedConfig(event) {
-    if (!validatedOverlay || !configForm) return;
+  qs("[data-config-stage]")?.addEventListener("click", (event) => {
     const button = event.currentTarget;
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
-    try {
-      const response = await adminFetch("/admin/api/v1/config/staged", {
-        method: "PUT",
-        headers: { "If-Match": configForm.dataset.revision ?? "" },
-        body: JSON.stringify({
-          overlay: validatedOverlay,
-          security_acknowledged: formSecurityAcknowledged(configForm)
-        })
-      });
-      const data = await response.json();
-      showConfigStageResult(configForm, response, data);
-    } catch (error) {
-      const sessionExpired = error instanceof Error && error.message === "session_expired";
-      const result = qs("[data-config-result]");
-      if (!sessionExpired && result) {
-        result.textContent = result.dataset.networkError ?? "";
-        result.className = "inline-result banner--error";
-      }
-    } finally {
-      button.removeAttribute("aria-busy");
-      button.disabled = false;
+    if (button instanceof HTMLButtonElement && validatedOverlay) {
+      void stageValidatedConfig(form, validatedOverlay, button);
     }
-  }
-  qs("[data-config-stage]")?.addEventListener("click", stageValidatedConfig);
+  });
+  updateConfigChangeCount(form);
 }
 
 // frontend/admin/overview.ts
@@ -307,87 +326,95 @@ var refreshOverview = async () => {
 };
 function initOverview() {
   if (!qs("[data-overview]")) return;
-  window.setInterval(refreshOverview, 3e4);
+  window.setInterval(() => {
+    void refreshOverview();
+  }, 3e4);
 }
+var storageMessage = (element, writable) => {
+  if (writable) return element.dataset.success ?? "";
+  return element.dataset.error ?? "";
+};
+var showStorageResult = (state, result, writable) => {
+  result.textContent = storageMessage(result, writable);
+  if (!state) return;
+  state.textContent = storageMessage(state, writable);
+  state.className = writable ? "state-value state-value--success" : "state-value state-value--error";
+};
+var showStorageCheckTime = (checkedAt) => {
+  if (!checkedAt) return;
+  checkedAt.hidden = false;
+  checkedAt.textContent = new Intl.DateTimeFormat(document.documentElement.lang, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short"
+  }).format(/* @__PURE__ */ new Date());
+};
+var runStorageCheck = async (button) => {
+  const result = qs("[data-storage-result]");
+  const state = qs("[data-storage-state]");
+  const checkedAt = qs("[data-storage-time]");
+  if (!result) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const response = await adminFetch("/admin/api/v1/status/storage-check", { method: "POST" });
+    if (!response.ok) throw new Error("storage_check_failed");
+    const data = await response.json();
+    showStorageResult(state, result, Boolean(data.storage?.writable));
+    showStorageCheckTime(checkedAt);
+  } catch (error) {
+    const sessionExpired = error instanceof Error && error.message === "session_expired";
+    if (!sessionExpired) showStorageResult(state, result, false);
+  } finally {
+    button.removeAttribute("aria-busy");
+    button.disabled = false;
+  }
+};
 function initStorageCheck() {
-  qs("[data-storage-check]")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const result = qs("[data-storage-result]");
-    const state = qs("[data-storage-state]");
-    const checkedAt = qs("[data-storage-time]");
-    if (!result) return;
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
-    try {
-      const response = await adminFetch("/admin/api/v1/status/storage-check", { method: "POST" });
-      if (!response.ok) throw new Error("storage_check_failed");
-      const data = await response.json();
-      const writable = Boolean(data.storage?.writable);
-      result.textContent = writable ? result.dataset.success ?? "" : result.dataset.error ?? "";
-      if (state) {
-        state.textContent = writable ? state.dataset.success ?? "" : state.dataset.error ?? "";
-        state.className = `state-value ${writable ? "state-value--success" : "state-value--error"}`;
-      }
-      if (checkedAt) {
-        checkedAt.hidden = false;
-        checkedAt.textContent = new Intl.DateTimeFormat(document.documentElement.lang, {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          timeZone: "UTC",
-          timeZoneName: "short"
-        }).format(/* @__PURE__ */ new Date());
-      }
-    } catch (error) {
-      const sessionExpired = error instanceof Error && error.message === "session_expired";
-      if (!sessionExpired) {
-        result.textContent = result.dataset.error ?? "";
-        if (state) {
-          state.textContent = state.dataset.error ?? "";
-          state.className = "state-value state-value--error";
-        }
-      }
-    } finally {
-      button.removeAttribute("aria-busy");
-      button.disabled = false;
-    }
+  const button = qs("[data-storage-check]");
+  button?.addEventListener("click", () => {
+    void runStorageCheck(button);
   });
 }
 
 // frontend/admin/reauth.ts
-function initReauthForm() {
-  qs("[data-reauth-form]")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const error = qs("[data-reauth-error]", form);
-    const submit = qs('button[type="submit"]', form);
-    if (error) error.hidden = true;
-    if (submit) submit.disabled = true;
-    form.setAttribute("aria-busy", "true");
-    try {
-      const response = await fetch("/admin/api/v1/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ access_token: new FormData(form).get("access_token") })
-      });
-      if (!response.ok) {
-        if (error) {
-          error.textContent = error.dataset.invalid ?? "";
-          error.hidden = false;
-        }
-        return;
-      }
-      preserveConfigDraft();
-      window.location.reload();
-    } catch {
-      if (error) {
-        error.textContent = error.dataset.networkError ?? "";
-        error.hidden = false;
-      }
-    } finally {
-      form.removeAttribute("aria-busy");
-      if (submit) submit.disabled = false;
+var showReauthError = (error, message) => {
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = false;
+};
+var submitReauthForm = async (form, event) => {
+  event.preventDefault();
+  const error = qs("[data-reauth-error]", form);
+  const submit = qs('button[type="submit"]', form);
+  if (error) error.hidden = true;
+  if (submit) submit.disabled = true;
+  form.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch("/admin/api/v1/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: new FormData(form).get("access_token") })
+    });
+    if (!response.ok) {
+      showReauthError(error, error?.dataset.invalid ?? "");
+      return;
     }
+    preserveConfigDraft();
+    window.location.reload();
+  } catch {
+    showReauthError(error, error?.dataset.networkError ?? "");
+  } finally {
+    form.removeAttribute("aria-busy");
+    if (submit) submit.disabled = false;
+  }
+};
+function initReauthForm() {
+  const form = qs("[data-reauth-form]");
+  form?.addEventListener("submit", (event) => {
+    void submitReauthForm(form, event);
   });
 }
 

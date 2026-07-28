@@ -7,7 +7,7 @@ import {join} from 'node:path';
 const tempRoot = realpathSync(tmpdir());
 const archiveRoot = mkdtempSync(join(tempRoot, 'chronikwerk-browser-archive-'));
 const adminRoot = mkdtempSync(join(tempRoot, 'chronikwerk-browser-admin-'));
-const python = process.env.PYTHON || 'python';
+const python = process.env.PYTHON ?? 'python';
 
 export default defineConfig({
   testDir: './tests/browser',

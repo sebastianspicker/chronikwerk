@@ -86,7 +86,7 @@ def _limited_receive_factory(
         if message.get("type") == "http.request":
             body = message.get("body", b"") or b""
             received += len(body)
-            if max_bytes > 0 and received > max_bytes:
+            if 0 < max_bytes < received:
                 raise _BodyTooLarge()
         return message
 

@@ -59,51 +59,61 @@ const refreshOverview = async (): Promise<void> => {
 
 export function initOverview(): void {
   if (!qs('[data-overview]')) return;
-  window.setInterval(refreshOverview, 30_000);
+  window.setInterval(() => {
+    void refreshOverview();
+  }, 30_000);
 }
 
+const storageMessage = (element: HTMLElement, writable: boolean): string => {
+  if (writable) return element.dataset.success ?? '';
+  return element.dataset.error ?? '';
+};
+
+const showStorageResult = (state: HTMLElement | null, result: HTMLElement, writable: boolean): void => {
+  result.textContent = storageMessage(result, writable);
+  if (!state) return;
+  state.textContent = storageMessage(state, writable);
+  state.className = writable ? 'state-value state-value--success' : 'state-value state-value--error';
+};
+
+const showStorageCheckTime = (checkedAt: HTMLElement | null): void => {
+  if (!checkedAt) return;
+  checkedAt.hidden = false;
+  checkedAt.textContent = new Intl.DateTimeFormat(document.documentElement.lang, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  }).format(new Date());
+};
+
+const runStorageCheck = async (button: HTMLButtonElement): Promise<void> => {
+  // Disable the control during the probe to prevent concurrent state checks from racing the UI.
+  const result = qs<HTMLElement>('[data-storage-result]');
+  const state = qs<HTMLElement>('[data-storage-state]');
+  const checkedAt = qs<HTMLElement>('[data-storage-time]');
+  if (!result) return;
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  try {
+    const response = await adminFetch('/admin/api/v1/status/storage-check', {method: 'POST'});
+    if (!response.ok) throw new Error('storage_check_failed');
+    const data = await response.json() as StorageCheckResponse;
+    showStorageResult(state, result, Boolean(data.storage?.writable));
+    showStorageCheckTime(checkedAt);
+  } catch (error: unknown) {
+    const sessionExpired = error instanceof Error && error.message === 'session_expired';
+    if (!sessionExpired) showStorageResult(state, result, false);
+  } finally {
+    button.removeAttribute('aria-busy');
+    button.disabled = false;
+  }
+};
+
 export function initStorageCheck(): void {
-  qs<HTMLButtonElement>('[data-storage-check]')?.addEventListener('click', async (event) => {
-    // Disable the control during the probe to prevent concurrent state checks from racing the UI.
-    const button = event.currentTarget as HTMLButtonElement;
-    const result = qs<HTMLElement>('[data-storage-result]');
-    const state = qs<HTMLElement>('[data-storage-state]');
-    const checkedAt = qs<HTMLElement>('[data-storage-time]');
-    if (!result) return;
-    button.disabled = true;
-    button.setAttribute('aria-busy', 'true');
-    try {
-      const response = await adminFetch('/admin/api/v1/status/storage-check', {method: 'POST'});
-      if (!response.ok) throw new Error('storage_check_failed');
-      const data = await response.json() as StorageCheckResponse;
-      const writable = Boolean(data.storage?.writable);
-      result.textContent = writable ? result.dataset.success ?? '' : result.dataset.error ?? '';
-      if (state) {
-        state.textContent = writable ? state.dataset.success ?? '' : state.dataset.error ?? '';
-        state.className = `state-value ${writable ? 'state-value--success' : 'state-value--error'}`;
-      }
-      if (checkedAt) {
-        checkedAt.hidden = false;
-        checkedAt.textContent = new Intl.DateTimeFormat(document.documentElement.lang, {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          timeZone: 'UTC',
-          timeZoneName: 'short',
-        }).format(new Date());
-      }
-    } catch (error: unknown) {
-      const sessionExpired = error instanceof Error && error.message === 'session_expired';
-      if (!sessionExpired) {
-        result.textContent = result.dataset.error ?? '';
-        if (state) {
-          state.textContent = state.dataset.error ?? '';
-          state.className = 'state-value state-value--error';
-        }
-      }
-    } finally {
-      button.removeAttribute('aria-busy');
-      button.disabled = false;
-    }
+  const button = qs<HTMLButtonElement>('[data-storage-check]');
+  button?.addEventListener('click', () => {
+    void runStorageCheck(button);
   });
 }

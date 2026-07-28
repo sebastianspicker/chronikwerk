@@ -159,8 +159,8 @@ class _HttpxRFC3161TimeStamper(TimeStamper):
     def _validate_tsa_status(tsa_resp: tsp.TimeStampResp) -> None:
         status_info = tsa_resp["status"]
         status_value = status_info["status"].native
-        _ACCEPTED_STATUSES = {"granted", "granted_with_mods"}
-        if status_value not in _ACCEPTED_STATUSES:
+        accepted_statuses = {"granted", "granted_with_mods"}
+        if status_value not in accepted_statuses:
             status_string = ""
             try:
                 status_string = status_info["status_string"].native or ""

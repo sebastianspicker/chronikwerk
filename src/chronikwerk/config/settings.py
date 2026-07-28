@@ -17,7 +17,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from chronikwerk.i18n import normalize_locale
 
-ZAMMAD_CONNECTION_CONTRACT_VERSION = 1
+ZAMMAD_CONNECTION_CONTRACT_VERSION = 2
 _HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
@@ -25,31 +25,38 @@ class _BaseSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def canonicalize_zammad_origin(value: str) -> str:
-    """Return the credential-free HTTPS origin used for Zammad API requests."""
+def canonicalize_zammad_origin(value: str, *, allow_insecure_http: bool = False) -> str:
+    """Return the credential-free origin used for Zammad API requests."""
+    parsed, port = _parse_zammad_origin(value)
+    _validate_zammad_origin_parts(parsed, allow_insecure_http=allow_insecure_http)
+    host = _canonicalize_zammad_host(parsed.hostname)
+    if port == 0:
+        raise ValueError("Zammad origin port must be between 1 and 65535")
+    rendered_host = f"[{host}]" if ":" in host else host
+    rendered_port = f":{port}" if port is not None else ""
+    return f"{parsed.scheme.lower()}://{rendered_host}{rendered_port}"
+
+
+def _parse_zammad_origin(value: str) -> tuple[Any, int | None]:
     try:
         parsed = urlsplit(value)
         port = parsed.port
     except ValueError as exc:
         raise ValueError("Zammad origin must be a valid HTTPS origin") from exc
+    return parsed, port
 
+
+def _validate_zammad_origin_parts(parsed: Any, *, allow_insecure_http: bool) -> None:
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("Zammad origin must not include credentials")
     if (
-        parsed.scheme.lower() != "https"
+        parsed.scheme.lower() not in ({"https", "http"} if allow_insecure_http else {"https"})
         or not parsed.hostname
         or parsed.path not in {"", "/"}
         or parsed.query
         or parsed.fragment
     ):
         raise ValueError("Zammad origin must be an HTTPS scheme, host, and optional port only")
-
-    host = _canonicalize_zammad_host(parsed.hostname)
-    if port == 0:
-        raise ValueError("Zammad origin port must be between 1 and 65535")
-    rendered_host = f"[{host}]" if ":" in host else host
-    rendered_port = f":{port}" if port is not None else ""
-    return f"https://{rendered_host}{rendered_port}"
 
 
 def _canonicalize_zammad_host(value: str) -> str:
@@ -82,35 +89,51 @@ class ZammadConnection:
     timeout_seconds: float = 10.0
     allow_private_origin: bool = False
     trust_environment: bool = False
+    allow_insecure_http: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "origin", canonicalize_zammad_origin(self.origin))
-        if not isinstance(self.api_token, SecretStr):
-            raise TypeError("Zammad connection api_token must be a SecretStr")
-        token = self.api_token.get_secret_value()
-        if not token or any(character.isspace() for character in token):
-            raise ValueError(
-                "Zammad connection api_token must be non-empty and contain no whitespace"
-            )
-        if (
-            isinstance(self.timeout_seconds, bool)
-            or not isinstance(self.timeout_seconds, (int, float))
-            or not isfinite(self.timeout_seconds)
-            or self.timeout_seconds <= 0
-        ):
-            raise ValueError(
-                "Zammad connection timeout_seconds must be a finite number greater than 0"
-            )
-        if type(self.allow_private_origin) is not bool:
-            raise TypeError("Zammad connection allow_private_origin must be a boolean")
-        if type(self.trust_environment) is not bool:
-            raise TypeError("Zammad connection trust_environment must be a boolean")
-        object.__setattr__(self, "timeout_seconds", float(self.timeout_seconds))
+        _validate_zammad_boolean("allow_insecure_http", self.allow_insecure_http)
+        object.__setattr__(
+            self,
+            "origin",
+            canonicalize_zammad_origin(
+                self.origin,
+                allow_insecure_http=self.allow_insecure_http,
+            ),
+        )
+        _validate_zammad_api_token(self.api_token)
+        object.__setattr__(self, "timeout_seconds", _validate_zammad_timeout(self.timeout_seconds))
+        _validate_zammad_boolean("allow_private_origin", self.allow_private_origin)
+        _validate_zammad_boolean("trust_environment", self.trust_environment)
 
     @property
     def api_root(self) -> str:
         """Return the fixed Zammad REST API root for this origin."""
         return f"{self.origin}/api/v1"
+
+
+def _validate_zammad_api_token(value: SecretStr) -> None:
+    if not isinstance(value, SecretStr):
+        raise TypeError("Zammad connection api_token must be a SecretStr")
+    token = value.get_secret_value()
+    if not token or any(character.isspace() for character in token):
+        raise ValueError("Zammad connection api_token must be non-empty and contain no whitespace")
+
+
+def _validate_zammad_timeout(value: float) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError("Zammad connection timeout_seconds must be a finite number greater than 0")
+    return float(value)
+
+
+def _validate_zammad_boolean(name: str, value: bool) -> None:
+    if not isinstance(value, bool):
+        raise TypeError(f"Zammad connection {name} must be a boolean")
 
 
 class ServerSettings(_BaseSection):
@@ -383,6 +406,7 @@ class Settings(BaseSettings):
             timeout_seconds=self.zammad.timeout_seconds,
             allow_private_origin=self.hardening.transport.allow_private_networks,
             trust_environment=self.hardening.transport.trust_env,
+            allow_insecure_http=self.hardening.transport.allow_insecure_http,
         )
 
     @classmethod

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 # pylint: disable=import-outside-toplevel
-
-# ruff: noqa: I001
 import hashlib
 import hmac
 
+from fastapi.testclient import TestClient
+
+from chronikwerk.app.server import create_app
 from tests.support.process_ticket_helpers import noop_process_ticket
 from tests.support.settings_factory import make_settings
-from fastapi.testclient import TestClient
-from chronikwerk.app.server import create_app
 
 
 def _sign(body: bytes, secret: str) -> str:

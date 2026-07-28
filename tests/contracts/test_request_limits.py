@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 # pylint: disable=import-outside-toplevel
+from fastapi.testclient import TestClient
 
-# ruff: noqa: I001
+from chronikwerk.app.server import create_app
+from chronikwerk.config.settings import Settings
 from tests.support.process_ticket_helpers import (
     TEST_WEBHOOK_SECRET,
     exhaust_signed_rate_limit,
     install_noop_ingest_processing,
 )
 from tests.support.settings_factory import make_settings
-from fastapi.testclient import TestClient
-from chronikwerk.app.server import create_app
-from chronikwerk.config.settings import Settings
 
 
 def _settings_body_limit(storage_root: str, max_bytes: int) -> Settings:
