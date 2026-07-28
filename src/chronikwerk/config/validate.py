@@ -120,10 +120,13 @@ def _validate_delivery_id_requirement(
 
 def _validate_transport(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     try:
-        origin = canonicalize_zammad_origin(str(settings.zammad.base_url))
+        origin = canonicalize_zammad_origin(
+            str(settings.zammad.base_url),
+            allow_insecure_http=settings.hardening.transport.allow_insecure_http,
+        )
         validate_url_policy(
             origin,
-            allow_insecure_http=False,
+            allow_insecure_http=settings.hardening.transport.allow_insecure_http,
             allow_private_networks=settings.hardening.transport.allow_private_networks,
         )
     except (PermanentError, TransientError, ValueError) as exc:

@@ -17,7 +17,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from chronikwerk.i18n import normalize_locale
 
-ZAMMAD_CONNECTION_CONTRACT_VERSION = 1
+ZAMMAD_CONNECTION_CONTRACT_VERSION = 2
 _HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
@@ -25,16 +25,16 @@ class _BaseSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def canonicalize_zammad_origin(value: str) -> str:
-    """Return the credential-free HTTPS origin used for Zammad API requests."""
+def canonicalize_zammad_origin(value: str, *, allow_insecure_http: bool = False) -> str:
+    """Return the credential-free origin used for Zammad API requests."""
     parsed, port = _parse_zammad_origin(value)
-    _validate_zammad_origin_parts(parsed)
+    _validate_zammad_origin_parts(parsed, allow_insecure_http=allow_insecure_http)
     host = _canonicalize_zammad_host(parsed.hostname)
     if port == 0:
         raise ValueError("Zammad origin port must be between 1 and 65535")
     rendered_host = f"[{host}]" if ":" in host else host
     rendered_port = f":{port}" if port is not None else ""
-    return f"https://{rendered_host}{rendered_port}"
+    return f"{parsed.scheme.lower()}://{rendered_host}{rendered_port}"
 
 
 def _parse_zammad_origin(value: str) -> tuple[Any, int | None]:
@@ -46,11 +46,11 @@ def _parse_zammad_origin(value: str) -> tuple[Any, int | None]:
     return parsed, port
 
 
-def _validate_zammad_origin_parts(parsed: Any) -> None:
+def _validate_zammad_origin_parts(parsed: Any, *, allow_insecure_http: bool) -> None:
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("Zammad origin must not include credentials")
     if (
-        parsed.scheme.lower() != "https"
+        parsed.scheme.lower() not in ({"https", "http"} if allow_insecure_http else {"https"})
         or not parsed.hostname
         or parsed.path not in {"", "/"}
         or parsed.query
@@ -89,9 +89,18 @@ class ZammadConnection:
     timeout_seconds: float = 10.0
     allow_private_origin: bool = False
     trust_environment: bool = False
+    allow_insecure_http: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "origin", canonicalize_zammad_origin(self.origin))
+        _validate_zammad_boolean("allow_insecure_http", self.allow_insecure_http)
+        object.__setattr__(
+            self,
+            "origin",
+            canonicalize_zammad_origin(
+                self.origin,
+                allow_insecure_http=self.allow_insecure_http,
+            ),
+        )
         _validate_zammad_api_token(self.api_token)
         object.__setattr__(self, "timeout_seconds", _validate_zammad_timeout(self.timeout_seconds))
         _validate_zammad_boolean("allow_private_origin", self.allow_private_origin)
@@ -397,6 +406,7 @@ class Settings(BaseSettings):
             timeout_seconds=self.zammad.timeout_seconds,
             allow_private_origin=self.hardening.transport.allow_private_networks,
             trust_environment=self.hardening.transport.trust_env,
+            allow_insecure_http=self.hardening.transport.allow_insecure_http,
         )
 
     @classmethod

@@ -105,15 +105,19 @@ def _resolve_connection_arguments(
             timeout_seconds=connection.timeout_seconds,
             verify_tls=True,
             trust_env=connection.trust_environment,
+            allow_insecure_http=connection.allow_insecure_http,
             allow_private_networks=connection.allow_private_origin,
         ),
     )
 
 
 def _require_safe_direct_transport(
-    transport_options: ZammadClientOptions, runtime: _ZammadRuntimeOptions | None
+    transport_options: ZammadClientOptions,
+    runtime: _ZammadRuntimeOptions | None,
+    *,
+    configured_connection: bool,
 ) -> None:
-    if runtime is None and (
+    if runtime is None and not configured_connection and (
         not transport_options.verify_tls or transport_options.allow_insecure_http
     ):
         raise ValueError(
@@ -141,6 +145,7 @@ class AsyncZammadClient:
         _runtime: _ZammadRuntimeOptions | None = None,
         **keyword_options: Unpack[_ZammadClientOptionKeywords],
     ) -> None:
+        configured_connection = connection is not None
         base_url, api_token, options = _resolve_connection_arguments(
             base_url=base_url,
             api_token=api_token,
@@ -159,7 +164,11 @@ class AsyncZammadClient:
         self._base_url = url.copy_with(path=base_path)
 
         transport_options = _resolve_client_options(options, keyword_options)
-        _require_safe_direct_transport(transport_options, _runtime)
+        _require_safe_direct_transport(
+            transport_options,
+            _runtime,
+            configured_connection=configured_connection,
+        )
         runtime = _runtime or _ZammadRuntimeOptions()
         self._sleep = runtime.sleep
         self._retry = runtime.retry_policy or _RetryPolicy()

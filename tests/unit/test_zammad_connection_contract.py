@@ -68,7 +68,7 @@ def _yaml(tmp_path: Path, *, state_dir: Path | None = None) -> Path:
 
 
 def test_contract_version_is_explicit() -> None:
-    assert ZAMMAD_CONNECTION_CONTRACT_VERSION == 1
+    assert ZAMMAD_CONNECTION_CONTRACT_VERSION == 2
 
 
 def test_canonical_environment_builds_the_connection_and_overrides_yaml(
@@ -271,6 +271,34 @@ def test_connection_drives_the_client_transport(tmp_path: Path) -> None:
     assert client._http.headers["Authorization"] == "Token token=test-token"
     assert client._http.follow_redirects is False
     assert client._http.timeout.read == 7.0
+    asyncio.run(client.aclose())
+
+
+def test_explicit_insecure_transport_opt_in_drives_the_connection(tmp_path: Path) -> None:
+    settings = Settings.from_mapping(
+        {
+            "zammad": {
+                "base_url": "http://zammad.test:9090",
+                "api_token": "test-token",
+                "webhook_hmac_secret": _WEBHOOK_SECRET,
+            },
+            "storage": {"root": tmp_path},
+            "hardening": {
+                "transport": {
+                    "allow_insecure_http": True,
+                    "allow_private_networks": True,
+                }
+            },
+        }
+    )
+
+    validate_settings(settings)
+    connection = settings.zammad_connection
+    client = AsyncZammadClient(connection=connection)
+
+    assert connection.origin == "http://zammad.test:9090"
+    assert connection.allow_insecure_http is True
+    assert client._allow_insecure_http is True
     asyncio.run(client.aclose())
 
 
