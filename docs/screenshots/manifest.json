@@ -1,5 +1,5 @@
 {
-  "base_revision": "33a718ebb834fdb3c83ca6f708cc1fc55db7509d",
+  "base_revision": "82edb44cbc13a84ef5b39e1a88f9230311ed3067",
   "candidate_version": "0.3.0a1",
   "fixture": "synthetic local configuration with empty volatile history",
   "images": [
@@ -48,7 +48,7 @@
     "src/chronikwerk/app/admin/templates.py": "2a8cae7f94191c86951bc8d96be4c79f574d683ab7cefe897b38f26acbbc5a8a",
     "src/chronikwerk/app/server.py": "c889e4f89fd1b4da552bd4b5729fe3d533b201a6592a414d7157a63e894ddc82",
     "src/chronikwerk/config/managed.py": "cecec5724dc64d53d6b247f69f6ea0768326304ba3f6eed0341ca8976248ae81",
-    "src/chronikwerk/config/settings.py": "08654304c9d304e08fd5c2e323dde19f07652331145a53f475ab5710437c5901",
+    "src/chronikwerk/config/settings.py": "5d850b72427a04707b24e8722125c58b5653f89a24939cf69f3a3ff277545db4",
     "src/chronikwerk/i18n.py": "fe38d2459a386b5dd5dbb7564e8ebbc90f0f3d11f96116320b1c14dbf8abbacd",
     "src/chronikwerk/static/admin/admin.css": "2d749b692f41514848770e9f5a40efebb22349dd4d746b6dd6b4ded597fd17c4",
     "src/chronikwerk/static/admin/chronikwerk-mark.svg": "41a8ed46aa7e2270347a48d08285a1a9acb76abdc5ce17891b6d3d0aa1688d70",
