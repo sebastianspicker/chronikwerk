@@ -26,7 +26,7 @@ There is one production image, and it includes the optional signing runtime
 configuration and does not require a separate unsigned image.
 
 Production Compose and systemd use one external environment file, selected by
-`ARCHIVER_ENV_FILE`. The same file is used for Compose interpolation and is
+`CHRONIKWERK_ENV_FILE`. The same file is used for Compose interpolation and is
 passed to the container. Environment names use the nested Pydantic form (for
 example, `SERVER__PORT`, `ZAMMAD__API_TOKEN`, and `SIGNING__PFX_PATH`). Local
 YAML overrides and signing key material stay outside Git and Docker build

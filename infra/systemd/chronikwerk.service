@@ -1,0 +1,28 @@
+[Unit]
+Description=Chronikwerk (Docker Compose)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Environment file (see infra/systemd/chronikwerk.env.example)
+EnvironmentFile=/etc/chronikwerk/chronikwerk.env
+
+# Directory that contains docker-compose.yml
+WorkingDirectory=/opt/chronikwerk
+
+# Use the same env file for:
+# - compose interpolation (via --env-file)
+# - container environment (via env_file: ${CHRONIKWERK_ENV_FILE} in docker-compose.yml)
+ExecStart=/usr/bin/docker compose --env-file ${CHRONIKWERK_ENV_FILE} -f docker-compose.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file ${CHRONIKWERK_ENV_FILE} -f docker-compose.yml down
+
+TimeoutStartSec=0
+
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

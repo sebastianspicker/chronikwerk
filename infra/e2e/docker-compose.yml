@@ -1,6 +1,7 @@
+# Run the production image against a deterministic local Zammad double for release E2E checks.
 services:
   archiver:
-    image: zammad-pdf-archiver:e2e
+    image: chronikwerk:e2e
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -25,7 +26,7 @@ services:
         condition: service_healthy
 
   mock:
-    image: zammad-pdf-archiver:e2e
+    image: chronikwerk:e2e
     command: ["uvicorn", "mock_zammad:app", "--host", "0.0.0.0", "--port", "9090"]
     ports:
       - "18090:9090"

@@ -2,9 +2,9 @@
 
 Source of truth:
 
-- `src/zammad_pdf_archiver/config/settings.py`
-- `src/zammad_pdf_archiver/config/load.py`
-- `src/zammad_pdf_archiver/config/validate.py`
+- `src/chronikwerk/config/settings.py`
+- `src/chronikwerk/config/load.py`
+- `src/chronikwerk/config/validate.py`
 
 ## Load Precedence
 
@@ -21,16 +21,21 @@ Highest first:
 Nested environment keys use double underscores, for example
 `ZAMMAD__BASE_URL`.
 
+The version 1 portable runtime aliases `ZAMMAD_ORIGIN`, `ZAMMAD_API_TOKEN`,
+`ZAMMAD_TIMEOUT_SECONDS`, `ZAMMAD_ALLOW_PRIVATE_ORIGIN`, and `ZAMMAD_TRUST_ENV`
+are also accepted from the process environment. They have the same precedence as
+nested process keys. If both forms are set, their parsed values must agree.
+
 `config/config.example.yaml` is a complete model example. The systemd and
 Compose environment templates are intentionally partial deployment templates;
 their keys must be known model keys, but omitted settings use model defaults.
 
 ## Minimum Required Values
 
-Production-like runs must provide:
+Validated service startup requires:
 
-- `zammad.base_url` / `ZAMMAD__BASE_URL`
-- `zammad.api_token` / `ZAMMAD__API_TOKEN`
+- `zammad.base_url` / `ZAMMAD__BASE_URL` (portable alias: `ZAMMAD_ORIGIN`)
+- `zammad.api_token` / `ZAMMAD__API_TOKEN` (portable alias: `ZAMMAD_API_TOKEN`)
 - `storage.root` / `STORAGE__ROOT`
 - `zammad.webhook_hmac_secret` / `ZAMMAD__WEBHOOK_HMAC_SECRET`
 
@@ -45,11 +50,11 @@ Production-like runs must provide:
 
 | Key | Default | Env key | Description |
 | --- | --- | --- | --- |
-| `zammad.base_url` | required | `ZAMMAD__BASE_URL` | Zammad base URL. |
-| `zammad.api_token` | required | `ZAMMAD__API_TOKEN` | Zammad API token. |
-| `zammad.webhook_hmac_secret` | `null` | `ZAMMAD__WEBHOOK_HMAC_SECRET` | HMAC secret for incoming webhooks; at least 32 characters and not a placeholder. |
-| `zammad.timeout_seconds` | `10.0` | `ZAMMAD__TIMEOUT_SECONDS` | Outbound API timeout. |
-| `zammad.verify_tls` | `true` | `ZAMMAD__VERIFY_TLS` | Verify upstream TLS certificates. |
+| `zammad.base_url` | required | `ZAMMAD__BASE_URL` or `ZAMMAD_ORIGIN` | Zammad HTTPS origin only (no path, query, fragment, or credentials). |
+| `zammad.api_token` | required | `ZAMMAD__API_TOKEN` or `ZAMMAD_API_TOKEN` | Zammad API token. |
+| `zammad.webhook_hmac_secret` | required by validation | `ZAMMAD__WEBHOOK_HMAC_SECRET` | HMAC secret for incoming webhooks; at least 32 characters and not a placeholder. The underlying model permits `null` only so validation can return a precise startup error. |
+| `zammad.timeout_seconds` | `10.0` | `ZAMMAD__TIMEOUT_SECONDS` or `ZAMMAD_TIMEOUT_SECONDS` | Positive outbound API timeout. |
+| `zammad.verify_tls` | `true` (fixed) | `ZAMMAD__VERIFY_TLS` | Compatibility input; `false` is rejected. Requests always verify TLS and use the fixed `/api/v1` root. |
 
 ## Workflow
 
@@ -125,9 +130,9 @@ Production-like runs must provide:
 | `hardening.body_size_limit.max_bytes` | `1048576` | `HARDENING__BODY_SIZE_LIMIT__MAX_BYTES` | Request body limit; `0` selects the non-disableable 32 MiB safety cap. Values above 32 MiB are capped. |
 | `hardening.body_size_limit.timeout_seconds` | `10.0` | `HARDENING__BODY_SIZE_LIMIT__TIMEOUT_SECONDS` | Whole-body deadline for ingest and every body-bearing admin request. |
 | `hardening.webhook.require_delivery_id` | `false` | `HARDENING__WEBHOOK__REQUIRE_DELIVERY_ID` | Require `X-Zammad-Delivery`. |
-| `hardening.transport.trust_env` | `false` | `HARDENING__TRANSPORT__TRUST_ENV` | Allow proxy env vars for outbound HTTP. |
-| `hardening.transport.allow_insecure_http` | `false` | `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP` | Explicitly allow HTTP upstreams for isolated internal/test use. |
-| `hardening.transport.allow_private_networks` | `false` | `HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS` | Explicitly allow non-global upstream addresses for isolated internal/test use. |
+| `hardening.transport.trust_env` | `false` | `HARDENING__TRANSPORT__TRUST_ENV` or `ZAMMAD_TRUST_ENV` | Allow proxy and certificate environment settings for outbound HTTP. |
+| `hardening.transport.allow_insecure_http` | `false` | `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP` | Compatibility option for auxiliary/test transports; the Zammad connection remains HTTPS-only. |
+| `hardening.transport.allow_private_networks` | `false` | `HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS` or `ZAMMAD_ALLOW_PRIVATE_ORIGIN` | Explicitly allow non-global Zammad addresses for reviewed internal deployments. |
 
 ## Admission
 
@@ -149,7 +154,7 @@ restart and environment-owned fields remain read-only.
 | --- | --- | --- | --- |
 | `admin.enabled` | `false` | `ADMIN__ENABLED` | Mount the `/admin` HTML and API routes. |
 | `admin.access_token` | `null` | `ADMIN__ACCESS_TOKEN` | External admin token of at least 32 characters; never stored in a cookie or revision. |
-| `admin.state_dir` | `/var/lib/zammad-pdf-archiver/admin` | `ADMIN__STATE_DIR` | Persistent directory for non-secret managed revisions. |
+| `admin.state_dir` | `/var/lib/chronikwerk/admin` | `ADMIN__STATE_DIR` | Persistent directory for non-secret managed revisions. |
 | `admin.session_idle_seconds` | `1800` | `ADMIN__SESSION_IDLE_SECONDS` | Process-local idle session lifetime. |
 | `admin.session_absolute_seconds` | `28800` | `ADMIN__SESSION_ABSOLUTE_SECONDS` | Absolute session lifetime. |
 | `admin.cookie_secure` | `true` | `ADMIN__COOKIE_SECURE` | Send the session cookie only over HTTPS. |
@@ -170,16 +175,22 @@ zammad:
   webhook_hmac_secret: "CHANGE-ME-TO-A-RANDOM-32-BYTE-SECRET"
 storage:
   root: "/mnt/archive"
+hardening:
+  transport:
+    allow_private_networks: true
 ```
 
 ## Minimal Environment
 
 ```bash
-ZAMMAD__BASE_URL=https://zammad.example.local
-ZAMMAD__API_TOKEN=CHANGE-ME
+ZAMMAD_ORIGIN=https://zammad.example.local
+ZAMMAD_API_TOKEN=CHANGE-ME
 ZAMMAD__WEBHOOK_HMAC_SECRET=CHANGE-ME-TO-A-RANDOM-32-BYTE-SECRET
 STORAGE__ROOT=/mnt/archive
+ZAMMAD_ALLOW_PRIVATE_ORIGIN=true
 ```
 
 The examples intentionally fail validation until every `CHANGE-ME` value is
-replaced. Generate authentication secrets with at least 32 random characters.
+replaced. Generate authentication secrets with at least 32 random characters. The
+private-origin override is present only because the example uses a `.local` Zammad host;
+omit it for a globally routable HTTPS origin.

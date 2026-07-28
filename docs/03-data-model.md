@@ -36,7 +36,7 @@ the storage layer; the metadata is rendered in the PDF only.
 Path placement is derived from ticket custom fields:
 
 - `ticket.custom_fields.archive_path`
-- `ticket.custom_fields.archive_user_mode`
+- optional `ticket.custom_fields.archive_user_mode` (defaults to `owner`)
 - `ticket.custom_fields.archive_user` when mode is `fixed`
 
 See [04 - Path Policy](04-path-policy.md).

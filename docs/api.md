@@ -1,6 +1,6 @@
 # API Reference
 
-This document describes the HTTP contract exposed by `zammad-pdf-archiver`.
+This document describes the HTTP contract exposed by Chronikwerk.
 
 ## `POST /ingest`
 
@@ -14,7 +14,8 @@ Query parameters:
 Headers:
 
 - `Content-Type: application/json`
-- `X-Hub-Signature`: required when webhook HMAC verification is configured.
+- `X-Hub-Signature`: required SHA-256 HMAC signature. Supported startup
+  configuration requires a webhook HMAC secret.
 - `X-Zammad-Delivery`: required only when
   `hardening.webhook.require_delivery_id=true`.
 - `X-Request-Id`: optional request correlation ID.
@@ -23,7 +24,7 @@ Body:
 
 - JSON object containing either `ticket.id` or `ticket_id`.
 
-Success:
+Success (`202`):
 
 ```json
 {"status":"accepted","ticket_id":123}
@@ -44,7 +45,7 @@ Common errors:
 | `413` | `request_too_large` | Request body exceeds the configured limit. |
 | `422` | validation error | Payload does not contain a positive ticket ID. |
 | `429` | `rate_limited` | Rate limit exceeded. |
-| `503` | `webhook_auth_not_configured` | Signed mode is required but no webhook secret is configured. |
+| `503` | `webhook_auth_not_configured` | Defensive fail-closed response if an app is constructed without validated webhook authentication settings. Normal startup rejects this configuration. |
 
 ## `POST /ingest/batch`
 
@@ -59,7 +60,7 @@ Headers and error behavior match `POST /ingest`. When a batch-level
 `X-Zammad-Delivery` header is present, per-item delivery IDs are derived as
 `<delivery-id>:<index>`.
 
-Success:
+Success (`202`):
 
 ```json
 {"status":"accepted","count":2}
@@ -73,13 +74,14 @@ Dry run success:
 
 ## `POST /retry/{ticket_id}`
 
-Forces one reprocessing attempt for a ticket.
+Accepts and schedules one reprocessing attempt for a ticket. The forced attempt bypasses
+the normal completed-tag skip, but `202` still reports admission rather than completion.
 
 Headers:
 
 - `Authorization: Bearer <RETRY_BEARER_TOKEN>`
 
-Success:
+Success (`202`):
 
 ```json
 {"status":"accepted","ticket_id":123}
@@ -90,7 +92,7 @@ Common errors:
 - `401`: missing or invalid bearer token.
 - `503`: retry token or settings are not configured.
 
-### `GET /jobs/history`
+## `GET /jobs/history`
 
 Returns process-local processing history when explicitly enabled. The route is
 disabled by default and requires `Authorization: Bearer <OBSERVABILITY__HISTORY_BEARER_TOKEN>`.
@@ -127,13 +129,17 @@ Query parameters:
 
 - `deep` (bool, default `false`): include a storage writability check.
 
+Deep checks are single-flight. If one storage probe is already running, another
+deep request returns `503 deep_health_check_busy` with `Retry-After: 1`; shallow
+health requests remain available.
+
 Example:
 
 ```json
 {
   "status": "ok",
-  "service": "zammad-pdf-archiver",
-  "version": "0.2.0rc2",
+  "service": "chronikwerk",
+  "version": "0.3.0a1",
   "time": "2026-02-07T12:00:00+00:00"
 }
 ```
@@ -159,7 +165,10 @@ All `/admin` routes are absent (`404`) unless `admin.enabled=true`. Admin respon
 `Cache-Control: no-store`, a strict same-origin CSP, frame denial, `nosniff`, and
 `Referrer-Policy: no-referrer`. Login exchanges the external access token for an
 `HttpOnly`, `SameSite=Strict`, secure-by-default process-local session cookie. Every
-state-changing request requires the per-session `X-CSRF-Token`.
+authenticated state-changing request requires per-session CSRF proof: JSON API calls use
+`X-CSRF-Token`, while HTML forms submit the same token in a hidden `csrf_token` field.
+Creating a session or submitting the login form is the authentication boundary and does
+not yet have a session CSRF token.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -188,12 +197,34 @@ Supported algorithm:
 
 - `sha256=<hex>`
 
-The signature is computed over the raw request body bytes. SHA-1 compatibility
-is not supported.
+When `hardening.webhook.require_delivery_id=false`, the signature is computed
+over the raw request body bytes for compatibility. In strict delivery-ID mode,
+the normalized `X-Zammad-Delivery` value is authenticated as well. The signed
+bytes are, in order:
 
-Example:
+```text
+b"zammad-webhook-v1\\0"
++ uint64_be(len(delivery_id.strip().encode("utf-8")))
++ delivery_id.strip().encode("utf-8")
++ raw_request_body
+```
+
+Changing the delivery ID therefore invalidates a strict-mode signature. Enable
+strict mode only after the webhook sender uses this canonical form. SHA-1
+compatibility is not supported.
+
+Compatibility-mode example:
+
+Run this only against an isolated test service configured with the same
+`webhook_secret` value.
 
 ```bash
+webhook_secret='local-example-webhook-secret-at-least-32-characters'
+hex_signature="$(
+  WEBHOOK_SECRET="$webhook_secret" python -c \
+    'import hashlib,hmac,os,sys; print(hmac.new(os.environ["WEBHOOK_SECRET"].encode(), sys.stdin.buffer.read(), hashlib.sha256).hexdigest())' \
+    < examples/webhook-payload.sample.json
+)"
 curl -i \
   -H "Content-Type: application/json" \
   -H "X-Hub-Signature: sha256=$hex_signature" \
@@ -202,5 +233,6 @@ curl -i \
   http://127.0.0.1:8080/ingest
 ```
 
-Unsigned webhook mode is for local/internal testing only. Production deployments
-should configure `ZAMMAD__WEBHOOK_HMAC_SECRET`.
+Supported deployments always configure `ZAMMAD__WEBHOOK_HMAC_SECRET`; there is no
+unsigned runtime mode. Tests that construct an intentionally invalid app may exercise
+the defensive `503 webhook_auth_not_configured` response.

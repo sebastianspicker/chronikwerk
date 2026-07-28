@@ -1,5 +1,5 @@
 runtimes:
-  - python@3.11.11
+  - python@3.14.6
 
 tools:
   - lizard@1.22.2

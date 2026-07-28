@@ -1,13 +1,16 @@
 # Release Checklist
 
-This project uses SemVer and Keep-a-Changelog style `CHANGELOG.md`.
+This project uses PEP 440 for Python package versions, SemVer-like prerelease Git tags,
+and a Keep-a-Changelog style `CHANGELOG.md`.
 
 ## Release Modes
 
 | Mode | Package version | Git tag |
 | --- | --- | --- |
-| stable | `0.2.0` | `v0.2.0` |
-| release candidate | `0.2.0rcN` | `v0.2.0-rc.N` |
+| alpha | `0.3.0aN` | `v0.3.0-alpha.N` |
+| beta | `0.3.0bN` | `v0.3.0-beta.N` |
+| stable | `0.3.0` | `v0.3.0` |
+| release candidate | `0.3.0rcN` | `v0.3.0-rc.N` |
 
 ## Preconditions
 
@@ -15,23 +18,30 @@ This project uses SemVer and Keep-a-Changelog style `CHANGELOG.md`.
 - The working tree is clean.
 - CI is green for the commit being released.
 - `make verify` is the first local release validation command: it enforces
-  branch-aware coverage at 85%, static/unit/integration/NFR checks, docs/config
-  checks, build and clean-wheel import, production-image unsigned-render smoke,
-  and dedicated Docker E2E.
+  branch-aware coverage at 85%, Python and TypeScript checks, complexity and
+  duplication gates, static/unit/integration/contract checks, public and code
+  documentation checks, config checks, build and clean-wheel import,
+  production-image unsigned-render smoke, and dedicated Docker E2E.
 - On hosts without Docker, use `make verify-core` for non-container diagnostics;
   it is not release sign-off because image and E2E checks remain mandatory.
 - Security dependency auditing remains a separate required fail-closed workflow
   covering base and signing dependency environments.
-- RC publication is tag-only (`v*-rc.*`): reusable CI and security workflows
+- Prerelease packaging is tag-only (`v*-alpha.*`, `v*-beta.*`, or `v*-rc.*`):
+  reusable CI and security workflows
   must pass for the tagged SHA, and the release job downloads their `dist`
   artifact rather than rebuilding. Tag/version normalization and the exact
-  nonempty `CHANGELOG.md` section are mandatory checks.
+  nonempty `CHANGELOG.md` section are mandatory checks. The workflow creates a draft
+  GitHub prerelease; a release owner publishes it only after the external and manual
+  gates below are complete for the exact tagged artifact.
 - Security workflow is green.
+- The repository Docker workflow is build-only. If an image is part of the release,
+  publish it through a separately reviewed workflow after the image gates pass.
 - Target version and tag format are decided.
 
 ## Version and Changelog
 
-1. Update `project.version` in `pyproject.toml`.
+1. Update `project.version` in `pyproject.toml` and `__version__` in
+   `src/chronikwerk/_version.py`; the contract suite enforces equality.
 2. Move `CHANGELOG.md` entries from `[Unreleased]` into the release section.
 3. Leave an empty `[Unreleased]` section for future work.
 
@@ -48,30 +58,33 @@ The commands below document the constituent non-container checks for diagnosis:
 
 ```bash
 python -m ruff check .
-python -m ruff check src --select C901
 python -m mypy . --config-file pyproject.toml
 python -m pytest -q
+make frontend-check
+make complexity
+make duplication
 make docs-check
+make code-docs-check
 python -m build
 ```
 
 ## Wheel Smoke Test
 
 ```bash
-python -m venv /tmp/zpa-release-venv
-. /tmp/zpa-release-venv/bin/activate
+python -m venv /tmp/chronikwerk-release-venv
+. /tmp/chronikwerk-release-venv/bin/activate
 python -m pip install -U pip
 python -m pip install dist/*.whl
 python - <<'PY'
-from zammad_pdf_archiver.app.server import create_app
-from zammad_pdf_archiver.config.settings import Settings
+from chronikwerk.app.server import create_app
+from chronikwerk.config.settings import Settings
 
 settings = Settings.from_mapping({
     "zammad": {"base_url": "https://example.invalid", "api_token": "x"},
     "storage": {"root": "/tmp"},
 })
 app = create_app(settings)
-assert app.title == "zammad-pdf-archiver"
+assert app.title == "Chronikwerk"
 print("wheel-import-ok", app.version)
 PY
 ```
@@ -89,13 +102,13 @@ make test-e2e
 ```
 
 ```bash
-docker build -t zammad-pdf-archiver:local .
+docker build -t chronikwerk:local .
 docker run --rm -p 8080:8080 \
   -e ZAMMAD__BASE_URL=https://example.invalid \
   -e ZAMMAD__API_TOKEN=x \
   -e ZAMMAD__WEBHOOK_HMAC_SECRET=local-smoke-webhook-secret-at-least-32-characters \
   -e STORAGE__ROOT=/tmp \
-  zammad-pdf-archiver:local
+  chronikwerk:local
 ```
 
 In another terminal:
@@ -118,6 +131,13 @@ PY
 - Confirm admin routes return 404 when `admin.enabled=false`.
 - Run keyboard-only and axe checks in German and English across Chromium, Firefox, and
   WebKit at desktop, 768px, 390px, and 400% zoom.
+- Regenerate `docs/screenshots/*` from the clean tagged candidate and record the exact
+  tag, commit, browser version, viewport, locale, UTC timestamp, and checksums in the
+  screenshot manifest.
+  - `make docs-screenshots` refreshes the repository-owned deterministic previews and
+    source hashes.
+  - Replace or supplement them with real browser captures for the frozen candidate and
+    update the manifest before publication.
 - Verify secure-cookie behavior behind the production TLS proxy and confirm no external
   browser asset requests.
 - Run veraPDF 1.30.1 with the `ua1` profile on unsigned and signed representative PDFs;
@@ -133,18 +153,20 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-For release candidates:
+For prereleases:
 
 ```bash
-git tag vX.Y.Z-rc.N
-git push origin vX.Y.Z-rc.N
+git tag vX.Y.Z-alpha.N  # or beta.N / rc.N
+git push origin vX.Y.Z-alpha.N
 ```
 
 ## GitHub Release
 
-1. Verify CI artifacts for the tag.
-2. Create or verify the GitHub release.
-3. Use the matching `CHANGELOG.md` section as release notes.
+1. Verify CI artifacts and checksums for the tag.
+2. Verify the draft GitHub prerelease and its release notes.
+3. Complete the browser, PDF/UA, live integration, and manual approval gates against the
+   exact tagged artifact.
+4. Publish the draft prerelease.
 
 ## Post-Release
 

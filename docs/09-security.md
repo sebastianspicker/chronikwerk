@@ -18,9 +18,10 @@ flowchart LR
 ## Security-Relevant Assets
 
 - `ZAMMAD__WEBHOOK_HMAC_SECRET`
-- `ZAMMAD__API_TOKEN`
+- `ZAMMAD__API_TOKEN` (portable alias: `ZAMMAD_API_TOKEN`)
 - `RETRY_BEARER_TOKEN`
 - `OBSERVABILITY__METRICS_BEARER_TOKEN`
+- `OBSERVABILITY__HISTORY_BEARER_TOKEN`
 - `SIGNING__PFX_PATH` and `SIGNING__PFX_PASSWORD`
 - `SIGNING__TIMESTAMP__RFC3161__USER`
 - `SIGNING__TIMESTAMP__RFC3161__PASSWORD`
@@ -32,13 +33,19 @@ flowchart LR
 ### Forged Webhooks
 
 - HMAC verification for `/ingest` and `/ingest/batch`.
-- Fail-closed behavior when signed mode is required but no secret is configured.
+- Startup validation requires a random, non-placeholder webhook secret containing at
+  least 32 characters. There is no supported unsigned mode.
+- The middleware retains a defensive fail-closed `503` response if an application is
+  constructed without validated settings.
 - SHA-256 HMAC signatures are required; SHA-1 is not accepted.
 
 ### Replay and Duplicate Delivery
 
-- Best-effort in-memory dedupe keyed by `X-Zammad-Delivery`.
-- Optional strict delivery-ID requirement.
+- Best-effort in-memory dedupe keyed by `X-Zammad-Delivery`, with a fail-closed
+  10,000-entry process-local bound.
+- Optional strict delivery-ID mode authenticates the normalized delivery ID as
+  part of the SHA-256 HMAC input, so a captured body/signature cannot be replayed
+  under a fresh ID. The canonical byte format is documented in `docs/api.md`.
 
 Residual risk: dedupe state is process-local and resets on restart.
 
@@ -54,21 +61,27 @@ Residual risk: filesystem behavior still depends on the mounted storage and OS.
 ### Secret Leakage
 
 - Structured events and exception messages are scrubbed for known secret-like
-  values.
+  values, including compound client credentials and escaped quoted values.
 - Ticket error notes use scrubbed exception text.
 
 Residual risk: redaction is best-effort. Do not log raw config or full exception
 objects in production.
 
 Repository policy ignores local environment files, YAML overrides, credential and
-signing material, generated archive PDFs, admin state, local evidence, and agent/tool
-state. Public examples contain placeholders only. A clean checkout or published image,
-not a developer working tree, is the deployment input.
+signing material, archive PDFs, admin state, local evidence, and development
+tool state. Public examples contain placeholders only. A clean checkout or published
+image, not a developer working tree, is the deployment input.
 
 ### Request Flooding and Oversized Payloads
 
 - Request body size limit middleware.
 - Token-bucket rate limiting.
+- Deep storage health probes are single-flight; concurrent deep requests fail
+  with `503` instead of queueing more filesystem work.
+
+Residual risk: deep probes are unauthenticated, perform a temporary archive-storage
+write, and are not rate-limited across sequential requests. Keep them on a trusted
+operator path.
 
 ### Unsafe Upstream Transport
 
@@ -103,7 +116,10 @@ State-changing operations require a per-session CSRF token. Admin responses are
 `no-store` and enforce a same-origin CSP, frame denial, `nosniff`, and no-referrer policy.
 Managed configuration is restricted to an explicit non-secret registry, rejects unknown
 and environment-owned fields, writes atomically with an `If-Match` revision precondition,
-and never stores secret values. The UI cannot restart the service.
+and never stores secret values. Existing managed-state directories must be owned by the
+service identity and must not be group- or world-writable. Every POSIX path component is
+opened without following symlinks, and directory identities are rechecked before reads,
+writes, pruning, or rollback. The UI cannot restart the service.
 
 ## Hardening Checklist
 
@@ -116,7 +132,13 @@ and never stores secret values. The UI cannot restart the service.
 - Keep admin disabled until the release gates pass; when enabled, place it behind TLS and
   the existing trusted-network boundary and rotate `ADMIN__ACCESS_TOKEN` externally.
 - Keep signing/TSA credentials outside the repository.
+- Mount the PFX as a bounded, read-only regular file with service-account ownership;
+  do not use a symlink or group- or world-writable key file.
 - Use a dedicated archive mount and service identity.
+- Block `/docs`, `/redoc`, and `/openapi.json` at the trusted proxy when interactive API
+  documentation is not required. These endpoints are unauthenticated in this candidate.
+- Treat service logs and internal Zammad notes as sensitive operational data. They can
+  contain delivery identifiers and absolute archive paths.
 - Monitor archive write failures and ticket `pdf:error` notes.
 
 ## See Also

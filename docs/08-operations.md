@@ -26,17 +26,25 @@ accepted. Batch requests are rejected as a whole when their jobs do not fit.
 ## Start and Stop
 
 ```bash
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env ps
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env logs -f
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env down
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env up -d --build
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env ps
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env logs -f
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env down
 ```
 
 Health check:
 
 ```bash
-curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz"
-curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz?deep=true"
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env exec -T chronikwerk \
+  python - <<'PY'
+import os
+import urllib.request
+
+port = os.getenv("SERVER__PORT", "8080")
+for path in ("/healthz", "/healthz?deep=true"):
+    response = urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=2)
+    print(path, response.status)
+PY
 ```
 
 ## Update and Rollback
@@ -44,10 +52,10 @@ curl -fsS "http://127.0.0.1:${SERVER__PORT:-8080}/healthz?deep=true"
 Update:
 
 ```bash
-cd /opt/zammad-ticket-archiver
+cd /opt/chronikwerk
 sudo git fetch --tags --prune
 sudo git checkout <new-release-tag>
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env up -d --build
 ```
 
 Update from a clean tag or a versioned image. Never synchronize a developer working tree
@@ -57,9 +65,9 @@ must remain outside the deployment source tree.
 Rollback:
 
 ```bash
-cd /opt/zammad-ticket-archiver
+cd /opt/chronikwerk
 sudo git checkout <known-good-commit-or-tag>
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env up -d --build
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env up -d --build
 ```
 
 For no-build rollbacks, publish versioned images and pin compose `image:` tags.
@@ -69,25 +77,25 @@ inactive until the process is restarted externally. If a staged revision prevent
 startup, use the offline CLI against the same external configuration and state directory:
 
 ```bash
-zammad-archiver-cli list-config-revisions
-zammad-archiver-cli stage-config-rollback <full-revision-hash>
-sudo docker compose --env-file /etc/zammad-archiver/zammad-archiver.env restart
+chronikwerk-admin list-config-revisions
+chronikwerk-admin stage-config-rollback <full-revision-hash>
+sudo docker compose --env-file /etc/chronikwerk/chronikwerk.env restart
 ```
 
 ## Optional systemd Wrapper
 
 ```bash
-sudo install -m 0644 infra/systemd/zammad-archiver.service /etc/systemd/system/zammad-archiver.service
+sudo install -m 0644 infra/systemd/chronikwerk.service /etc/systemd/system/chronikwerk.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now zammad-archiver.service
+sudo systemctl enable --now chronikwerk.service
 ```
 
-The unit assumes `/opt/zammad-ticket-archiver`. Adjust `WorkingDirectory=` if
+The unit assumes `/opt/chronikwerk`. Adjust `WorkingDirectory=` if
 your deployment path differs.
 
 ```bash
-sudo systemctl status zammad-archiver.service
-sudo journalctl -u zammad-archiver.service -f
+sudo systemctl status chronikwerk.service
+sudo journalctl -u chronikwerk.service -f
 ```
 
 ## Observability
@@ -99,6 +107,9 @@ Primary signals:
 - ticket tags (`pdf:sign`, `pdf:processing`, `pdf:signed`, `pdf:error`)
 - `GET /jobs/history`
 - optional Prometheus metrics
+
+Treat logs and internal ticket notes as sensitive operational data. They can contain
+delivery identifiers and absolute archive paths.
 
 ## Idempotency and Retry Limits
 
@@ -124,7 +135,7 @@ or `POST /retry/{ticket_id}` after resolving the cause.
 
 ## Reprocessing Workflow
 
-1. Read the latest archiver ticket note and classification.
+1. Read the latest Chronikwerk ticket note and classification.
 2. Fix the root cause: storage, credentials, network, signing, TSA, or payload.
 3. Remove stale `pdf:processing` if present.
 4. Ensure the trigger tag is present unless using `POST /retry/{ticket_id}`.
@@ -144,7 +155,9 @@ Check:
 
 ### `503 webhook_auth_not_configured`
 
-Set `ZAMMAD__WEBHOOK_HMAC_SECRET` for signed mode.
+Normal startup rejects a missing webhook secret. Set
+`ZAMMAD__WEBHOOK_HMAC_SECRET` to a random, non-placeholder value containing at least
+32 characters.
 
 ### `400 missing_delivery_id`
 
@@ -159,7 +172,8 @@ Check:
 - Zammad API token permissions
 - signing PFX path/password
 - TSA URL, credentials, and trust
-- `pdf.max_articles` and attachment limits for large tickets
+- `pdf.max_articles` and `pdf.article_limit_mode` for large tickets; attachment
+  binaries are not archived and have no byte-limit setting
 
 ### Ticket remains `pdf:processing`
 

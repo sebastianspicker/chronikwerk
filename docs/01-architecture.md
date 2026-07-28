@@ -1,6 +1,6 @@
 # 01 - Architecture
 
-`zammad-pdf-archiver` is a single FastAPI service with process-local background
+Chronikwerk is a single FastAPI service with process-local background
 processing.
 
 ## Runtime Flow
@@ -56,14 +56,14 @@ Default tags:
 
 | Area | Paths | Responsibility |
 | --- | --- | --- |
-| App and routes | `src/zammad_pdf_archiver/app/` | FastAPI setup, middleware, HTTP routes, admission, process-local history, and the feature-flagged admin control plane. |
-| Zammad adapter | `src/zammad_pdf_archiver/adapters/zammad/` | Ticket/articles/tags fetches and ticket updates. |
-| Snapshot adapter | `src/zammad_pdf_archiver/adapters/snapshot/` | Normalize Zammad data into render input. |
-| PDF adapter | `src/zammad_pdf_archiver/adapters/pdf/` | Render HTML and PDF bytes. |
-| Signing adapter | `src/zammad_pdf_archiver/adapters/signing/` | PAdES signing and RFC3161 timestamping. |
-| Storage adapter | `src/zammad_pdf_archiver/adapters/storage/` | Root-confined filesystem writes. |
-| Domain | `src/zammad_pdf_archiver/domain/` | Pure policy, models, validation, and error classification. |
-| Config | `src/zammad_pdf_archiver/config/` | Settings, precedence, redaction, validation, and atomic managed non-secret revisions. |
+| App and routes | `src/chronikwerk/app/` | FastAPI setup, middleware, HTTP routes, admission, process-local history, and the feature-flagged admin control plane. |
+| Zammad adapter | `src/chronikwerk/adapters/zammad/` | Ticket/articles/tags fetches and ticket updates. |
+| Snapshot adapter | `src/chronikwerk/adapters/snapshot/` | Normalize Zammad data into render input. |
+| PDF adapter | `src/chronikwerk/adapters/pdf/` | Render HTML and PDF bytes. |
+| Signing adapter | `src/chronikwerk/adapters/signing/` | PAdES signing and RFC3161 timestamping. |
+| Storage adapter | `src/chronikwerk/adapters/storage/` | Root-confined filesystem writes. |
+| Domain | `src/chronikwerk/domain/` | Pure policy, models, validation, and error classification. |
+| Config | `src/chronikwerk/config/` | Settings, precedence, redaction, validation, and atomic managed non-secret revisions. |
 
 ## Important Runtime Constraints
 

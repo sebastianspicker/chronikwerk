@@ -1,3 +1,5 @@
+"""Run the disposable Docker stack and prove its public ingest-to-archive path."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,12 +12,48 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-DEFAULT_PROJECT = "zammad-archiver-e2e"
+if TYPE_CHECKING:
+    from .docker_api_checks import (
+        PROCESSED_STATUS,
+        E2EFailure,
+        assert_artifacts,
+        assert_expected_statuses,
+        assert_mock_state,
+        expected_processed_ticket_ids,
+        expected_statuses_from_dataset,
+        latest_status_by_ticket,
+    )
+else:
+    _checks = import_module(
+        f"{__package__}.docker_api_checks" if __package__ else "docker_api_checks"
+    )
+    PROCESSED_STATUS = _checks.PROCESSED_STATUS
+    E2EFailure = _checks.E2EFailure
+    assert_artifacts = _checks.assert_artifacts
+    assert_expected_statuses = _checks.assert_expected_statuses
+    assert_mock_state = _checks.assert_mock_state
+    expected_processed_ticket_ids = _checks.expected_processed_ticket_ids
+    expected_statuses_from_dataset = _checks.expected_statuses_from_dataset
+    latest_status_by_ticket = _checks.latest_status_by_ticket
+
+__all__ = [
+    "E2EFailure",
+    "PROCESSED_STATUS",
+    "assert_artifacts",
+    "assert_expected_statuses",
+    "assert_mock_state",
+    "expected_processed_ticket_ids",
+    "expected_statuses_from_dataset",
+    "latest_status_by_ticket",
+]
+
+DEFAULT_PROJECT = "chronikwerk-e2e"
 DEFAULT_COMPOSE_FILE = Path("infra/e2e/docker-compose.yml")
 DEFAULT_DATASET = Path("infra/e2e/dataset.json")
 DEFAULT_ARCHIVER_URL = "http://127.0.0.1:18080"
@@ -25,14 +63,10 @@ DEFAULT_HISTORY_TOKEN = "e2e-history-bearer-token-0123456789abcdef"
 DEFAULT_HMAC_SECRET = "e2e-webhook-hmac-secret-0123456789abcdef"
 DEFAULT_TIMEOUT_SECONDS = 90.0
 RETRY_TICKET_ID = 1104
-PROCESSED_STATUS = "processed"
-
-
-class E2EFailure(RuntimeError):
-    """Raised when the Docker API E2E lane cannot prove the expected behavior."""
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse local-only stack coordinates and deterministic test credentials."""
     parser = argparse.ArgumentParser(description="Run Docker API E2E smoke test")
     parser.add_argument("--project", default=DEFAULT_PROJECT)
     parser.add_argument("--compose-file", type=Path, default=DEFAULT_COMPOSE_FILE)
@@ -49,6 +83,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _load_dataset(path: Path) -> dict[str, Any]:
+    """Load the fixture contract before Docker is allowed to mutate local state."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise E2EFailure("dataset phase: dataset must be a JSON object")
@@ -58,108 +93,13 @@ def _load_dataset(path: Path) -> dict[str, Any]:
     return payload
 
 
-def expected_statuses_from_dataset(dataset: dict[str, Any]) -> dict[int, str]:
-    seed_plan = dataset.get("seed_plan")
-    if not isinstance(seed_plan, list):
-        raise E2EFailure("dataset phase: dataset.seed_plan must be a list")
-
-    expected: dict[int, str] = {}
-    for index, item in enumerate(seed_plan):
-        if not isinstance(item, dict):
-            raise E2EFailure(f"dataset phase: seed_plan[{index}] must be an object")
-        try:
-            ticket_id = int(item["ticket_id"])
-            status = str(item["expected_status"]).strip()
-        except (KeyError, TypeError, ValueError) as exc:
-            raise E2EFailure(
-                f"dataset phase: seed_plan[{index}] must define ticket_id and expected_status"
-            ) from exc
-        if not status:
-            raise E2EFailure(f"dataset phase: seed_plan[{index}].expected_status is empty")
-        expected[ticket_id] = status
-    return expected
-
-
-def latest_status_by_ticket(history_payload: dict[str, Any]) -> dict[int, str]:
-    items = history_payload.get("entries")
-    if not isinstance(items, list):
-        raise E2EFailure("history phase: history payload has no entries list")
-
-    statuses: dict[int, str] = {}
-    # /jobs/history returns newest first; keep the first status per ticket.
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        raw_ticket_id = item.get("ticket_id")
-        raw_status = item.get("status")
-        if raw_ticket_id is None or raw_status is None:
-            continue
-        try:
-            ticket_id = int(raw_ticket_id)
-        except (TypeError, ValueError):
-            continue
-        status = str(raw_status)
-        statuses.setdefault(ticket_id, status)
-    return statuses
-
-
-def assert_expected_statuses(
-    history_payload: dict[str, Any],
-    expected: dict[int, str],
-) -> None:
-    latest = latest_status_by_ticket(history_payload)
-    mismatches: list[str] = []
-    for ticket_id, expected_status in sorted(expected.items()):
-        actual = latest.get(ticket_id)
-        if actual != expected_status:
-            mismatches.append(
-                f"ticket {ticket_id}: expected {expected_status!r}, got {actual!r}"
-            )
-    if mismatches:
-        raise E2EFailure("history phase: terminal status mismatch: " + "; ".join(mismatches))
-
-
-def assert_artifacts(
-    artifact_payload: dict[str, Any],
-    expected_ticket_ids: set[int],
-) -> None:
-    pdf_count = int(artifact_payload.get("pdf_count", 0))
-    bad_pdfs = [str(path) for path in artifact_payload.get("bad_pdfs", [])]
-    artifacts = artifact_payload.get("artifacts")
-    if not isinstance(artifacts, list):
-        raise E2EFailure("artifact phase: artifact inspection has no artifacts list")
-    by_ticket: dict[int, dict[str, Any]] = {}
-    for item in artifacts:
-        if not isinstance(item, dict):
-            raise E2EFailure("artifact phase: malformed artifact entry")
-        try:
-            by_ticket[int(item["ticket_id"])] = item
-        except (KeyError, TypeError, ValueError) as exc:
-            raise E2EFailure("artifact phase: sidecar has invalid ticket_id") from exc
-    missing_sidecars = sorted(expected_ticket_ids - by_ticket.keys())
-
-    if pdf_count < len(expected_ticket_ids):
-        raise E2EFailure(
-            f"artifact phase: expected at least {len(expected_ticket_ids)} PDFs, got {pdf_count}"
-        )
-    if bad_pdfs:
-        raise E2EFailure("artifact phase: PDFs without %PDF header: " + ", ".join(bad_pdfs))
-    if missing_sidecars:
-        raise E2EFailure(
-            "artifact phase: missing sidecars for ticket IDs "
-            + ", ".join(str(ticket_id) for ticket_id in missing_sidecars)
-        )
-    for ticket_id in sorted(expected_ticket_ids):
-        item = by_ticket[ticket_id]
-        if item.get("pdf_sha256") != item.get("sha256"):
-            raise E2EFailure(f"artifact phase: checksum mismatch for ticket {ticket_id}")
-
-
 def _compose_base(project: str, compose_file: Path) -> list[str]:
+    """Build the shared Compose prefix so setup and teardown target one project."""
     return ["docker", "compose", "-p", project, "-f", str(compose_file)]
 
 
 def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    """Run only resolved Docker commands, keeping subprocess inputs constrained."""
     command = list(args)
     if not command or command[0] != "docker":
         raise E2EFailure("internal error: only docker commands are supported")
@@ -176,6 +116,7 @@ def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _run_checked(args: Sequence[str], *, phase: str) -> str:
+    """Convert Compose failures into phase-labelled E2E failures with useful output."""
     proc = _run_command(args)
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
@@ -186,6 +127,7 @@ def _run_checked(args: Sequence[str], *, phase: str) -> str:
 
 
 def _port_from_url(url: str) -> int:
+    """Resolve explicit and scheme-default ports before starting the stack."""
     parsed = httpx.URL(url)
     port = parsed.port
     if port is None:
@@ -194,6 +136,7 @@ def _port_from_url(url: str) -> int:
 
 
 def _assert_ports_available(urls: Sequence[str], *, extra_ports: Sequence[int] = ()) -> None:
+    """Fail before Compose startup rather than colliding with an unrelated service."""
     blocked: list[str] = []
     ports = [_port_from_url(url) for url in urls]
     ports.extend(int(port) for port in extra_ports)
@@ -209,6 +152,7 @@ def _assert_ports_available(urls: Sequence[str], *, extra_ports: Sequence[int] =
 
 
 def _wait_http_ok(client: httpx.Client, label: str, url: str, *, timeout_s: float) -> None:
+    """Poll a health endpoint until it proves readiness or the bounded deadline expires."""
     deadline = time.monotonic() + timeout_s
     last_error = ""
     while time.monotonic() < deadline:
@@ -232,6 +176,7 @@ def _request_json(
     json_body: Any | None = None,
     hmac_secret: str | None = None,
 ) -> tuple[int, Any]:
+    """Issue JSON requests and attach the HMAC over the exact serialized bytes."""
     request_headers = dict(headers or {})
     content: bytes | None = None
     if json_body is not None:
@@ -255,6 +200,7 @@ def _wait_for_statuses(
     expected: dict[int, str],
     timeout_s: float,
 ) -> dict[str, Any]:
+    """Poll volatile history until its terminal states satisfy the fixture oracle."""
     deadline = time.monotonic() + timeout_s
     last_error = ""
     while time.monotonic() < deadline:
@@ -284,6 +230,7 @@ def _seed_dataset(
     dataset: dict[str, Any],
     hmac_secret: str,
 ) -> None:
+    """Reset the double then submit every signed webhook delivery in the seed plan."""
     reset_code, reset_payload = _request_json(client, "POST", f"{mock_url}/__e2e/reset")
     if reset_code != 200:
         raise E2EFailure(f"ingest phase: mock reset failed ({reset_code}): {reset_payload}")
@@ -314,6 +261,7 @@ def _retry_ticket(
     admin_token: str,
     ticket_id: int,
 ) -> None:
+    """Exercise the protected retry endpoint for the intentionally skipped fixture."""
     status_code, payload = _request_json(
         client,
         "POST",
@@ -324,16 +272,7 @@ def _retry_ticket(
         raise E2EFailure(f"admin retry phase: HTTP {status_code}: {payload}")
 
 
-def expected_processed_ticket_ids(expected_statuses: dict[int, str]) -> set[int]:
-    return {
-        ticket_id
-        for ticket_id, status in expected_statuses.items()
-        if status == PROCESSED_STATUS
-    }
-
-
-def _inspect_artifacts(project: str, compose_file: Path) -> dict[str, Any]:
-    inspector = r"""
+_ARTIFACT_INSPECTOR_SCRIPT = r"""
 import hashlib
 import json
 from pathlib import Path
@@ -365,6 +304,10 @@ print(json.dumps({
     "artifacts": artifacts,
 }, sort_keys=True))
 """
+
+
+def _inspect_artifacts(project: str, compose_file: Path) -> dict[str, Any]:
+    """Inspect files inside the archiver container to avoid host-volume assumptions."""
     stdout = _run_checked(
         [
             *_compose_base(project, compose_file),
@@ -373,7 +316,7 @@ print(json.dumps({
             "archiver",
             "python",
             "-c",
-            inspector,
+            _ARTIFACT_INSPECTOR_SCRIPT,
         ],
         phase="artifact",
     )
@@ -387,6 +330,7 @@ print(json.dumps({
 
 
 def _print_dry_run(args: argparse.Namespace, dataset: dict[str, Any]) -> int:
+    """Describe the destructive Docker sequence without starting any containers."""
     expected = expected_statuses_from_dataset(dataset)
     print("DRY RUN: Docker API E2E smoke")
     print(f"- Compose project: {args.project}")
@@ -407,6 +351,7 @@ def _print_dry_run(args: argparse.Namespace, dataset: dict[str, Any]) -> int:
 
 
 def _prepare_stack(args: argparse.Namespace, compose_file: Path) -> list[str]:
+    """Remove a stale project and reserve ports before the real startup phase."""
     base = _compose_base(args.project, compose_file)
     _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
     _assert_ports_available(
@@ -416,6 +361,7 @@ def _prepare_stack(args: argparse.Namespace, compose_file: Path) -> list[str]:
 
 
 def _wait_for_stack_ready(args: argparse.Namespace, client: httpx.Client) -> None:
+    """Require both the mock upstream and archiver health endpoints before ingest."""
     _wait_http_ok(
         client,
         "mock-zammad",
@@ -437,6 +383,7 @@ def _exercise_ingest_flow(
     dataset: dict[str, Any],
     expected: dict[int, str],
 ) -> dict[int, str]:
+    """Run initial deliveries, then retry the planned skipped ticket to completion."""
     print("E2E: seeding ingest requests")
     _seed_dataset(
         client,
@@ -480,6 +427,7 @@ def _verify_artifacts(
     compose_file: Path,
     expected_after_retry: dict[int, str],
 ) -> None:
+    """Validate container-side PDF and sidecar evidence after processing completes."""
     print("E2E: inspecting archived artifacts")
     artifacts = _inspect_artifacts(args.project, compose_file)
     assert_artifacts(artifacts, expected_processed_ticket_ids(expected_after_retry))
@@ -491,31 +439,17 @@ def _verify_mock_state(
     mock_url: str,
     expected_processed: set[int],
 ) -> None:
+    """Read the mock's state endpoint and assert Zammad-facing side effects."""
     status_code, payload = _request_json(client, "GET", f"{mock_url}/__e2e/state")
     if status_code != 200 or not isinstance(payload, dict):
         raise E2EFailure(
             f"mock verification phase: invalid state response: {status_code}: {payload}"
         )
-    tags = payload.get("tags")
-    notes = payload.get("notes")
-    if not isinstance(tags, dict) or not isinstance(notes, dict):
-        raise E2EFailure("mock verification phase: state has no tags/notes maps")
-    for ticket_id in sorted(expected_processed):
-        raw_tags = tags.get(str(ticket_id), tags.get(ticket_id, []))
-        if not isinstance(raw_tags, list):
-            raise E2EFailure(f"mock verification phase: ticket {ticket_id} has malformed tags")
-        ticket_tags = {str(value) for value in raw_tags}
-        if "pdf:signed" not in ticket_tags:
-            raise E2EFailure(f"mock verification phase: ticket {ticket_id} is not signed")
-        ticket_notes = notes.get(str(ticket_id), notes.get(ticket_id, []))
-        if not isinstance(ticket_notes, list) or not any(
-            isinstance(note, dict) and "PDF archived" in str(note.get("subject", ""))
-            for note in ticket_notes
-        ):
-            raise E2EFailure(f"mock verification phase: ticket {ticket_id} has no archive note")
+    assert_mock_state(payload, expected_processed)
 
 
 def run(args: argparse.Namespace) -> int:
+    """Coordinate the bounded E2E lifecycle and always clean up by default."""
     compose_file = args.compose_file.expanduser().resolve()
     dataset = _load_dataset(args.dataset.expanduser().resolve())
     expected = expected_statuses_from_dataset(dataset)
@@ -526,7 +460,7 @@ def run(args: argparse.Namespace) -> int:
     base = _prepare_stack(args, compose_file)
 
     try:
-        print("E2E: starting Docker demo stack")
+        print("E2E: starting Docker test stack")
         _run_checked([*base, "up", "-d", "--build"], phase="startup")
 
         with httpx.Client(timeout=20.0) as client:
@@ -558,6 +492,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """Translate expected E2E assertion failures into a stable CLI exit status."""
     args = _parse_args()
     try:
         return run(args)

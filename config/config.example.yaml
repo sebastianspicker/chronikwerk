@@ -1,4 +1,4 @@
-# Example zammad-pdf-archiver configuration. Copy to config/config.yaml and adjust values.
+# Example Chronikwerk configuration. Copy to config/config.yaml and adjust values.
 # Do not commit secrets.
 
 server:
@@ -86,7 +86,7 @@ admission:
 admin:
   enabled: false
   access_token: null
-  state_dir: "/var/lib/zammad-pdf-archiver/admin"
+  state_dir: "/var/lib/chronikwerk/admin"
   session_idle_seconds: 1800
   session_absolute_seconds: 28800
   cookie_secure: true

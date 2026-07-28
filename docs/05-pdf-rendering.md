@@ -19,16 +19,16 @@ flowchart LR
 
 Code paths:
 
-- `src/zammad_pdf_archiver/adapters/snapshot/build_snapshot.py`
-- `src/zammad_pdf_archiver/adapters/pdf/template_engine.py`
-- `src/zammad_pdf_archiver/adapters/pdf/render_pdf.py`
-- `src/zammad_pdf_archiver/templates/`
+- `src/chronikwerk/adapters/snapshot/build_snapshot.py`
+- `src/chronikwerk/adapters/pdf/template_engine.py`
+- `src/chronikwerk/adapters/pdf/render_pdf.py`
+- `src/chronikwerk/templates/`
 
 ## Template Contract
 
 Bundled template:
 
-- `src/zammad_pdf_archiver/templates/default/ticket.html`
+- `src/chronikwerk/templates/default/ticket.html`
 
 Provided variables:
 
@@ -88,3 +88,8 @@ wide tables are contained within A4 bounds.
 The renderer option is not a conformance claim. Release validation requires veraPDF
 1.30.1 with profile `ua1` for signed and unsigned fixtures plus human reading-order,
 outline, language, and assistive-technology checks.
+
+Ticket pipelines may run concurrently, but entry into the native WeasyPrint/
+FontConfig/Pango renderer is serialized inside worker threads. This keeps native
+renderer state off the event loop and prevents concurrent render calls from
+crashing the service process.

@@ -1,4 +1,6 @@
 # pylint: disable=import-outside-toplevel
+"""Fail closed when pip-audit findings cannot be proven below the release threshold."""
+
 from __future__ import annotations
 
 import json
@@ -23,6 +25,8 @@ KNOWN_SEVERITIES = frozenset({"NONE", *SEVERITY_ORDER})
 
 @dataclass(frozen=True)
 class Finding:
+    """Retain the package identity and OSV aliases needed for severity resolution."""
+
     package: str
     version: str
     vuln_id: str
@@ -34,6 +38,7 @@ class AuditReportError(ValueError):
 
 
 def _validate_required_packages(path: str, required: set[str]) -> None:
+    """Ensure the report covers explicitly required packages before trusting it."""
     if not required:
         return
     try:
@@ -59,6 +64,7 @@ def _validate_required_packages(path: str, required: set[str]) -> None:
 
 
 def _load_audit_status(path: str) -> int:
+    """Validate pip-audit command provenance and preserve its documented exit code."""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -76,6 +82,7 @@ def _load_audit_status(path: str) -> int:
 
 
 def _load_findings(path: str) -> list[Finding]:
+    """Parse only the report structure needed for a deterministic policy decision."""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -98,6 +105,7 @@ def _load_findings(path: str) -> list[Finding]:
 
 
 def _parse_dependency(dependency: object) -> tuple[str, str, list[object]]:
+    """Reject malformed dependency records instead of silently omitting findings."""
     if not isinstance(dependency, dict):
         raise AuditReportError("pip-audit report contains a malformed dependency")
     package = dependency.get("name")
@@ -113,6 +121,7 @@ def _parse_dependency(dependency: object) -> tuple[str, str, list[object]]:
 
 
 def _parse_finding(package: str, version: str, vulnerability: object) -> Finding:
+    """Normalize one vulnerability while retaining aliases for OSV lookup."""
     if not isinstance(vulnerability, dict):
         raise AuditReportError(f"pip-audit dependency {package!r} has malformed vuln")
     vuln_id = vulnerability.get("id")
@@ -130,6 +139,7 @@ def _parse_finding(package: str, version: str, vulnerability: object) -> Finding
 
 
 def _fetch_osv(vuln_id: str) -> dict | None:
+    """Fetch severity metadata over HTTPS, retrying only transient service failures."""
     url = f"{OSV_BASE}{vuln_id}"
     if urllib.parse.urlparse(url).scheme != "https":
         return None
@@ -143,12 +153,19 @@ def _fetch_osv(vuln_id: str) -> dict | None:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             return None
-        except Exception:
+        except (
+            OSError,
+            TimeoutError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            urllib.error.URLError,
+        ):
             return None
     return None
 
 
 def _severity_from_osv(osv: dict) -> tuple[str | None, float | None]:
+    """Prefer OSV's explicit label, otherwise derive evidence from its CVSS vectors."""
     db_sev = osv.get("database_specific", {}).get("severity")
     if isinstance(db_sev, str) and db_sev.strip():
         label = db_sev.strip().upper()
@@ -159,22 +176,7 @@ def _severity_from_osv(osv: dict) -> tuple[str | None, float | None]:
         score = item.get("score")
         if not isinstance(score, str) or not score.strip():
             continue
-
-        score = score.strip()
-        cvss_score: float | None = None
-        try:
-            if score.startswith("CVSS:3"):
-                from cvss import CVSS3  # type: ignore[import-not-found]
-
-                cvss_score = float(CVSS3(score).scores()[0])
-            elif score.startswith("CVSS:2"):
-                from cvss import CVSS2
-
-                cvss_score = float(CVSS2(score).scores()[0])
-            else:
-                cvss_score = float(score)
-        except Exception:
-            cvss_score = None
+        cvss_score = _parse_cvss_score(score.strip())
         if cvss_score is not None:
             cvss_scores.append(cvss_score)
 
@@ -184,7 +186,24 @@ def _severity_from_osv(osv: dict) -> tuple[str | None, float | None]:
     return None, max(cvss_scores)
 
 
+def _parse_cvss_score(score: str) -> float | None:
+    """Parse CVSS vectors when the optional library is present, otherwise fail closed."""
+    try:
+        if score.startswith("CVSS:3"):
+            from cvss import CVSS3  # type: ignore[import-not-found]
+
+            return float(CVSS3(score).scores()[0])
+        if score.startswith("CVSS:2"):
+            from cvss import CVSS2
+
+            return float(CVSS2(score).scores()[0])
+        return float(score)
+    except ImportError, AttributeError, IndexError, TypeError, ValueError:
+        return None
+
+
 def _severity_label_from_cvss(base_score: float) -> str:
+    """Map a CVSS base score to the policy's stable severity vocabulary."""
     # Common CVSS v3.x severity bands
     if base_score >= 9.0:
         return "CRITICAL"
@@ -198,6 +217,7 @@ def _severity_label_from_cvss(base_score: float) -> str:
 
 
 def _classify_findings(findings: list[Finding]) -> tuple[list[str], list[str], list[str]]:
+    """Group blocking and unverifiable findings while sharing OSV responses by ID."""
     osv_cache: dict[str, dict | None] = {}
     critical: list[str] = []
     high: list[str] = []
@@ -216,21 +236,8 @@ def _classify_findings(findings: list[Finding]) -> tuple[list[str], list[str], l
 
 
 def _resolve_severity(finding: Finding, osv_cache: dict[str, dict | None]) -> str | None:
-    resolved_labels: list[str] = []
-    resolved_cvss: list[float] = []
-
-    for vuln_id in [finding.vuln_id, *finding.aliases]:
-        if vuln_id not in osv_cache:
-            osv_cache[vuln_id] = _fetch_osv(vuln_id)
-        osv = osv_cache[vuln_id]
-        if not osv:
-            continue
-        label, cvss_base = _severity_from_osv(osv)
-        if label:
-            resolved_labels.append(label)
-        if cvss_base is not None:
-            resolved_cvss.append(cvss_base)
-
+    """Select the strongest trusted label; unknown labels remain policy failures."""
+    resolved_labels, resolved_cvss = _severity_evidence(finding, osv_cache)
     if any(label not in KNOWN_SEVERITIES for label in resolved_labels):
         return None
     if resolved_labels:
@@ -240,7 +247,29 @@ def _resolve_severity(finding: Finding, osv_cache: dict[str, dict | None]) -> st
     return None
 
 
+def _severity_evidence(
+    finding: Finding,
+    osv_cache: dict[str, dict | None],
+) -> tuple[list[str], list[float]]:
+    """Collect labels and scores across the primary advisory and every alias."""
+    labels: list[str] = []
+    cvss_scores: list[float] = []
+    for vuln_id in (finding.vuln_id, *finding.aliases):
+        if vuln_id not in osv_cache:
+            osv_cache[vuln_id] = _fetch_osv(vuln_id)
+        osv = osv_cache[vuln_id]
+        if not osv:
+            continue
+        label, cvss_base = _severity_from_osv(osv)
+        if label:
+            labels.append(label)
+        if cvss_base is not None:
+            cvss_scores.append(cvss_base)
+    return labels, cvss_scores
+
+
 def _report_blockers(critical: list[str], high: list[str], unknown: list[str]) -> int:
+    """Emit one actionable policy result, treating missing severity as blocking."""
     if critical:
         print("CRITICAL vulnerabilities found:")
         for line in critical:
@@ -262,6 +291,7 @@ def _report_blockers(critical: list[str], high: list[str], unknown: list[str]) -
 
 
 def _load_policy_inputs() -> tuple[int, list[Finding]]:
+    """Load provenance, findings, and required-package scope before classification."""
     audit_exit_code = _load_audit_status(STATUS_PATH)
     findings = _load_findings(INPUT_PATH)
     required_packages = {
@@ -274,6 +304,7 @@ def _load_policy_inputs() -> tuple[int, list[Finding]]:
 
 
 def main() -> int:
+    """Return stable CI codes for trusted clean, blocked, and malformed audit input."""
     try:
         audit_exit_code, findings = _load_policy_inputs()
     except AuditReportError as exc:

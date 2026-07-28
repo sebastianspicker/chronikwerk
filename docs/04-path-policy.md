@@ -16,7 +16,7 @@ Empty fragments are ignored, but at least one segment must remain.
 
 ### `archive_user_mode`
 
-Controls the user directory segment:
+Optionally controls the user directory segment. A missing value defaults to `owner`:
 
 - `owner`: `ticket.owner.login`
 - `current_agent`: webhook user login, falling back to `ticket.updated_by.login`
@@ -48,11 +48,19 @@ After validation, segments are sanitized deterministically:
 
 Examples:
 
-| Input | Output |
+| Input | Readable sanitized prefix |
 | --- | --- |
 | `Müller` | `Muller` |
 | `Sales Team EMEA` | `Sales_Team_EMEA` |
 | `客户` | `_` |
+
+Sanitization is lossy, so an archive component whose sanitized form differs
+from its raw input receives a `-<32 hex characters>` suffix derived from the
+SHA-256 digest of the raw UTF-8 input. This prevents distinct usernames, path
+segments, or ticket numbers such as `alice+hr` and `alice?hr` from mapping to
+the same archive location. Already-safe components remain unchanged. The
+readable prefix is truncated when necessary so the stored component stays
+within the 64-character path limit.
 
 ## Root Confinement
 
@@ -65,3 +73,6 @@ Example output:
 /mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_20260207T120000Z.pdf
 /mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_20260207T120000Z.pdf.json
 ```
+
+The example uses already-safe stored components; lossy inputs include the
+disambiguation suffix described above.

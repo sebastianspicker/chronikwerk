@@ -5,7 +5,8 @@
 No. `202` only means the request was accepted and background processing was
 scheduled. Confirm completion with:
 
-- ticket tags (`pdf:signed` or `pdf:error`)
+- ticket tags (`pdf:signed` or `pdf:error`); `pdf:signed` is the retained workflow
+  success tag and does not by itself prove that optional PAdES signing ran
 - latest internal ticket note
 - service logs using `ticket_id`, `delivery_id`, or `request_id`
 - archive PDF and sidecar presence on disk
@@ -22,8 +23,9 @@ Check:
 
 ## Why do I get `503 webhook_auth_not_configured`?
 
-The service is running in fail-closed webhook mode without a configured webhook
-secret. Set `ZAMMAD__WEBHOOK_HMAC_SECRET`.
+The app was constructed without validated webhook authentication settings. Normal
+service startup rejects a missing secret; set `ZAMMAD__WEBHOOK_HMAC_SECRET` to a random,
+non-placeholder value containing at least 32 characters.
 
 ## Why do I get `400 missing_delivery_id`?
 
@@ -37,10 +39,12 @@ final tag cleanup.
 
 Do this:
 
-1. Check logs and `/jobs/history`.
+1. Check logs. If process-local history is enabled, query `/jobs/history` using
+   `OBSERVABILITY__HISTORY_BEARER_TOKEN`.
 2. Remove stale `pdf:processing` if the job is no longer running.
 3. Fix the underlying failure.
-4. Trigger a fresh webhook or use `POST /retry/{ticket_id}`.
+4. Trigger a fresh webhook or, when `RETRY_BEARER_TOKEN` is configured, use
+   authenticated `POST /retry/{ticket_id}`.
 
 ## Why did the ticket get `pdf:error`?
 
@@ -66,12 +70,13 @@ Check:
 
 ## Can I run multiple service replicas?
 
-Only with care. The default dedupe, history, and in-flight locks are
-process-local. Multiple replicas can process the same ticket concurrently unless
-you add external coordination at the deployment layer.
+No. The supported alpha deployment is one service process. Dedupe, history,
+admission, and in-flight locks are process-local; multiple replicas can process the
+same ticket concurrently. External coordination would be a different deployment
+contract and is not covered by this release.
 
 ## Where should secrets live?
 
 Use environment variables, deployment secret stores, or files outside the
 repository. Do not commit `.env`, PFX files, private keys, API tokens, or
-generated archive output.
+archive output.

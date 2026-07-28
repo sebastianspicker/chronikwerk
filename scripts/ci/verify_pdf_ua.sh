@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Run the pinned veraPDF profile so CI and local validation apply the same PDF/UA rules.
 set -euo pipefail
 
 readonly required_version="1.30.1"

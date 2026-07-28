@@ -7,6 +7,8 @@
 .vscode
 .idea
 .cursor
+.aider*
+.windsurf
 
 # OS junk
 .DS_Store
@@ -14,14 +16,14 @@ Thumbs.db
 
 # Hidden local state
 .*
-!.env.example
 
 # Environment and secrets
 .env
 .env.*
-!.env.example
 
 # Local YAML configuration and signing material
+docker-compose.override.yml
+docker-compose.override.yaml
 config/config.yaml
 config/*.yaml
 !config/config.example.yaml
@@ -47,6 +49,11 @@ build
 .mypy_cache
 .ruff_cache
 node_modules
+package.json
+package-lock.json
+playwright.config.ts
+tsconfig*.json
+frontend
 test-results
 playwright-report
 .pytest_cache
@@ -61,7 +68,6 @@ venv
 docs
 
 # Tests (not needed in production image)
-test
 tests
 
 # Development files
@@ -86,6 +92,14 @@ private
 .codacy
 audit
 plans
+prompts
+scratch
+conversations
+transcripts
+evaluations
+evals
+task-reports
+remediation
 reports
 secrets
 credentials
