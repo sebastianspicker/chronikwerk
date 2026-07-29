@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A static, simulated preview of the Chronikwerk administration application.">
+  <title>Administration demo · Chronikwerk</title>
+  <link rel="icon" href="assets/chronikwerk-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/admin.css">
+  <link rel="stylesheet" href="assets/demo.css">
+  <script type="module" src="assets/demo.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="app-shell app-shell--session">
+    <header class="topbar">
+      <button class="service-name brand demo-brand" type="button" data-route="overview">
+        <img class="service-mark" src="assets/chronikwerk-mark.svg" alt="">
+        <strong class="brand-name">Chronikwerk</strong>
+        <span class="service-meta">Static demo</span>
+      </button>
+      <nav class="primary-nav" aria-label="Primary">
+        <button type="button" data-route="overview" aria-current="page">Overview</button>
+        <button type="button" data-route="jobs">Jobs</button>
+        <button type="button" data-route="configuration">Configuration</button>
+      </nav>
+      <div class="demo-exit">
+        <a class="button button--quiet" href="https://github.com/sebastianspicker/chronikwerk">View repository</a>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content" tabindex="-1">
+      <div class="demo-notice" role="note">
+        <strong>Static simulation</strong>
+        <span>Sanitized fixture data only. This page sends no requests and cannot operate Chronikwerk or Zammad.</span>
+      </div>
+
+      <section data-view="overview" aria-labelledby="overview-title">
+        <div class="overview-page" data-overview>
+          <header class="masthead">
+            <div>
+              <p class="page-kicker masthead-label">Instance record</p>
+              <h1 id="overview-title">Overview</h1>
+              <p class="page-intro masthead-intro">Current evidence for this fixture process: admission capacity, storage reachability, configuration revisions, and recent archival failures.</p>
+            </div>
+            <div class="masthead-meta">
+              <span class="meta-chip"><span class="dot" aria-hidden="true"></span>Fixture process alive</span>
+              <span class="meta-chip">Fixed at <time datetime="2026-07-29T10:24:00Z">29/07/2026 10:24:00 UTC</time></span>
+            </div>
+          </header>
+
+          <div class="scope-note scope" role="note">
+            <span class="scope-note__icon scope-mark" aria-hidden="true">i</span>
+            <p>Job history, sessions, and admission counters are process-local and volatile.</p>
+          </div>
+
+          <div class="workspace">
+            <section class="instrument" aria-labelledby="live-process-title">
+              <div class="instrument-head">
+                <p class="instrument-kicker" id="live-process-title">Live process</p>
+                <span class="live-badge">Fixture · in memory</span>
+              </div>
+              <div class="state-pair">
+                <div class="state-cell">
+                  <h2>Process</h2>
+                  <p class="state-value"><span class="status-signal status-signal--success" aria-hidden="true"></span>Process running</p>
+                  <p class="state-note">Synthetic browser state</p>
+                </div>
+                <div class="state-cell storage-state">
+                  <h2>Storage</h2>
+                  <p class="state-value state-value--warning" data-storage-state>Not checked in this demo</p>
+                  <button class="button button--on-dark" type="button" data-simulate-storage>Check storage <span class="simulated-action">Simulated</span></button>
+                  <p class="state-note" data-storage-result aria-live="polite"></p>
+                </div>
+              </div>
+              <div class="capacity">
+                <div class="capacity-head">
+                  <h2>Admission capacity</h2>
+                  <p class="capacity-hint">Accepted work is not completed archiving.</p>
+                </div>
+                <dl class="capacity-grid capacity-strip">
+                  <div class="cap-item"><dt>Running</dt><dd>1</dd><div class="cap-bar" aria-hidden="true"><i style="width: 25%"></i></div></div>
+                  <div class="cap-item"><dt>Pending</dt><dd>2</dd><div class="cap-bar" aria-hidden="true"><i style="width: 2%"></i></div></div>
+                  <div class="cap-item"><dt>Limit</dt><dd>4<small>+100</small></dd><div class="cap-bar" aria-hidden="true"><i style="width: 100%; opacity: 0.35"></i></div></div>
+                </dl>
+              </div>
+            </section>
+
+            <aside class="dossier" aria-labelledby="archive-evidence-title">
+              <div class="dossier-head">
+                <h2 id="archive-evidence-title">Archive evidence</h2>
+                <span class="dossier-tag">Fixture</span>
+              </div>
+              <dl class="revision-block">
+                <div class="rev-row"><dt>Active revision</dt><dd><span class="state-pill state-pill--active">Active</span><code>demo-a18f7c</code></dd></div>
+                <div class="rev-row"><dt>Staged revision</dt><dd><span class="state-pill state-pill--idle">No staged revision</span></dd></div>
+              </dl>
+              <dl class="evidence-list">
+                <div><dt>Version</dt><dd><code>0.3.0a1</code></dd></div>
+                <div><dt>Process started</dt><dd>29/07/2026 09:58:12 UTC</dd></div>
+                <div><dt>Signing</dt><dd>Optional · enabled for fixture</dd></div>
+                <div><dt>Timestamp</dt><dd>Optional · disabled</dd></div>
+              </dl>
+            </aside>
+          </div>
+
+          <section class="ledger" aria-labelledby="recent-failures-title">
+            <div class="ledger-head">
+              <h2 id="recent-failures-title">Recent failures</h2>
+              <div class="ledger-head-right"><span class="count-badge">1 fixture failure</span><p class="refresh-meta">Sanitized fixture history</p></div>
+            </div>
+            <div class="table-region" role="region" aria-labelledby="recent-failures-title" tabindex="0">
+              <table>
+                <thead><tr><th>Time</th><th>Ticket ID</th><th>Classification</th><th>Message</th></tr></thead>
+                <tbody><tr><td class="time">29/07/2026 10:20:04</td><td class="ticket"><button class="table-link" type="button" data-route="jobs">DEMO-1042</button></td><td><span class="class-tag class-tag--transient">Transient</span></td><td class="message">Archive mount did not respond before the fixture timeout.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="ledger-foot">
+              <button class="panel-link text-action" type="button" data-route="jobs">View volatile job history <span aria-hidden="true">→</span></button>
+              <p class="footnote">Entries clear when the process restarts.</p>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section data-view="jobs" aria-labelledby="jobs-title" hidden>
+        <div class="route-page">
+          <p class="breadcrumb"><button type="button" data-route="overview">Overview</button><span aria-hidden="true">/</span>Jobs</p>
+          <div class="page-heading">
+            <div>
+              <p class="page-kicker">Volatile history</p>
+              <h1 id="jobs-title">Jobs</h1>
+              <p class="page-intro">Process-local archival outcomes from sanitized fixture data.</p>
+            </div>
+          </div>
+          <form class="filter-bar" data-job-filter>
+            <div class="filter-field">
+              <label for="ticket-filter">Ticket ID</label>
+              <input id="ticket-filter" name="ticket" type="search" placeholder="DEMO-1042">
+            </div>
+            <div class="filter-field">
+              <label for="status-filter">Job status</label>
+              <select id="status-filter" name="status">
+                <option value="">All statuses</option>
+                <option value="failed">Failed</option>
+                <option value="completed">Completed</option>
+              </select>
+            </div>
+            <button class="button" type="submit">Filter fixture data</button>
+          </form>
+          <p class="inline-result" data-filter-result aria-live="polite"></p>
+          <div class="table-region" role="region" aria-label="Jobs" tabindex="0">
+            <table>
+              <thead><tr><th>Time</th><th>Ticket ID</th><th>Job status</th><th>Classification</th><th>Message</th><th>Request ID</th></tr></thead>
+              <tbody data-job-rows>
+                <tr data-ticket="demo-1042" data-status="failed">
+                  <td class="time">29/07/2026 10:20:04</td>
+                  <td class="ticket"><button class="table-link" type="button" data-show-job>DEMO-1042</button></td>
+                  <td><span class="status-badge">Failed</span></td>
+                  <td><span class="class-tag class-tag--transient">Transient</span></td>
+                  <td class="message">Archive mount timed out.</td>
+                  <td><code>req_demo_7f3a91</code></td>
+                </tr>
+                <tr data-ticket="demo-1037" data-status="completed">
+                  <td class="time">29/07/2026 10:14:31</td>
+                  <td class="ticket">DEMO-1037</td>
+                  <td><span class="status-badge">Completed</span></td>
+                  <td>–</td>
+                  <td class="message">PDF and JSON sidecar written.</td>
+                  <td><code>req_demo_2c8d44</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <section class="event-workspace demo-job-detail" data-job-detail aria-labelledby="job-detail-title" hidden>
+            <div class="page-heading">
+              <div><p class="page-kicker">Activity record</p><h2 id="job-detail-title">Ticket history · <code>DEMO-1042</code></h2></div>
+              <button class="button button--quiet" type="button" data-hide-job>Close detail</button>
+            </div>
+            <ol class="timeline">
+              <li><div class="timeline-heading"><time>29/07/2026 10:20:04</time><span class="status-badge">Failed</span></div><p><span class="class-tag class-tag--transient">Transient</span> · Archive mount timed out.</p><code>req_demo_7f3a91</code></li>
+              <li><div class="timeline-heading"><time>29/07/2026 10:19:58</time><span class="status-badge">Accepted</span></div><p>Work entered the process-local admission queue.</p></li>
+            </ol>
+            <details class="action-disclosure">
+              <summary>Reprocess ticket</summary>
+              <p>This can replace an existing archive in the real application. This demo changes browser state only.</p>
+              <label class="checkbox"><input type="checkbox" data-retry-ack> I have reviewed the overwrite risk.</label>
+              <button class="button button--danger" type="button" data-simulate-retry disabled>Request reprocessing <span class="simulated-action">Simulated</span></button>
+              <p class="inline-result" data-retry-result aria-live="polite"></p>
+            </details>
+          </section>
+        </div>
+      </section>
+
+      <section data-view="configuration" aria-labelledby="configuration-title" hidden>
+        <div class="route-page route-page--settings">
+          <p class="breadcrumb"><button type="button" data-route="overview">Overview</button><span aria-hidden="true">/</span>Configuration</p>
+          <div class="page-heading">
+            <div>
+              <p class="page-kicker">Controlled values</p>
+              <h1 id="configuration-title">Configuration</h1>
+              <p class="page-intro">Review a small allowlisted, non-secret fixture. Staged changes require an external restart in the real application.</p>
+            </div>
+          </div>
+          <form id="configuration-form" data-config-form>
+            <fieldset class="config-group">
+              <legend><span>PDF</span><small>2 values</small></legend>
+              <div class="config-field" data-config-path="pdf.max_articles" data-original="250">
+                <div class="field-heading"><label for="max-articles"><code>pdf.max_articles</code></label><span class="source-badge">environment</span></div>
+                <input id="max-articles" type="number" min="1" value="250">
+              </div>
+              <div class="config-field" data-config-path="pdf.signing.enabled" data-original="true">
+                <div class="field-heading"><label for="signing-enabled"><code>pdf.signing.enabled</code></label><span class="source-badge">managed</span></div>
+                <select id="signing-enabled"><option value="true" selected>true</option><option value="false">false</option></select>
+              </div>
+            </fieldset>
+            <div class="config-actions">
+              <p class="change-count" data-change-count>No changes</p>
+              <button class="button button--primary" type="submit">Review changes</button>
+            </div>
+          </form>
+          <section class="review-panel" data-config-review hidden aria-labelledby="review-title">
+            <h2 id="review-title">Review changes</h2>
+            <div class="table-region" role="region" aria-labelledby="review-title" tabindex="0">
+              <table><thead><tr><th>Path</th><th>Before</th><th>After</th></tr></thead><tbody data-config-diff></tbody></table>
+            </div>
+            <label class="checkbox"><input type="checkbox" data-stage-ack> I understand that activation requires an external restart.</label>
+            <button class="button button--primary" type="button" data-simulate-stage disabled>Stage revision <span class="simulated-action">Simulated</span></button>
+            <p class="inline-result" data-stage-result aria-live="polite"></p>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

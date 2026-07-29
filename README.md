@@ -15,6 +15,10 @@ snapshot, writes the archive files, and records the outcome in Zammad.
 Chronikwerk is an independent open-source project. It is not affiliated with or endorsed by
 Zammad GmbH.
 
+[Open the static administration demo](https://sebastianspicker.github.io/chronikwerk/).
+It uses sanitized fixture data, sends no commands, and does not connect to Chronikwerk or
+Zammad.
+
 > [!IMPORTANT]
 > Version `0.3.0a1` is an unfrozen public-alpha candidate. It has not been tagged or
 > published. Interfaces, configuration, and storage behavior may change. Evaluate it with
@@ -412,5 +416,6 @@ administration revision state, local reports, or tool caches. Participation is g
 - [Operations](docs/08-operations.md)
 - [Security](docs/09-security.md)
 - [Administration application](docs/admin-frontend.md)
+- [Static administration demo](https://sebastianspicker.github.io/chronikwerk/), simulated with sanitized fixture data
 - [Release status](RELEASE_STATUS.md)
 - [Release checklist](docs/release-checklist.md)
