@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from chronikwerk.domain.state_machine import (
     DONE_TAG,
@@ -27,6 +29,21 @@ class _StubClient:
 
     async def remove_tag(self, ticket_id: int, tag: str) -> None:
         self.calls.append(("remove_tag", ticket_id, tag))
+
+
+def _assert_transition(
+    operation: Callable[..., Awaitable[None]],
+    expected: list[tuple[str, int, str]],
+    **kwargs: Any,
+) -> None:
+    """Run one state transition and assert its exact ordered tag operations."""
+
+    async def run() -> None:
+        client = _StubClient()
+        await operation(client, 123, **kwargs)
+        assert client.calls == expected
+
+    asyncio.run(run())
 
 
 def test_should_process_trigger_present_done_missing() -> None:
@@ -56,110 +73,99 @@ def test_should_process_require_trigger_disabled() -> None:
 
 
 def test_apply_processing_transitions() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_processing(client, 123)
-        assert client.calls == [
+    _assert_transition(
+        apply_processing,
+        [
             ("remove_tag", 123, ERROR_TAG),
             ("remove_tag", 123, TRIGGER_TAG),
             ("add_tag", 123, PROCESSING_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+    )
 
 
 def test_apply_processing_force_reprocess_removes_done_tag() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_processing(client, 123, force_reprocess=True)
-        assert client.calls == [
+    _assert_transition(
+        apply_processing,
+        [
             ("remove_tag", 123, DONE_TAG),
             ("remove_tag", 123, ERROR_TAG),
             ("remove_tag", 123, TRIGGER_TAG),
             ("add_tag", 123, PROCESSING_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+        force_reprocess=True,
+    )
 
 
 def test_apply_processing_respects_custom_trigger_tag() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_processing(client, 123, trigger_tag="pdf:archive")
-        assert client.calls == [
+    _assert_transition(
+        apply_processing,
+        [
             ("remove_tag", 123, ERROR_TAG),
             ("remove_tag", 123, "pdf:archive"),
             ("add_tag", 123, PROCESSING_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+        trigger_tag="pdf:archive",
+    )
 
 
 def test_apply_done_transitions() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_done(client, 123)
-        assert client.calls == [
+    _assert_transition(
+        apply_done,
+        [
             ("remove_tag", 123, PROCESSING_TAG),
             ("remove_tag", 123, ERROR_TAG),
             ("remove_tag", 123, TRIGGER_TAG),
             ("add_tag", 123, DONE_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+    )
 
 
 def test_apply_done_respects_custom_trigger_tag() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_done(client, 123, trigger_tag="pdf:archive")
-        assert client.calls == [
+    _assert_transition(
+        apply_done,
+        [
             ("remove_tag", 123, PROCESSING_TAG),
             ("remove_tag", 123, ERROR_TAG),
             ("remove_tag", 123, "pdf:archive"),
             ("add_tag", 123, DONE_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+        trigger_tag="pdf:archive",
+    )
 
 
 def test_apply_error_transitions_keep_trigger_default() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_error(client, 123)
-        assert client.calls == [
+    _assert_transition(
+        apply_error,
+        [
             ("remove_tag", 123, PROCESSING_TAG),
             ("remove_tag", 123, DONE_TAG),
             ("add_tag", 123, TRIGGER_TAG),
             ("add_tag", 123, ERROR_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+    )
 
 
 def test_apply_error_transitions_drop_trigger() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_error(client, 123, keep_trigger=False)
-        assert client.calls == [
+    _assert_transition(
+        apply_error,
+        [
             ("remove_tag", 123, PROCESSING_TAG),
             ("remove_tag", 123, DONE_TAG),
             ("remove_tag", 123, TRIGGER_TAG),
             ("add_tag", 123, ERROR_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+        keep_trigger=False,
+    )
 
 
 def test_apply_error_respects_custom_trigger_tag() -> None:
-    async def run() -> None:
-        client = _StubClient()
-        await apply_error(client, 123, trigger_tag="pdf:archive")
-        assert client.calls == [
+    _assert_transition(
+        apply_error,
+        [
             ("remove_tag", 123, PROCESSING_TAG),
             ("remove_tag", 123, DONE_TAG),
             ("add_tag", 123, "pdf:archive"),
             ("add_tag", 123, ERROR_TAG),
-        ]
-
-    asyncio.run(run())
+        ],
+        trigger_tag="pdf:archive",
+    )

@@ -27,16 +27,21 @@ export function formSecurityAcknowledged(form: ConfigForm): boolean {
   return form.elements.security_acknowledged.checked;
 }
 
-export function preserveConfigDraft(): void {
-  // Save only editable, non-secret values before reauthentication reloads the page.
-  const form = qs<ConfigForm>('[data-config-form]');
-  if (!form) return;
+const configDraftEntries = (form: ConfigForm): Array<[string, ConfigValue]> => {
   const entries: Array<[string, ConfigValue]> = [];
   qsa<HTMLElement>('.config-field', form).forEach((row) => {
     const control = configControl(row);
     const path = row.dataset.path;
     if (control && !control.disabled && path) entries.push([path, control.value]);
   });
+  return entries;
+};
+
+export function preserveConfigDraft(): void {
+  // Save only editable, non-secret values before reauthentication reloads the page.
+  const form = qs<ConfigForm>('[data-config-form]');
+  if (!form) return;
+  const entries = configDraftEntries(form);
   try {
     window.sessionStorage.setItem(
       configDraftKey,
@@ -225,6 +230,30 @@ const requestConfigValidation = async (
   }
 };
 
+const setConfigValidationButtonState = (
+  button: HTMLButtonElement | null,
+  isValidating: boolean,
+): void => {
+  if (!button) return;
+  button.disabled = isValidating;
+  if (isValidating) button.setAttribute('aria-busy', 'true');
+  else button.removeAttribute('aria-busy');
+};
+
+const handleConfigValidationResult = (
+  form: ConfigForm,
+  errorSummary: HTMLElement | null,
+  result: {response: Response; data: ConfigValidationResponse} | null,
+): ConfigValidationResponse | null => {
+  if (!result) return null;
+  if (!result.response.ok) {
+    showValidationErrors(form, errorSummary, result.data);
+    return null;
+  }
+  showConfigReview(form, result.data);
+  return result.data;
+};
+
 const stageValidatedConfig = async (
   form: ConfigForm,
   overlay: unknown,
@@ -269,22 +298,11 @@ export function initConfigForm(): void {
     const submit = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
     const errorSummary = qs<HTMLElement>('[data-config-errors]', form);
     clearValidationFeedback(form, errorSummary);
-    if (submit) {
-      submit.disabled = true;
-      submit.setAttribute('aria-busy', 'true');
-    }
+    setConfigValidationButtonState(submit, true);
     const result = await requestConfigValidation(form, errorSummary);
-    if (submit) {
-      submit.removeAttribute('aria-busy');
-      submit.disabled = false;
-    }
-    if (!result) return;
-    if (!result.response.ok) {
-      showValidationErrors(form, errorSummary, result.data);
-      return;
-    }
-    validatedOverlay = result.data.overlay ?? null;
-    showConfigReview(form, result.data);
+    setConfigValidationButtonState(submit, false);
+    const data = handleConfigValidationResult(form, errorSummary, result);
+    if (data) validatedOverlay = data.overlay ?? null;
   };
 
   form.addEventListener('input', invalidateConfigReview);

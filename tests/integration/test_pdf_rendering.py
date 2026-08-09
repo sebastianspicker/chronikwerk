@@ -70,6 +70,24 @@ def _internal_article() -> dict[str, object]:
     }
 
 
+def _warning_snapshot(ticket_id: int, title: str) -> Snapshot:
+    """Build the minimal snapshot used by renderer warning guards."""
+    return Snapshot.model_validate(
+        {
+            "ticket": {
+                "id": ticket_id,
+                "number": f"T{ticket_id}",
+                "title": title,
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:00:00Z",
+                "tags": ["pdf:sign"],
+                "custom_fields": {"archive_path": ["A"], "archive_user_mode": "owner"},
+            },
+            "articles": [],
+        }
+    )
+
+
 def test_render_pdf_default_template_produces_pdf_bytes() -> None:
     pdf_bytes = asyncio.run(render_pdf(_rendering_snapshot()))
 
@@ -89,20 +107,7 @@ def test_render_pdf_is_tagged_and_has_bcp47_language() -> None:
 
 
 def test_render_pdf_does_not_emit_pydyf_identifier_deprecation_warning() -> None:
-    snapshot = Snapshot.model_validate(
-        {
-            "ticket": {
-                "id": 2,
-                "number": "T2",
-                "title": "warning guard",
-                "created_at": "2024-01-01T00:00:00Z",
-                "updated_at": "2024-01-01T00:00:00Z",
-                "tags": ["pdf:sign"],
-                "custom_fields": {"archive_path": ["A"], "archive_user_mode": "owner"},
-            },
-            "articles": [],
-        }
-    )
+    snapshot = _warning_snapshot(2, "warning guard")
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -119,20 +124,7 @@ def test_render_pdf_does_not_emit_pydyf_identifier_deprecation_warning() -> None
 
 
 def test_render_pdf_default_template_avoids_ignored_css_warnings(caplog) -> None:
-    snapshot = Snapshot.model_validate(
-        {
-            "ticket": {
-                "id": 3,
-                "number": "T3",
-                "title": "css warning guard",
-                "created_at": "2024-01-01T00:00:00Z",
-                "updated_at": "2024-01-01T00:00:00Z",
-                "tags": ["pdf:sign"],
-                "custom_fields": {"archive_path": ["A"], "archive_user_mode": "owner"},
-            },
-            "articles": [],
-        }
-    )
+    snapshot = _warning_snapshot(3, "css warning guard")
 
     with caplog.at_level(logging.WARNING, logger="weasyprint"):
         pdf_bytes = asyncio.run(render_pdf(snapshot))

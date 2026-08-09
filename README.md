@@ -15,10 +15,6 @@ snapshot, writes the archive files, and records the outcome in Zammad.
 Chronikwerk is an independent open-source project. It is not affiliated with or endorsed by
 Zammad GmbH.
 
-[Open the static administration demo](https://sebastianspicker.github.io/chronikwerk/).
-It uses sanitized fixture data, sends no commands, and does not connect to Chronikwerk or
-Zammad.
-
 > [!IMPORTANT]
 > Version `0.3.0a1` is an unfrozen public-alpha candidate. It has not been tagged or
 > published. Interfaces, configuration, and storage behavior may change. Evaluate it with
@@ -144,10 +140,12 @@ ZAMMAD__WEBHOOK_HMAC_SECRET=replace-with-at-least-32-random-characters
 STORAGE__ROOT=/mnt/archive
 ```
 
-The Zammad URL must be an HTTPS origin without credentials, a path, query parameters, or a
-fragment. TLS verification cannot be disabled. Private or loopback Zammad origins require
-the explicit transport-policy override documented in the
-[configuration reference](docs/config-reference.md).
+The Zammad URL must be an HTTPS origin by default and cannot contain credentials, a path,
+query parameters, or a fragment. Set
+`HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP=true` only to permit an HTTP Zammad origin in
+a reviewed, isolated internal or test deployment. TLS certificate verification remains
+mandatory whenever HTTPS is used. Private or loopback Zammad origins require the separate
+transport-policy override documented in the [configuration reference](docs/config-reference.md).
 
 Configuration is loaded in this order, from highest to lowest precedence:
 
@@ -416,6 +414,5 @@ administration revision state, local reports, or tool caches. Participation is g
 - [Operations](docs/08-operations.md)
 - [Security](docs/09-security.md)
 - [Administration application](docs/admin-frontend.md)
-- [Static administration demo](https://sebastianspicker.github.io/chronikwerk/), simulated with sanitized fixture data
 - [Release status](RELEASE_STATUS.md)
 - [Release checklist](docs/release-checklist.md)

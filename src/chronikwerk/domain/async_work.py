@@ -6,6 +6,29 @@ import asyncio
 from collections.abc import Callable
 
 
+async def _wait_for_worker_once[T](
+    worker: asyncio.Task[T], cancellation: asyncio.CancelledError
+) -> bool:
+    """Wait once and report whether cancellation interrupted unfinished work."""
+    try:
+        await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        return not worker.done()
+    except Exception as worker_error:  # pylint: disable=broad-exception-caught
+        cancellation.add_note(
+            "Synchronous work also failed while cancellation was pending: "
+            f"{type(worker_error).__name__}"
+        )
+    return False
+
+
+async def _await_worker_after_cancellation[T](
+    worker: asyncio.Task[T], cancellation: asyncio.CancelledError
+) -> None:
+    while await _wait_for_worker_once(worker, cancellation):
+        pass
+
+
 async def run_sync_cancellation_safe[**P, T](
     function: Callable[P, T],
     /,
@@ -22,19 +45,5 @@ async def run_sync_cancellation_safe[**P, T](
     try:
         return await asyncio.shield(worker)
     except asyncio.CancelledError as cancellation:
-        while True:
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                if worker.done():
-                    break
-                continue
-            except Exception as worker_error:  # pylint: disable=broad-exception-caught
-                cancellation.add_note(
-                    "Synchronous work also failed while cancellation was pending: "
-                    f"{type(worker_error).__name__}"
-                )
-                break
-            else:
-                break
+        await _await_worker_after_cancellation(worker, cancellation)
         raise

@@ -93,6 +93,25 @@ def _signed_ingest_headers(body: bytes) -> dict[str, str]:
     }
 
 
+def _metrics_client(tmp_path, token: str | None) -> TestClient:
+    """Build a metrics-enabled client for bearer-token scenarios."""
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": str(tmp_path)},
+            "observability": {
+                "metrics_enabled": True,
+                "metrics_bearer_token": token,
+            },
+            "hardening": {
+                "webhook": {},
+                "transport": {"allow_private_networks": True},
+            },
+        }
+    )
+    return TestClient(create_app(settings))
+
+
 def test_metrics_endpoint_returns_prometheus_text(tmp_path) -> None:
     app = create_app(_test_settings(str(tmp_path)))
     client = TestClient(app)
@@ -112,19 +131,7 @@ def test_metrics_endpoint_is_not_exposed_when_disabled(tmp_path) -> None:
 
 
 def test_metrics_requires_bearer_when_configured(tmp_path) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": str(tmp_path)},
-            "observability": {"metrics_enabled": True, "metrics_bearer_token": "secret-token"},
-            "hardening": {
-                "webhook": {},
-                "transport": {"allow_private_networks": True},
-            },
-        }
-    )
-    app = create_app(settings)
-    client = TestClient(app)
+    client = _metrics_client(tmp_path, "secret-token")
 
     assert client.get("/metrics").status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code == 401
@@ -135,21 +142,7 @@ def test_metrics_requires_bearer_when_configured(tmp_path) -> None:
 
 @pytest.mark.parametrize("token", [None, "", "   "])
 def test_metrics_fails_closed_when_token_is_missing_or_empty(tmp_path, token) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": str(tmp_path)},
-            "observability": {
-                "metrics_enabled": True,
-                "metrics_bearer_token": token,
-            },
-            "hardening": {
-                "webhook": {},
-                "transport": {"allow_private_networks": True},
-            },
-        }
-    )
-    client = TestClient(create_app(settings))
+    client = _metrics_client(tmp_path, token)
 
     assert client.get("/metrics", headers={"Authorization": "Bearer  "}).status_code == 503
 

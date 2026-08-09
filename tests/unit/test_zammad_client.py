@@ -29,6 +29,25 @@ from tests.support.zammad_client_helpers import (
 )
 
 
+def _assert_tag_mutation(method_name: str, path: str) -> None:
+    """Exercise one successful tag mutation and retain its route assertion."""
+
+    async def run() -> None:
+        async with AsyncZammadClient(
+            base_url="https://zammad.example",
+            api_token="test-token",
+            _runtime=_test_runtime(),
+        ) as client:
+            await getattr(client, method_name)(123, "archived")
+
+    with respx.mock:
+        route = respx.post(f"https://zammad.example/api/v1/tags/{path}").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        asyncio.run(run())
+        assert route.called
+
+
 def test_get_ticket_success() -> None:
     async def run() -> None:
         async with AsyncZammadClient(
@@ -236,37 +255,11 @@ def test_list_tags_success() -> None:
 
 
 def test_add_tag_success() -> None:
-    async def run() -> None:
-        async with AsyncZammadClient(
-            base_url="https://zammad.example",
-            api_token="test-token",
-            _runtime=_test_runtime(),
-        ) as client:
-            await client.add_tag(123, "archived")
-
-    with respx.mock:
-        route = respx.post("https://zammad.example/api/v1/tags/add").mock(
-            return_value=httpx.Response(200, json={"success": True})
-        )
-        asyncio.run(run())
-        assert route.called
+    _assert_tag_mutation("add_tag", "add")
 
 
 def test_remove_tag_success() -> None:
-    async def run() -> None:
-        async with AsyncZammadClient(
-            base_url="https://zammad.example",
-            api_token="test-token",
-            _runtime=_test_runtime(),
-        ) as client:
-            await client.remove_tag(123, "archived")
-
-    with respx.mock:
-        route = respx.post("https://zammad.example/api/v1/tags/remove").mock(
-            return_value=httpx.Response(200, json={"success": True})
-        )
-        asyncio.run(run())
-        assert route.called
+    _assert_tag_mutation("remove_tag", "remove")
 
 
 def test_create_internal_article_success() -> None:

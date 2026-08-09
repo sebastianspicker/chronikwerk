@@ -8,11 +8,9 @@
     "build:admin-css": "python3 scripts/ci/assemble_admin_css.py -o build/admin/admin.css",
     "build:admin-js": "esbuild frontend/admin.ts --bundle --format=esm --target=es2022 --outfile=build/typescript/admin.js",
     "build:admin": "npm run build:admin-css && npm run build:admin-js",
-    "build:demo": "python3 scripts/docs/build_static_demo.py",
     "duplication:all": "jscpd src/chronikwerk scripts frontend tests --min-lines 5 --min-tokens 70 --reporters console,threshold --threshold 5",
     "duplication:production": "jscpd src/chronikwerk scripts frontend --min-lines 5 --min-tokens 70 --reporters console,threshold --threshold 0",
     "test:browser": "playwright test",
-    "test:demo": "npm run build:demo && playwright test --config playwright.demo.config.ts",
     "typecheck": "tsc --project tsconfig.json"
   },
   "devDependencies": {

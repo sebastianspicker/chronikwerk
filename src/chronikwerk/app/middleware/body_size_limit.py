@@ -38,15 +38,22 @@ def _is_limited_path(scope: Scope, max_bytes: int) -> bool:
     return scope["type"] == "http" and max_bytes > 0 and scope.get("path") in INGEST_PROTECTED_PATHS
 
 
+def _is_admin_request(scope: Scope, *, admin_enabled: bool) -> bool:
+    """Return whether an enabled admin mutation needs the admin body budget."""
+    path = str(scope.get("path") or "")
+    return (
+        scope["type"] == "http"
+        and admin_enabled
+        and scope.get("method") in _ADMIN_BODY_METHODS
+        and (path == "/admin" or path.startswith("/admin/"))
+    )
+
+
 def _request_body_limit(scope: Scope, ingest_max_bytes: int, *, admin_enabled: bool) -> int:
     if scope["type"] != "http":
         return 0
     path = str(scope.get("path") or "")
-    if (
-        admin_enabled
-        and scope.get("method") in _ADMIN_BODY_METHODS
-        and (path == "/admin" or path.startswith("/admin/"))
-    ):
+    if _is_admin_request(scope, admin_enabled=admin_enabled):
         return _ADMIN_AUTH_MAX_BYTES if path in _ADMIN_AUTH_PATHS else _ADMIN_BODY_MAX_BYTES
     if _is_limited_path(scope, ingest_max_bytes):
         return ingest_max_bytes

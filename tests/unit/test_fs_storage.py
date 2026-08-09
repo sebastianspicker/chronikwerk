@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 
 import pytest
 
+import chronikwerk.adapters.storage.fs_storage as storage_module
 from chronikwerk.adapters.storage.fs_storage import (
     _reject_symlinks_under_root,
     move_file_within_root,
@@ -17,6 +19,14 @@ from chronikwerk.adapters.storage.fs_storage import (
     unlink_file_within_root,
     write_bytes,
 )
+
+
+def _assert_swap_preserved(swapped: bool, displaced_entry: Path, outside_entry: Path) -> None:
+    """Assert a race swap removed only the displaced in-root entry."""
+    assert swapped is True
+    assert not displaced_entry.exists()
+    assert outside_entry.read_bytes() == b"outside"
+
 
 # -- _reject_symlinks_under_root ------------------------------------------------
 
@@ -76,6 +86,36 @@ def test_reject_symlinks_under_root_blocks_deep_symlink(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="escapes root"):
         _reject_symlinks_under_root(root, link / "child")
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected", "message"),
+    [
+        (ValueError("outside"), ValueError, "target path escapes root"),
+        (RuntimeError("unexpected path defect"), RuntimeError, "unexpected path defect"),
+    ],
+)
+def test_reject_symlinks_only_normalises_relative_path_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    expected: type[Exception],
+    message: str,
+) -> None:
+    class FailingResolvedPath:
+        def resolve(self, *, strict: bool) -> FailingResolvedPath:
+            assert strict is False
+            return self
+
+        def relative_to(self, _root: object) -> object:
+            raise failure
+
+    root = FailingResolvedPath()
+    target = FailingResolvedPath()
+    monkeypatch.setattr(storage_module, "Path", lambda path: path)
+    monkeypatch.setattr(storage_module, "ensure_within_root", lambda _root, _target: None)
+
+    with pytest.raises(expected, match=message):
+        _reject_symlinks_under_root(root, target)  # type: ignore[arg-type]
 
 
 # -- write_bytes cleanup on failure ----------------------------------------
@@ -323,9 +363,7 @@ def test_unlink_parent_swap_cannot_delete_outside_root(
     monkeypatch.setattr(os, "unlink", racing_unlink)
     unlink_file_within_root(victim, storage_root=root, fsync=False)
 
-    assert swapped is True
-    assert not (displaced_parent / victim.name).exists()
-    assert outside_victim.read_bytes() == b"outside"
+    _assert_swap_preserved(swapped, displaced_parent / victim.name, outside_victim)
 
 
 def test_remove_tree_parent_swap_cannot_delete_outside_root(
@@ -357,9 +395,7 @@ def test_remove_tree_parent_swap_cannot_delete_outside_root(
     monkeypatch.setattr(shutil, "rmtree", racing_rmtree)
     remove_tree_within_root(tree, storage_root=root, fsync=False)
 
-    assert swapped is True
-    assert not (displaced_parent / tree.name).exists()
-    assert outside_file.read_bytes() == b"outside"
+    _assert_swap_preserved(swapped, displaced_parent / tree.name, outside_file)
 
 
 def test_remove_tree_leaf_swap_fails_closed_without_following_symlink(
@@ -406,3 +442,115 @@ def test_path_entry_exists_does_not_follow_leaf_symlink(tmp_path: Path) -> None:
     link.symlink_to(outside)
 
     assert path_entry_exists(link, storage_root=root) is True
+
+
+def test_storage_fails_closed_without_descriptor_relative_primitives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(storage_module, "_HAS_SECURE_FILESYSTEM_PRIMITIVES", False)
+
+    with pytest.raises(RuntimeError, match="descriptor-relative"):
+        storage_module.ensure_dir(Path("archive"))
+
+
+@pytest.mark.parametrize(
+    ("error_number", "expected"),
+    [(errno.ELOOP, ValueError), (errno.EACCES, OSError)],
+)
+def test_open_child_directory_distinguishes_unsafe_components_from_io_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    error_number: int,
+    expected: type[Exception],
+) -> None:
+    def fail_open(*_args: object, **_kwargs: object) -> int:
+        raise OSError(error_number, "open failed")
+
+    monkeypatch.setattr(os, "open", fail_open)
+
+    with pytest.raises(expected):
+        storage_module._open_child_directory(9, "child", create=False)  # noqa: SLF001
+
+
+def test_storage_best_effort_helpers_preserve_primary_operation_on_fsync_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_open = os.open
+    monkeypatch.setattr(os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("unsupported")))
+
+    storage_module._fsync_fd_best_effort(7)  # noqa: SLF001
+    storage_module._fsync_dir_best_effort(tmp_path)  # noqa: SLF001
+
+    monkeypatch.setattr(os, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError()))
+    storage_module._fsync_dir_best_effort(tmp_path)  # noqa: SLF001
+    monkeypatch.setattr(os, "open", real_open)
+
+
+def test_storage_cleanup_handles_absent_entries_and_unsafe_rmtree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    missing = root / "missing"
+
+    with pytest.raises(FileNotFoundError):
+        unlink_file_within_root(missing, storage_root=root, fsync=False)
+    unlink_file_within_root(missing, storage_root=root, missing_ok=True, fsync=False)
+
+    monkeypatch.setattr(storage_module, "_RMTREE_AVOIDS_SYMLINK_ATTACKS", False)
+    with pytest.raises(RuntimeError, match="symlink-safe"):
+        remove_tree_within_root(root / "tree", storage_root=root)
+
+
+def test_storage_rejects_root_as_a_file_target(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+
+    with pytest.raises(ValueError, match="file below storage root"):
+        storage_module.path_entry_exists(root, storage_root=root)
+
+
+def test_storage_detects_raced_or_unreadable_path_components(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    target = root / "nested"
+    target.mkdir(parents=True)
+    original_is_symlink = Path.is_symlink
+
+    monkeypatch.setattr(
+        Path,
+        "is_symlink",
+        lambda path: True if path == target else original_is_symlink(path),
+    )
+    with pytest.raises(ValueError, match="traverses a symlink"):
+        _reject_symlinks_under_root(root, target)
+
+    monkeypatch.setattr(
+        Path,
+        "is_symlink",
+        lambda path: (
+            (_ for _ in ()).throw(OSError("unreadable"))
+            if path == target
+            else original_is_symlink(path)
+        ),
+    )
+    with pytest.raises(ValueError, match="unreadable component"):
+        _reject_symlinks_under_root(root, target)
+
+
+def test_move_file_ignores_directory_fsync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    source = root / "source.bin"
+    destination = root / "destination.bin"
+    source.write_bytes(b"archive")
+    monkeypatch.setattr(os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("unsupported")))
+
+    move_file_within_root(source, destination, storage_root=root)
+
+    assert destination.read_bytes() == b"archive"

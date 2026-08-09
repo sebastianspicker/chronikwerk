@@ -15,6 +15,7 @@ from chronikwerk.adapters.storage.layout import build_filename_from_pattern
 from chronikwerk.app.jobs import _ticket_pipeline as ticket_pipeline_module
 from chronikwerk.app.jobs.process_ticket import process_ticket
 from chronikwerk.config.settings import Settings
+from tests.support.process_ticket_helpers import assert_artifact_pair_exists
 from tests.support.zammad_fixtures import (
     html_article_json,
     register_archived_ticket_fetch_routes,
@@ -88,8 +89,7 @@ def test_audit_sidecar_written_next_to_pdf_and_matches_sha256(tmp_path, monkeypa
         expected_pdf_path = _expected_pdf_path(tmp_path, settings, fixed_now)
         expected_sidecar_path = expected_pdf_path.parent / (expected_pdf_path.name + ".json")
 
-        assert expected_pdf_path.exists()
-        assert expected_sidecar_path.exists()
+        assert_artifact_pair_exists(expected_pdf_path, expected_sidecar_path)
 
         pdf_bytes = expected_pdf_path.read_bytes()
         sha256_hex = hashlib.sha256(pdf_bytes).hexdigest()

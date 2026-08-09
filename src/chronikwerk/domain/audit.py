@@ -28,6 +28,30 @@ class AuditRecordInput:
     articles_omitted: int = 0
 
 
+def _signing_evidence(
+    signing_settings: SigningSettings | None,
+    signing_cert_fingerprint: str | None,
+) -> dict[str, Any]:
+    signing_enabled = signing_settings.enabled if signing_settings else False
+    tsa_used = (
+        signing_enabled and signing_settings is not None and signing_settings.timestamp.enabled
+    )
+
+    signing: dict[str, Any] = {"enabled": signing_enabled, "tsa_used": tsa_used}
+    if signing_enabled and signing_cert_fingerprint:
+        signing["cert_fingerprint"] = signing_cert_fingerprint
+    return signing
+
+
+def _article_coverage(record: AuditRecordInput) -> dict[str, int | bool | None]:
+    return {
+        "total": record.articles_total,
+        "included": record.articles_included,
+        "omitted": record.articles_omitted,
+        "complete": record.articles_omitted == 0,
+    }
+
+
 def build_audit_record(
     record: AuditRecordInput,
     *,
@@ -37,14 +61,7 @@ def build_audit_record(
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-serialisable audit record for a successfully archived ticket."""
-    signing_enabled = signing_settings.enabled if signing_settings else False
-    tsa_used = (
-        signing_enabled and signing_settings is not None and signing_settings.timestamp.enabled
-    )
-
-    signing: dict[str, Any] = {"enabled": signing_enabled, "tsa_used": tsa_used}
-    if signing_enabled and signing_cert_fingerprint:
-        signing["cert_fingerprint"] = signing_cert_fingerprint
+    signing = _signing_evidence(signing_settings, signing_cert_fingerprint)
 
     service: dict[str, Any] = {
         "name": service_name,
@@ -63,12 +80,7 @@ def build_audit_record(
         "service": service,
     }
     if record.articles_total is not None:
-        out["article_coverage"] = {
-            "total": record.articles_total,
-            "included": record.articles_included,
-            "omitted": record.articles_omitted,
-            "complete": record.articles_omitted == 0,
-        }
+        out["article_coverage"] = _article_coverage(record)
     if attachments:
         out["attachments"] = attachments
     return out

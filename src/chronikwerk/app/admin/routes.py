@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from chronikwerk.app.admin._config_routes import (
     ConfigValidateRequest,
@@ -42,6 +42,7 @@ from chronikwerk.app.admin._revision_routes import (
 from chronikwerk.app.admin._route_support import (
     _api_error,
     _api_session,
+    _configure_retry_scheduler,
     _decorate_history,
     _display_timestamp,
     _html_session,
@@ -68,6 +69,7 @@ from chronikwerk.app.admin._status_routes import (
 )
 from chronikwerk.app.routes.healthz import _check_storage
 from chronikwerk.app.routes.ingest import schedule_retry
+from chronikwerk.config.settings import Settings
 
 __all__ = [
     "ConfigValidateRequest",
@@ -122,6 +124,19 @@ __all__ = [
 ]
 
 router = APIRouter(prefix="/admin", include_in_schema=False)
+
+
+def _schedule_retry_via_export(
+    request: Request,
+    *,
+    ticket_id: int,
+    settings: Settings,
+) -> bool:
+    """Preserve the aggregate module's retry override seam without a back import."""
+    return schedule_retry(request, ticket_id=ticket_id, settings=settings)
+
+
+_configure_retry_scheduler(_schedule_retry_via_export)
 
 # Preserve the original route order while each private module owns a coherent group.
 register_page_routes(router)

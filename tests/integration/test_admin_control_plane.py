@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from chronikwerk.app.admin import routes as admin_routes
 from chronikwerk.app.jobs.history import record_history_event, reset_for_tests
 from chronikwerk.app.server import create_app
+from chronikwerk.config.managed import ManagedConfigStore
 from tests.support.settings_factory import make_settings
 
 _TOKEN = "admin-access-token-that-is-at-least-32-characters"
@@ -49,6 +52,28 @@ def _signed_in_client(tmp_path: Path) -> tuple[TestClient, str]:
     return client, match.group(1)
 
 
+def _managed_config_store(client: TestClient) -> ManagedConfigStore:
+    """Return the test application's private managed-configuration store."""
+    return cast(FastAPI, client.app).state.managed_config_store
+
+
+def _stage_revision(
+    store: ManagedConfigStore, overlay: dict[str, Any], *, request_id: str
+) -> dict[str, Any]:
+    """Stage an overlay against the current revision for revision-route scenarios."""
+    return store.stage(
+        overlay,
+        expected_revision=store.current_revision(),
+        request_id=request_id,
+    )
+
+
+def _assert_api_error(response: Any, *, status_code: int, code: str) -> None:
+    """Assert the stable API error status and machine-readable code."""
+    assert response.status_code == status_code
+    assert response.json()["code"] == code
+
+
 def test_admin_is_absent_when_disabled(tmp_path: Path) -> None:
     client = TestClient(create_app(_settings(tmp_path, enabled=False)))
 
@@ -63,8 +88,7 @@ def test_login_session_csrf_headers_and_logout(tmp_path: Path) -> None:
     client = TestClient(app)
 
     invalid = client.post("/admin/api/v1/session", json={"access_token": "wrong"})
-    assert invalid.status_code == 401
-    assert invalid.json()["code"] == "invalid_credentials"
+    _assert_api_error(invalid, status_code=401, code="invalid_credentials")
 
     login = client.post("/admin/api/v1/session", json={"access_token": _TOKEN})
     assert login.status_code == 204
@@ -103,6 +127,129 @@ def test_login_session_csrf_headers_and_logout(tmp_path: Path) -> None:
     )
     assert logout.status_code == 204
     assert client.get("/admin/api/v1/status").status_code == 401
+
+
+def test_admin_assets_html_forms_and_protected_pages(tmp_path: Path) -> None:
+    client, csrf = _signed_in_client(tmp_path)
+
+    stylesheet = client.get("/admin/static/admin.css")
+    script = client.get("/admin/static/admin.js")
+    assert stylesheet.status_code == script.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert script.headers["content-type"].startswith("text/javascript")
+
+    already_signed_in = client.get("/admin/login?next=/admin/jobs", follow_redirects=False)
+    assert already_signed_in.headers["location"] == "/admin/jobs"
+
+    configuration = client.get("/admin/configuration")
+    revisions = client.get("/admin/configuration/revisions")
+    assert configuration.status_code == revisions.status_code == 200
+    assert "Configuration" in configuration.text
+    assert "Revision" in revisions.text
+
+    invalid_logout = client.post("/admin/logout", data={}, follow_redirects=False)
+    assert invalid_logout.headers["location"] == "/admin/login"
+    valid_logout = client.post(
+        "/admin/logout",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert valid_logout.headers["location"] == "/admin/login"
+    assert 'zpa_admin_session=""' in valid_logout.headers["set-cookie"]
+
+
+def test_admin_configuration_and_status_apis_reject_or_report_meaningful_states(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = TestClient(create_app(_settings(tmp_path)))
+    assert client.get("/admin/api/v1/config").status_code == 401
+    assert client.post("/admin/api/v1/config/validate", json={"values": {}}).status_code == 401
+    assert client.put("/admin/api/v1/config/staged", json={"overlay": {}}).status_code == 401
+    assert client.get("/admin/api/v1/config/revisions").status_code == 401
+
+    client, csrf = _signed_in_client(tmp_path)
+    locked = client.post(
+        "/admin/api/v1/config/validate",
+        json={"values": {"zammad.base_url": "https://other.example"}},
+        headers={"X-CSRF-Token": csrf},
+    )
+    _assert_api_error(locked, status_code=422, code="environment_owned_field")
+
+    storage = client.post("/admin/api/v1/status/storage-check", headers={"X-CSRF-Token": csrf})
+    assert storage.status_code == 200
+    assert storage.json()["request_id"]
+    assert "storage" in storage.json()
+
+    monkeypatch.setattr(
+        "chronikwerk.app.admin._status_routes._schedule_retry",
+        lambda *_args, **_kwargs: False,
+    )
+    exhausted = client.post(
+        "/admin/api/v1/jobs/3/retry",
+        json={"acknowledge_overwrite": True},
+        headers={"X-CSRF-Token": csrf},
+    )
+    _assert_api_error(exhausted, status_code=503, code="job_capacity_exhausted")
+    assert exhausted.headers["retry-after"] == "1"
+
+
+def test_admin_pages_and_revision_forms_enforce_session_csrf_and_restore(
+    tmp_path: Path, monkeypatch
+) -> None:
+    anonymous = TestClient(create_app(_settings(tmp_path)))
+    assert (
+        anonymous.get("/admin", follow_redirects=False)
+        .headers["location"]
+        .startswith("/admin/login")
+    )
+    assert (
+        anonymous.get("/admin/configuration/revisions", follow_redirects=False)
+        .headers["location"]
+        .startswith("/admin/login")
+    )
+    assert (
+        anonymous.post(
+            "/admin/configuration/revisions/not-a-revision/restore",
+            data={},
+            follow_redirects=False,
+        ).headers["location"]
+        == "/admin/login"
+    )
+    assert (
+        anonymous.post("/admin/locale", data={}, follow_redirects=False).headers["location"]
+        == "/admin/login"
+    )
+
+    client, csrf = _signed_in_client(tmp_path)
+    store = _managed_config_store(client)
+    revision = _stage_revision(store, {"pdf": {"max_articles": 75}}, request_id="source")
+    current = _stage_revision(store, {"pdf": {"max_articles": 50}}, request_id="current")
+    record_history_event("failed", 9, "permanent", "bad input", request_id="failed")
+    assert client.get("/admin/jobs?status=failed").status_code == 200
+    assert client.get("/admin/jobs/9").status_code == 200
+
+    monkeypatch.setattr(
+        "chronikwerk.app.admin._page_routes._schedule_retry",
+        lambda *_args, **_kwargs: True,
+    )
+    retry = client.post(
+        "/admin/jobs/9/retry",
+        data={"csrf_token": csrf, "acknowledge_overwrite": "true"},
+        follow_redirects=False,
+    )
+    assert retry.headers["location"].startswith("/admin/jobs/9?accepted=true")
+
+    restored = client.post(
+        f"/admin/configuration/revisions/{revision['revision']}/restore",
+        data={
+            "csrf_token": csrf,
+            "security_acknowledged": "true",
+            "expected_revision": current["revision"],
+        },
+        follow_redirects=False,
+    )
+    assert restored.headers["location"] == "/admin/configuration"
+    assert store.load() == {"pdf": {"max_articles": 75}}
 
 
 def test_jobs_cursor_filter_and_safe_retry(tmp_path: Path, monkeypatch) -> None:
@@ -180,6 +327,93 @@ def test_html_revision_restore_failures_return_actionable_feedback(tmp_path: Pat
     assert (
         "The revision could not be staged" in client.get(invalid_revision.headers["location"]).text
     )
+
+
+def test_revision_api_lists_redacted_items_and_current_revision(tmp_path: Path) -> None:
+    client, _csrf = _signed_in_client(tmp_path)
+    store = _managed_config_store(client)
+    _stage_revision(store, {"pdf": {"max_articles": 100}}, request_id="first")
+    _stage_revision(store, {"pdf": {"max_articles": 50}}, request_id="second")
+
+    response = client.get("/admin/api/v1/config/revisions")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": store.list_revisions(),
+        "revision": store.current_revision(),
+    }
+    assert "overlay" not in response.text
+    assert _TOKEN not in response.text
+
+
+def test_revision_api_restores_known_revision_and_reports_restart(tmp_path: Path) -> None:
+    client, csrf = _signed_in_client(tmp_path)
+    store = _managed_config_store(client)
+    first = _stage_revision(store, {"pdf": {"max_articles": 100}}, request_id="first")
+    second = _stage_revision(store, {"pdf": {"max_articles": 50}}, request_id="second")
+
+    response = client.post(
+        f"/admin/api/v1/config/revisions/{first['revision']}/restore",
+        json={"security_acknowledged": True},
+        headers={"X-CSRF-Token": csrf, "If-Match": second["revision"]},
+    )
+
+    assert response.status_code == 200
+    restored = response.json()
+    assert restored["restart_required"] is True
+    assert restored["previous_revision"] == second["revision"]
+    assert restored["revision"] not in {first["revision"], second["revision"]}
+    assert store.current_revision() == restored["revision"]
+    assert store.load() == {"pdf": {"max_articles": 100}}
+
+
+def test_revision_api_requires_security_acknowledgement(tmp_path: Path) -> None:
+    client, csrf = _signed_in_client(tmp_path)
+    store = _managed_config_store(client)
+    sensitive = _stage_revision(
+        store,
+        {"hardening": {"transport": {"allow_private_networks": False}}},
+        request_id="sensitive",
+    )
+    current = _stage_revision(store, {"pdf": {"max_articles": 50}}, request_id="current")
+
+    response = client.post(
+        f"/admin/api/v1/config/revisions/{sensitive['revision']}/restore",
+        json={"security_acknowledged": False},
+        headers={"X-CSRF-Token": csrf, "If-Match": current["revision"]},
+    )
+
+    _assert_api_error(response, status_code=422, code="security_acknowledgement_required")
+    assert store.current_revision() == current["revision"]
+
+
+def test_revision_api_rejects_stale_unknown_and_corrupt_restores(tmp_path: Path) -> None:
+    client, csrf = _signed_in_client(tmp_path)
+    store = _managed_config_store(client)
+    first = _stage_revision(store, {"pdf": {"max_articles": 100}}, request_id="first")
+    current = _stage_revision(store, {"pdf": {"max_articles": 50}}, request_id="current")
+
+    stale = client.post(
+        f"/admin/api/v1/config/revisions/{first['revision']}/restore",
+        json={"security_acknowledged": True},
+        headers={"X-CSRF-Token": csrf, "If-Match": first["revision"]},
+    )
+    unknown = client.post(
+        f"/admin/api/v1/config/revisions/{'0' * 64}/restore",
+        json={"security_acknowledged": True},
+        headers={"X-CSRF-Token": csrf, "If-Match": current["revision"]},
+    )
+    corrupt_path = store.revisions_dir / f"{first['revision']}.json"
+    corrupt_path.write_text("not json", encoding="utf-8")
+    corrupt = client.post(
+        f"/admin/api/v1/config/revisions/{first['revision']}/restore",
+        json={"security_acknowledged": True},
+        headers={"X-CSRF-Token": csrf, "If-Match": current["revision"]},
+    )
+
+    _assert_api_error(stale, status_code=409, code="config_revision_conflict")
+    _assert_api_error(unknown, status_code=422, code="config_restore_failed")
+    _assert_api_error(corrupt, status_code=422, code="config_restore_failed")
 
 
 def test_jobs_cursor_does_not_skip_the_lookahead_item(tmp_path: Path) -> None:
@@ -333,5 +567,4 @@ def test_config_redaction_validation_staging_and_conflict(tmp_path: Path) -> Non
         json={"overlay": overlay},
         headers={"X-CSRF-Token": csrf, "If-Match": revision},
     )
-    assert conflict.status_code == 409
-    assert conflict.json()["code"] == "config_revision_conflict"
+    _assert_api_error(conflict, status_code=409, code="config_revision_conflict")

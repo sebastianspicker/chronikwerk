@@ -4,25 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-def _parse_env_file(path: Path) -> dict[str, str]:
-    """Parse the env file fixture for assertions."""
-    values: dict[str, str] = {}
-    for raw_line in path.read_text("utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
+from tests.support.env_file_helpers import parse_env_file
 
 
 def test_systemd_env_template_does_not_force_missing_config_path() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     env_path = repo_root / "infra" / "systemd" / "chronikwerk.env.example"
-    env = _parse_env_file(env_path)
+    env = parse_env_file(env_path)
 
     # The YAML config is optional; default template should not force a missing file.
     assert env.get("CONFIG_PATH", "") == ""
@@ -32,7 +20,7 @@ def test_systemd_env_template_marks_webhook_secret_as_required_by_default() -> N
     repo_root = Path(__file__).resolve().parents[2]
     env_path = repo_root / "infra" / "systemd" / "chronikwerk.env.example"
     text = env_path.read_text("utf-8")
-    env = _parse_env_file(env_path)
+    env = parse_env_file(env_path)
 
     assert "Webhook authentication is required" in text
     assert "unsigned mode" not in text
@@ -42,7 +30,7 @@ def test_systemd_env_template_marks_webhook_secret_as_required_by_default() -> N
 def test_systemd_env_template_uses_nested_settings_keys() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     env_path = repo_root / "infra" / "systemd" / "chronikwerk.env.example"
-    env = _parse_env_file(env_path)
+    env = parse_env_file(env_path)
 
     assert env["SERVER__HOST"] == "0.0.0.0"
     assert env["SERVER__PORT"] == "8080"

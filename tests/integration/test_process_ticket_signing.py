@@ -19,6 +19,7 @@ from chronikwerk.app.jobs import (
 )
 from chronikwerk.app.jobs.process_ticket import process_ticket
 from chronikwerk.config.settings import Settings
+from tests.support.process_ticket_helpers import assert_artifact_pair_exists
 from tests.support.signing_test_helpers import write_test_pfx
 from tests.support.zammad_fixtures import (
     html_article_json,
@@ -147,8 +148,7 @@ def test_process_ticket_signing_writes_signed_pdf_and_audit_fingerprint(
         expected_pdf_path = _expected_pdf_path(tmp_path, settings, fixed_now)
         expected_sidecar_path = expected_pdf_path.parent / (expected_pdf_path.name + ".json")
 
-        assert expected_pdf_path.exists()
-        assert expected_sidecar_path.exists()
+        assert_artifact_pair_exists(expected_pdf_path, expected_sidecar_path)
 
         pdf_bytes = expected_pdf_path.read_bytes()
         assert pdf_bytes.startswith(b"%PDF")

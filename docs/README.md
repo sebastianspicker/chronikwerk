@@ -3,6 +3,13 @@
 Use [../README.md](../README.md) for installation, configuration, usage, development,
 testing, operation, troubleshooting, and security basics.
 
+The documentation hierarchy is intentional: the root README defines public scope and
+entry-level usage; this index provides navigation; ADRs record accepted rationale and
+tradeoffs; architecture, API, and configuration references define technical contracts;
+and deployment, operations, and security documents are operator runbooks. When two
+documents overlap, use the more specific contract or runbook without widening the public
+scope stated in the README.
+
 ## Architecture and data
 
 - [Architecture](01-architecture.md): runtime flow, state transitions, module boundaries,
@@ -45,6 +52,8 @@ testing, operation, troubleshooting, and security basics.
   package layout.
 - [Current architecture decision](adr/0004-current-architecture.md).
 - [Administration and accessible-PDF decision](adr/0005-admin-config-and-accessible-pdf.md).
+- [Zammad outbound transport trust-boundary decision](adr/0006-zammad-outbound-transport-trust-boundary.md).
+- [Deterministic release-assurance decision](adr/0007-deterministic-release-assurance-scripts.md).
 - [Product contract](../PRODUCT.md).
 - [Design system](../DESIGN.md).
 - [Release status](../RELEASE_STATUS.md).
