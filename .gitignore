@@ -1,5 +1,21 @@
 # Python
 __pycache__/
+
+# Local agent, analysis, and task state
+/.agents/
+/.claude/
+/.codex/
+/.cursor/
+/.mcp.json
+/.repowise/
+/.serena/
+/.codegraph/
+/AUDIT_LEDGER.md
+/logs/
+/*.log
+/wip/
+/WIP/
+/work-in-progress/
 *.py[cod]
 *.pyd
 *.so
