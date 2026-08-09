@@ -35,9 +35,17 @@ class _FakeZammadClient:
         return self._articles
 
 
+async def _build_test_snapshot(*, tags: list[str], articles: list[ZammadArticle]) -> Any:
+    """Build a snapshot with the common ticket/client setup."""
+    ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
+    return await build_snapshot(
+        cast(Any, _FakeZammadClient(ticket=ticket, tags=tags, articles=articles)),
+        1,
+    )
+
+
 def test_articles_are_sorted_and_rich_html_is_sanitized() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
         articles = [
             ZammadArticle.model_validate(
                 {"id": 2, "created_at": "2024-01-02T00:00:00Z", "body": "later"}
@@ -50,10 +58,7 @@ def test_articles_are_sorted_and_rich_html_is_sanitized() -> None:
                 }
             ),
         ]
-        snapshot = await build_snapshot(
-            cast(Any, _FakeZammadClient(ticket=ticket, tags=["pdf:sign"], articles=articles)),
-            1,
-        )
+        snapshot = await _build_test_snapshot(tags=["pdf:sign"], articles=articles)
         assert [article.id for article in snapshot.articles] == [1, 2]
         assert snapshot.articles[0].body_html == "<b>earlier</b>"
         assert snapshot.articles[0].body_text == "earlier"
@@ -63,7 +68,6 @@ def test_articles_are_sorted_and_rich_html_is_sanitized() -> None:
 
 def test_attachment_metadata_is_kept_without_binary_content() -> None:
     async def run() -> None:
-        ticket = ZammadTicket.model_validate({"id": 1, "number": "T1"})
         articles = [
             ZammadArticle.model_validate(
                 {
@@ -75,10 +79,7 @@ def test_attachment_metadata_is_kept_without_binary_content() -> None:
                 }
             )
         ]
-        snapshot = await build_snapshot(
-            cast(Any, _FakeZammadClient(ticket=ticket, tags=[], articles=articles)),
-            1,
-        )
+        snapshot = await _build_test_snapshot(tags=[], articles=articles)
         attachment = snapshot.articles[0].attachments[0]
         assert attachment.article_id == 1
         assert attachment.attachment_id == 10

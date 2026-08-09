@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import struct
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+from ci_1_helper import ci_1_helper as _sha256
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_PATHS = (
@@ -30,6 +31,10 @@ REQUIRED_PATHS = (
     "docs/08-operations.md",
     "docs/09-security.md",
     "docs/README.md",
+    "docs/adr/0004-current-architecture.md",
+    "docs/adr/0005-admin-config-and-accessible-pdf.md",
+    "docs/adr/0006-zammad-outbound-transport-trust-boundary.md",
+    "docs/adr/0007-deterministic-release-assurance-scripts.md",
     "docs/alpha-release.md",
     "docs/admin-frontend.md",
     "docs/api.md",
@@ -62,15 +67,6 @@ def _public_markdown() -> list[Path]:
         if not LOCAL_DOC_DIRECTORIES.intersection(path.relative_to(REPO_ROOT / "docs").parts[:-1])
     ]
     return sorted(root_docs + nested_docs)
-
-
-def _sha256(path: Path) -> str:
-    """Hash a file in chunks for the screenshot provenance comparison."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _png_dimensions(path: Path) -> tuple[int, int]:

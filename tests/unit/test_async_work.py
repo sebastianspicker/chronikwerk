@@ -65,3 +65,31 @@ def test_repeated_cancellation_does_not_detach_sync_work() -> None:
         assert finished.is_set()
 
     asyncio.run(_run())
+
+
+def test_worker_failure_is_noted_before_cancellation_propagates() -> None:
+    """A failure finishing under cancellation remains attached to the cancellation."""
+
+    async def _run() -> None:
+        started = threading.Event()
+        finish = threading.Event()
+
+        def failing_work() -> None:
+            started.set()
+            finish.wait(timeout=2.0)
+            raise RuntimeError("worker failure")
+
+        task = asyncio.create_task(run_sync_cancellation_safe(failing_work))
+        while not started.is_set():
+            await asyncio.sleep(0)
+
+        task.cancel()
+        await asyncio.sleep(0)
+        finish.set()
+
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await task
+
+        assert any("RuntimeError" in note for note in caught.value.__notes__)
+
+    asyncio.run(_run())

@@ -21,6 +21,8 @@ from chronikwerk.domain.state_machine import (
     TRIGGER_TAG,
 )
 from tests.support.settings_factory import make_settings
+from tests.support.zammad_client_helpers import called_tag_items
+from tests.support.zammad_fixtures import html_article_json
 
 SECRET = "test-webhook-hmac-secret-0123456789abcdef"
 ZAMMAD__BASE_URL = "https://zammad.example.local"
@@ -30,15 +32,6 @@ def _sign(body: bytes, secret: str) -> str:
     """Create the HMAC signature expected by the test request."""
     digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return f"sha256={digest}"
-
-
-def _called_tag_items(route: respx.Route) -> list[str]:
-    """Return a collector for Zammad tag mutation calls."""
-    items: list[str] = []
-    for call in route.calls:
-        body = json.loads(call.request.content.decode("utf-8"))
-        items.append(body.get("item"))
-    return items
 
 
 def _create_test_app(tmp_path):
@@ -92,20 +85,6 @@ def _ticket_json(
                 "archive_path": archive_path or ["A", "B", "C"],
             }
         },
-    }
-
-
-def _article_json() -> dict[str, object]:
-    """Return a representative Zammad article API response."""
-    return {
-        "id": 1,
-        "created_at": "2026-02-07T11:59:00Z",
-        "internal": False,
-        "subject": "Hello",
-        "body": "<p>Hello World</p>",
-        "content_type": "text/html",
-        "from": "customer@example.invalid",
-        "attachments": [],
     }
 
 
@@ -167,7 +146,7 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
     with respx.mock(assert_all_called=True) as zammad:
         ticket_route = _register_ticket(zammad, 123, _ticket_json(123))
         tags_route = _register_tags(zammad, 123)
-        _register_articles(zammad, 123, [_article_json()])
+        _register_articles(zammad, 123, [html_article_json()])
         remove_tag_route, add_tag_route, article_route = _register_mutation_routes(zammad)
 
         response = asyncio.run(
@@ -186,8 +165,8 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
         assert tags_route.called
         assert article_route.called
 
-        added = _called_tag_items(add_tag_route)
-        removed = _called_tag_items(remove_tag_route)
+        added = called_tag_items(add_tag_route)
+        removed = called_tag_items(remove_tag_route)
 
         assert PROCESSING_TAG in added
         assert DONE_TAG in added

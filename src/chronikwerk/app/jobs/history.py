@@ -20,6 +20,21 @@ def _matches_status(status: str, statuses: set[str] | None) -> bool:
     return any(status == item or status.startswith(f"{item}_") for item in statuses)
 
 
+def _matches_history_filters(
+    item: dict[str, Any],
+    *,
+    ticket_id: int | None,
+    before_id: int | None,
+    statuses: set[str] | None,
+) -> bool:
+    """Return whether a history item matches all optional operator filters."""
+    if ticket_id is not None and item["ticket_id"] != ticket_id:
+        return False
+    if before_id is not None and int(item["id"]) >= before_id:
+        return False
+    return _matches_status(str(item["status"]), statuses)
+
+
 def record_history_event(
     status: str,
     ticket_id: int | None,
@@ -55,9 +70,12 @@ def read_history(
     items = [
         item
         for item in reversed(_HISTORY)
-        if (ticket_id is None or item["ticket_id"] == ticket_id)
-        and (before_id is None or int(item["id"]) < before_id)
-        and _matches_status(str(item["status"]), statuses)
+        if _matches_history_filters(
+            item,
+            ticket_id=ticket_id,
+            before_id=before_id,
+            statuses=statuses,
+        )
     ]
     return items[:bounded_limit]
 

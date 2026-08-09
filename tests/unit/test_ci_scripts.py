@@ -12,6 +12,12 @@ from pathlib import Path
 import yaml
 
 
+def _assert_command_succeeds(proc: subprocess.CompletedProcess[str], marker: str) -> None:
+    """Keep subprocess success and marker checks identical across CI gates."""
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert marker in proc.stdout
+
+
 def test_ci_smoke_script_checks_current_repo_layout() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     script = repo_root / "scripts" / "ci" / "smoke-test.sh"
@@ -44,8 +50,7 @@ def test_brand_identity_gate_rejects_stale_public_names() -> None:
         check=False,
     )
 
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "brand-identity-check: OK" in proc.stdout
+    _assert_command_succeeds(proc, "brand-identity-check: OK")
 
 
 def test_makefile_clean_preserves_the_project_virtualenv() -> None:
@@ -172,8 +177,7 @@ def test_docs_check_validates_required_inventory_and_links() -> None:
         text=True,
         check=False,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "docs-check: OK" in proc.stdout
+    _assert_command_succeeds(proc, "docs-check: OK")
 
 
 def test_screenshot_renderer_is_repository_owned_and_non_browser_claims_are_explicit() -> None:
@@ -189,6 +193,94 @@ def test_screenshot_renderer_is_repository_owned_and_non_browser_claims_are_expl
     assert renderer.is_file()
     assert "not browser" in screenshot_notes
     assert "not" in screenshot_notes and "accessibility" in screenshot_notes
+
+
+def test_screenshot_split_modules_import_independently() -> None:
+    """Split renderer helpers must not depend on a partially initialized facade."""
+    repo_root = Path(__file__).resolve().parents[2]
+    docs_dir = repo_root / "scripts" / "docs"
+    script = (
+        "import importlib, sys; "
+        f"sys.path.insert(0, {str(docs_dir)!r}); "
+        "importlib.import_module(sys.argv[1])"
+    )
+
+    for module in (
+        "source",
+        "screenshot_rendering",
+        "render_admin_screenshots_part3",
+        "render_admin_screenshots",
+    ):
+        proc = subprocess.run(  # nosec B603
+            [sys.executable, "-c", script, module],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_screenshot_renderer_avoids_the_repository_tests_namespace() -> None:
+    """A pre-imported repository tests package must not shadow renderer helpers."""
+    repo_root = Path(__file__).resolve().parents[2]
+    docs_dir = repo_root / "scripts" / "docs"
+    script = (
+        "import sys; "
+        "import tests; "
+        f"sys.path.insert(0, {str(docs_dir)!r}); "
+        "import render_admin_screenshots; "
+        "assert render_admin_screenshots.render.__module__ == 'screenshot_rendering'"
+    )
+    proc = subprocess.run(  # nosec B603
+        [sys.executable, "-c", script],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_screenshot_provenance_includes_split_helpers_and_settings_sources() -> None:
+    """Every renderer helper and extracted settings source must invalidate screenshots."""
+    repo_root = Path(__file__).resolve().parents[2]
+    docs_dir = repo_root / "scripts" / "docs"
+    script = (
+        "import sys; "
+        f"sys.path.insert(0, {str(docs_dir)!r}); "
+        "import source; "
+        "paths = source._source_paths(); "
+        "hashes = source._source_hashes(); "
+        "relative_paths = [path.relative_to(source.REPO_ROOT).as_posix() for path in paths]; "
+        "assert relative_paths == list(hashes); "
+        "assert all("
+        "hashes[relative] == source._sha256(source.REPO_ROOT / relative) "
+        "for relative in relative_paths"
+        "); "
+        "print('\\n'.join(relative_paths))"
+    )
+    proc = subprocess.run(  # nosec B603
+        [sys.executable, "-c", script],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    paths = set(proc.stdout.splitlines())
+
+    assert {
+        "scripts/ci/ci_1_helper.py",
+        "scripts/docs/render_admin_screenshots.py",
+        "scripts/docs/render_admin_screenshots_part3.py",
+        "scripts/docs/source.py",
+        "scripts/docs/screenshot_rendering.py",
+        "src/chronikwerk/config/settings.py",
+        "src/chronikwerk/config/_settings_sections.py",
+        "src/chronikwerk/config/_settings_signing.py",
+        "src/chronikwerk/config/_settings_zammad.py",
+    } <= paths
 
 
 def test_coverage_policy_and_release_gate_are_aligned() -> None:

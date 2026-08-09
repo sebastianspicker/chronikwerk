@@ -1,5 +1,6 @@
 """Create safe, concise ticket notes describing archival outcomes."""
 
+from dataclasses import dataclass
 from html import escape
 
 import structlog
@@ -64,6 +65,34 @@ _ERROR_HINT_RULES: tuple[_ErrorHintRule, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class SuccessNotePayload:
+    """Values rendered into one successful archival acknowledgement."""
+
+    storage_dir: str
+    filename: str
+    sidecar_path: str
+    size_bytes: int
+    sha256_hex: str
+    request_id: str | None
+    delivery_id: str | None
+    timestamp_utc: str
+
+
+@dataclass(frozen=True)
+class ErrorNotePayload:
+    """Values rendered into one archival failure acknowledgement."""
+
+    classification: str
+    message: str
+    action: str
+    request_id: str | None
+    delivery_id: str | None
+    timestamp_utc: str
+    code: str = ""
+    hint: str = ""
+
+
 def _html_field_list(heading: str, fields: list[tuple[str, str]]) -> str:
     """Build an HTML note with a heading and escaped key/value list."""
     items = "".join(
@@ -72,29 +101,19 @@ def _html_field_list(heading: str, fields: list[tuple[str, str]]) -> str:
     return f"<p><strong>{escape(heading)}</strong></p><ul>{items}</ul>"
 
 
-def success_note_html(
-    *,
-    storage_dir: str,
-    filename: str,
-    sidecar_path: str,
-    size_bytes: int,
-    sha256_hex: str,
-    request_id: str | None,
-    delivery_id: str | None,
-    timestamp_utc: str,
-) -> str:
+def success_note_html(payload: SuccessNotePayload) -> str:
     """Return an HTML note body summarising a successful PDF archival operation."""
     return _html_field_list(
         f"PDF archived ({VERSION})",
         [
-            ("path", storage_dir),
-            ("filename", filename),
-            ("audit_sidecar", sidecar_path),
-            ("size_bytes", str(size_bytes)),
-            ("sha256", sha256_hex),
-            ("request_id", request_id or "unknown"),
-            ("delivery_id", delivery_id or "none"),
-            ("time_utc", timestamp_utc),
+            ("path", payload.storage_dir),
+            ("filename", payload.filename),
+            ("audit_sidecar", payload.sidecar_path),
+            ("size_bytes", str(payload.size_bytes)),
+            ("sha256", payload.sha256_hex),
+            ("request_id", payload.request_id or "unknown"),
+            ("delivery_id", payload.delivery_id or "none"),
+            ("time_utc", payload.timestamp_utc),
         ],
     )
 
@@ -110,32 +129,22 @@ def error_code_and_hint(exc: BaseException) -> tuple[str, str]:
     return ("permanent_error", "")
 
 
-def error_note_html(
-    *,
-    classification: str,
-    message: str,
-    action: str,
-    request_id: str | None,
-    delivery_id: str | None,
-    timestamp_utc: str,
-    code: str = "",
-    hint: str = "",
-) -> str:
+def error_note_html(payload: ErrorNotePayload) -> str:
     """Return an HTML note body describing an archival failure with classification and hints."""
     fields: list[tuple[str, str]] = [
-        ("classification", classification),
-        ("error", message),
-        ("action", action),
+        ("classification", payload.classification),
+        ("error", payload.message),
+        ("action", payload.action),
     ]
-    if code:
-        fields.append(("code", code))
-    if hint:
-        fields.append(("hint", hint))
+    if payload.code:
+        fields.append(("code", payload.code))
+    if payload.hint:
+        fields.append(("hint", payload.hint))
     fields.extend(
         [
-            ("request_id", request_id or "unknown"),
-            ("delivery_id", delivery_id or "none"),
-            ("time_utc", timestamp_utc),
+            ("request_id", payload.request_id or "unknown"),
+            ("delivery_id", payload.delivery_id or "none"),
+            ("time_utc", payload.timestamp_utc),
         ]
     )
     return _html_field_list(f"PDF archiver error ({VERSION})", fields)

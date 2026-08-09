@@ -19,7 +19,7 @@ from chronikwerk.adapters.zammad.client import AsyncZammadClient
 from chronikwerk.adapters.zammad.models import TagList, Ticket
 from chronikwerk.app.jobs.async_retry import async_retry
 from chronikwerk.app.jobs.history import record_history_event
-from chronikwerk.app.jobs.ticket_notes import success_note_html
+from chronikwerk.app.jobs.ticket_notes import SuccessNotePayload, success_note_html
 from chronikwerk.app.jobs.ticket_path import (
     determine_username,
     parse_archive_path_segments,
@@ -27,6 +27,7 @@ from chronikwerk.app.jobs.ticket_path import (
 from chronikwerk.app.jobs.ticket_renderer import build_and_render_pdf
 from chronikwerk.app.jobs.ticket_storage import (
     StorageResult,
+    StoreTicketFilesRequest,
     store_ticket_files,
 )
 from chronikwerk.config.settings import Settings
@@ -75,21 +76,37 @@ class _FetchedTicketState:
     tags: TagList
 
 
+@dataclass(frozen=True)
+class _PipelineOptions:
+    """Group state-machine options that must remain consistent across stages."""
+
+    trigger_tag: str
+    require_trigger_tag: bool
+    force_reprocess: bool
+
+
+@dataclass(frozen=True)
+class _SuccessNote:
+    """Rendered success acknowledgement posted after terminal tags are durable."""
+
+    subject: str
+    html: str
+
+
 async def _archive_fetched_ticket(
     *,
     client: AsyncZammadClient,
     ctx: TicketJobContext,
     payload: dict[str, Any],
     fetched: _FetchedTicketState,
-    trigger_tag: str,
-    force_reprocess: bool,
+    options: _PipelineOptions,
 ) -> None:
     """Apply processing state, persist the archive, and finalize terminal side effects."""
     await apply_processing(
         client,
         ctx.ticket_id,
-        trigger_tag=trigger_tag,
-        force_reprocess=force_reprocess,
+        trigger_tag=options.trigger_tag,
+        force_reprocess=options.force_reprocess,
     )
 
     now = now_utc()
@@ -110,7 +127,7 @@ async def _archive_fetched_ticket(
     await finalize_success(
         client=client,
         ctx=ctx,
-        trigger_tag=trigger_tag,
+        trigger_tag=options.trigger_tag,
         now=now,
         storage_result=storage_result,
     )
@@ -150,15 +167,35 @@ async def run_ticket_pipeline(
 
     Returns the result and whether total-time metrics should be observed.
     """
+    options = _PipelineOptions(
+        trigger_tag=trigger_tag,
+        require_trigger_tag=require_trigger_tag,
+        force_reprocess=force_reprocess,
+    )
+    return await _run_ticket_pipeline_with_options(
+        client=client,
+        ctx=ctx,
+        payload=payload,
+        options=options,
+    )
+
+
+async def _run_ticket_pipeline_with_options(
+    *,
+    client: AsyncZammadClient,
+    ctx: TicketJobContext,
+    payload: dict[str, Any],
+    options: _PipelineOptions,
+) -> tuple[ProcessTicketResult, bool]:
     fetched = await _fetch_ticket_state(client, ticket_id=ctx.ticket_id)
     # IMPORTANT: should_process is a non-atomic tag check. In multi-instance
     # deployments, a second worker may read the same tags before the first worker
     # writes PROCESSING_TAG. Multi-instance deployments must provide an external
     # serialization mechanism to prevent duplicate processing.
-    if not force_reprocess and not should_process(
+    if not options.force_reprocess and not should_process(
         fetched.tags.root,
-        trigger_tag=trigger_tag,
-        require_trigger_tag=require_trigger_tag,
+        trigger_tag=options.trigger_tag,
+        require_trigger_tag=options.require_trigger_tag,
     ):
         return (
             await skip_not_triggered(ctx, tags=fetched.tags.root),
@@ -171,8 +208,7 @@ async def run_ticket_pipeline(
             ctx=ctx,
             payload=payload,
             fetched=fetched,
-            trigger_tag=trigger_tag,
-            force_reprocess=force_reprocess,
+            options=options,
         )
     except CompletedTicketCancellation:
         raise
@@ -180,7 +216,7 @@ async def run_ticket_pipeline(
         await cleanup_cancelled_pipeline(
             client=client,
             ctx=ctx,
-            trigger_tag=trigger_tag,
+            trigger_tag=options.trigger_tag,
         )
         raise
     return ProcessTicketResult(status="processed", ticket_id=ctx.ticket_id), True
@@ -253,14 +289,16 @@ async def render_and_store_ticket(
     target_path, sidecar_path = storage_paths
     return await run_sync_cancellation_safe(
         store_ticket_files,
-        pdf_bytes=rendered.pdf_bytes,
-        snapshot=rendered.snapshot,
-        target_path=target_path,
-        sidecar_path=sidecar_path,
-        ticket_id=ticket.id,
-        now=now,
-        settings=ctx.settings,
-        signing_cert_fingerprint=rendered.signing_cert_fingerprint,
+        StoreTicketFilesRequest(
+            pdf_bytes=rendered.pdf_bytes,
+            snapshot=rendered.snapshot,
+            target_path=target_path,
+            sidecar_path=sidecar_path,
+            ticket_id=ticket.id,
+            now=now,
+            settings=ctx.settings,
+            signing_cert_fingerprint=rendered.signing_cert_fingerprint,
+        ),
     )
 
 
@@ -296,20 +334,12 @@ async def finalize_success(
         raise
 
     if ctx.settings.workflow.acknowledge_on_success:
+        note = _success_note(ctx, storage_result=storage_result, now=now)
         try:
             await client.create_internal_article(
                 ctx.ticket_id,
-                f"PDF archived ({VERSION})",
-                success_note_html(
-                    storage_dir=str(storage_result.target_path.parent),
-                    filename=storage_result.target_path.name,
-                    sidecar_path=str(storage_result.sidecar_path),
-                    size_bytes=storage_result.size_bytes,
-                    sha256_hex=storage_result.sha256_hex,
-                    request_id=ctx.request_id,
-                    delivery_id=ctx.delivery_id,
-                    timestamp_utc=format_timestamp_utc(now),
-                ),
+                note.subject,
+                note.html,
             )
         except asyncio.CancelledError as exc:
             _record_success_note_warning(ctx, storage_result=storage_result, cancelled=True)
@@ -321,6 +351,29 @@ async def finalize_success(
             _record_success_note_warning(ctx, storage_result=storage_result, cancelled=False)
 
     _record_success(ctx, storage_result=storage_result)
+
+
+def _success_note(
+    ctx: TicketJobContext,
+    *,
+    storage_result: StorageResult,
+    now: datetime,
+) -> _SuccessNote:
+    return _SuccessNote(
+        subject=f"PDF archived ({VERSION})",
+        html=success_note_html(
+            SuccessNotePayload(
+                storage_dir=str(storage_result.target_path.parent),
+                filename=storage_result.target_path.name,
+                sidecar_path=str(storage_result.sidecar_path),
+                size_bytes=storage_result.size_bytes,
+                sha256_hex=storage_result.sha256_hex,
+                request_id=ctx.request_id,
+                delivery_id=ctx.delivery_id,
+                timestamp_utc=format_timestamp_utc(now),
+            )
+        ),
+    )
 
 
 def _record_success_note_warning(

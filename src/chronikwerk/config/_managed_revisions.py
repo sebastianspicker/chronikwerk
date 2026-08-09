@@ -85,6 +85,24 @@ def parse_revision_payload(
     return data
 
 
+def _read_revision_chain_entry(
+    revision: str,
+    *,
+    revisions_dir: Path,
+    read_revision: RevisionReader,
+) -> tuple[Path, dict[str, Any]] | None:
+    """Read one revision, allowing the absent empty-root revision."""
+    path = revisions_dir / f"{revision}.json"
+    try:
+        return path, read_revision(path)
+    except _MissingManagedFile:
+        if revision == revision_for({}):
+            return None
+        raise ManagedConfigError(
+            f"Revision chain references missing revision: {revision}"
+        ) from None
+
+
 def build_revision_chain(
     *,
     current_revision: str,
@@ -100,15 +118,14 @@ def build_revision_chain(
         if max_entries is not None and len(chain) >= max_entries:
             break
         seen.add(revision)
-        path = revisions_dir / f"{revision}.json"
-        try:
-            data = read_revision(path)
-        except _MissingManagedFile:
-            if revision == revision_for({}):
-                break
-            raise ManagedConfigError(
-                f"Revision chain references missing revision: {revision}"
-            ) from None
+        entry = _read_revision_chain_entry(
+            revision,
+            revisions_dir=revisions_dir,
+            read_revision=read_revision,
+        )
+        if entry is None:
+            break
+        path, data = entry
         chain.append((path, data))
         revision = str(data["metadata"]["previous_revision"])
     return chain

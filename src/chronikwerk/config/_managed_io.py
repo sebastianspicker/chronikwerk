@@ -21,8 +21,8 @@ from chronikwerk.config._managed_errors import (
 _MAX_MANAGED_FILE_BYTES = 256 * 1024
 
 
-class _ManagedFileIO:
-    """Filesystem operations shared by the managed configuration store."""
+class _TrustedDirectoryTraversal:
+    """Open and validate managed-state directories without following symlinks."""
 
     state_dir: Path
     overlay_path: Path
@@ -172,19 +172,28 @@ class _ManagedFileIO:
                 raise ManagedConfigError(
                     f"Managed configuration path is unavailable: {display_path}"
                 ) from None
-            try:
-                os.mkdir(name, mode=0o700, dir_fd=parent_fd)
-            except FileExistsError:
-                pass
-            try:
-                return os.open(name, flags, dir_fd=parent_fd)
-            except OSError as exc:
-                raise ManagedConfigError(
-                    f"Managed configuration path is unsafe: {display_path}"
-                ) from exc
+            return cls._create_directory_entry(parent_fd, name, flags, display_path)
         except OSError as exc:
             raise ManagedConfigError(
                 f"Managed configuration path contains a symlink or non-directory: {display_path}"
+            ) from exc
+
+    @staticmethod
+    def _create_directory_entry(
+        parent_fd: int,
+        name: str,
+        flags: int,
+        display_path: Path,
+    ) -> int:
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        try:
+            return os.open(name, flags, dir_fd=parent_fd)
+        except OSError as exc:
+            raise ManagedConfigError(
+                f"Managed configuration path is unsafe: {display_path}"
             ) from exc
 
     @classmethod
@@ -235,6 +244,10 @@ class _ManagedFileIO:
             )
         finally:
             os.close(state_fd)
+
+
+class _BoundedReadMixin(_TrustedDirectoryTraversal):
+    """Read bounded regular files through trusted directory descriptors."""
 
     @staticmethod
     def _read_bounded_file(
@@ -319,6 +332,10 @@ class _ManagedFileIO:
             raise ManagedConfigError("Revision file exceeds 256 KiB")
         return path.read_bytes()
 
+
+class _RevisionPruningMixin(_TrustedDirectoryTraversal):
+    """Remove obsolete revision files while retaining directory durability."""
+
     def _prune_revision_files(self, keep_names: set[str]) -> None:
         if os.name != "posix":
             self._prune_revision_paths(keep_names)
@@ -386,6 +403,10 @@ class _ManagedFileIO:
         finally:
             os.close(directory_fd)
 
+
+class _AtomicWriteCleanupMixin(_RevisionPruningMixin):
+    """Atomically replace managed files and preserve cleanup failure details."""
+
     @staticmethod
     def _payload_bytes(value: dict[str, Any]) -> bytes:
         payload = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
@@ -451,23 +472,26 @@ class _ManagedFileIO:
             "Unable to allocate managed configuration temp file"
         )
 
-    @staticmethod
-    def _write_temp_payload(file_fd: int, payload: bytes) -> None:
+    def _write_temp_payload(self, file_fd: int, payload: bytes) -> None:
         try:
             os.fchmod(file_fd, 0o600)
         except BaseException as primary_error:
-            try:
-                os.close(file_fd)
-            except OSError as cleanup_error:
-                primary_error.add_note(
-                    "Closing the managed-state temp file also failed: "
-                    f"{type(cleanup_error).__name__}: {cleanup_error}"
-                )
+            self._close_temp_after_setup_failure(file_fd, primary_error)
             raise
         with os.fdopen(file_fd, "wb") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+
+    @staticmethod
+    def _close_temp_after_setup_failure(file_fd: int, primary_error: BaseException) -> None:
+        try:
+            os.close(file_fd)
+        except OSError as cleanup_error:
+            primary_error.add_note(
+                "Closing the managed-state temp file also failed: "
+                f"{type(cleanup_error).__name__}: {cleanup_error}"
+            )
 
     @staticmethod
     def _replace_and_sync(directory_fd: int, temp_name: str, path: Path) -> None:
@@ -479,19 +503,19 @@ class _ManagedFileIO:
                 f"Managed configuration target was replaced but directory fsync failed: {path}"
             ) from exc
 
-    @staticmethod
     def _finish_atomic_cleanup(
+        self,
         directory_fd: int,
         temp_name: str | None,
         primary_error: BaseException | None,
         *,
         replaced: bool,
     ) -> None:
-        cleanup_errors = _ManagedFileIO._cleanup_atomic_resources(directory_fd, temp_name)
+        cleanup_errors = self._cleanup_atomic_resources(directory_fd, temp_name)
         if primary_error is not None:
-            _ManagedFileIO._annotate_cleanup_errors(primary_error, cleanup_errors)
+            self._annotate_cleanup_errors(primary_error, cleanup_errors)
             return
-        _ManagedFileIO._raise_cleanup_errors(cleanup_errors, replaced=replaced)
+        self._raise_cleanup_errors(cleanup_errors, replaced=replaced)
 
     @staticmethod
     def _cleanup_atomic_resources(directory_fd: int, temp_name: str | None) -> list[OSError]:
@@ -563,3 +587,7 @@ class _ManagedFileIO:
                 primary_error,
                 replaced=replaced,
             )
+
+
+class _ManagedFileIO(_BoundedReadMixin, _AtomicWriteCleanupMixin):
+    """Compatibility facade for managed configuration filesystem operations."""

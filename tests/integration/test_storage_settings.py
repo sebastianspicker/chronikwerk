@@ -15,17 +15,15 @@ from chronikwerk.adapters.storage.layout import build_filename_from_pattern
 from chronikwerk.app.jobs import _ticket_pipeline as ticket_pipeline_module
 from chronikwerk.app.jobs.process_ticket import process_ticket
 from chronikwerk.config.settings import Settings
+from tests.support.settings_factory import make_settings
 from tests.support.zammad_fixtures import archived_ticket_json, register_archive_mutation_routes
 
 
 def _settings(storage_root: str, *, fsync: bool = True) -> Settings:
     """Build settings isolated to this test scenario."""
-    return Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": storage_root, "fsync": fsync},
-            "hardening": {"transport": {"allow_private_networks": True}},
-        }
+    return make_settings(
+        storage_root,
+        overrides={"storage": {"fsync": fsync}},
     )
 
 

@@ -77,6 +77,15 @@ def _missing_definition_doc(
     return [f"{_relative(path)}:{node.lineno}: {label} lacks a docstring"]
 
 
+def _top_level_callables(
+    tree: ast.Module,
+) -> Iterable[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef]:
+    """Yield the callable definitions that belong to a module's public surface."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node
+
+
 def _public_method_errors(path: Path, class_node: ast.ClassDef) -> list[str]:
     return [
         error
@@ -98,9 +107,7 @@ def _public_definition_errors(path: Path, tree: ast.Module) -> list[str]:
         return []
 
     errors: list[str] = []
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
+    for node in _top_level_callables(tree):
         if node.name.startswith("_"):
             continue
         errors.extend(_missing_definition_doc(path, node, label=f"public {node.name}"))
@@ -116,9 +123,7 @@ def _test_helper_errors(path: Path, tree: ast.Module) -> list[str]:
         return []
 
     errors: list[str] = []
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
+    for node in _top_level_callables(tree):
         if node.name.startswith("test_"):
             continue
         if ast.get_docstring(node) is None:

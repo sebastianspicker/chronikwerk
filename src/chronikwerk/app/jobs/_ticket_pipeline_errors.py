@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import structlog
 
 from chronikwerk._version import VERSION
@@ -10,6 +12,7 @@ from chronikwerk.app.jobs import _ticket_pipeline
 from chronikwerk.app.jobs.async_retry import async_retry
 from chronikwerk.app.jobs.retry_policy import classify
 from chronikwerk.app.jobs.ticket_notes import (
+    ErrorNotePayload,
     action_hint,
     concise_exc_message,
     error_code_and_hint,
@@ -21,6 +24,17 @@ from chronikwerk.domain.time_utils import format_timestamp_utc, now_utc
 from chronikwerk.observability.metrics import failed_total
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _ErrorNote:
+    """Values rendered into one operator-visible archival failure note."""
+
+    classification: str
+    message: str
+    action: str
+    code: str
+    hint: str
 
 
 async def handle_ticket_pipeline_exception(
@@ -38,16 +52,19 @@ async def handle_ticket_pipeline_exception(
     action = action_hint(exc, classified=classified) if classified is not None else ""
     code, hint = _error_code_hint(exc, classified=classified)
 
+    note = _ErrorNote(
+        classification=classification_label,
+        message=msg,
+        action=action,
+        code=code,
+        hint=hint,
+    )
     _log_pipeline_error(ctx, classification_label=classification_label, code=code, hint=hint)
 
     await _post_error_note(
         client=client,
         ctx=ctx,
-        classification_label=classification_label,
-        msg=msg,
-        action=action,
-        code=code,
-        hint=hint,
+        note=note,
     )
     await _apply_error_and_cleanup_processing_tag(
         client=client,
@@ -115,11 +132,7 @@ async def _post_error_note(
     *,
     client: AsyncZammadClient,
     ctx: _ticket_pipeline.TicketJobContext,
-    classification_label: str,
-    msg: str,
-    action: str,
-    code: str,
-    hint: str,
+    note: _ErrorNote,
 ) -> None:
     now = now_utc()
     try:
@@ -127,14 +140,16 @@ async def _post_error_note(
             ctx.ticket_id,
             f"PDF archiver error ({VERSION})",
             error_note_html(
-                classification=classification_label,
-                message=msg,
-                action=action,
-                request_id=ctx.request_id,
-                delivery_id=ctx.delivery_id,
-                timestamp_utc=format_timestamp_utc(now),
-                code=code,
-                hint=hint,
+                ErrorNotePayload(
+                    classification=note.classification,
+                    message=note.message,
+                    action=note.action,
+                    request_id=ctx.request_id,
+                    delivery_id=ctx.delivery_id,
+                    timestamp_utc=format_timestamp_utc(now),
+                    code=note.code,
+                    hint=note.hint,
+                )
             ),
         )
     except Exception:  # pylint: disable=broad-exception-caught
@@ -143,7 +158,7 @@ async def _post_error_note(
             ticket_id=ctx.ticket_id,
             request_id=ctx.request_id,
             delivery_id=ctx.delivery_id,
-            classification=classification_label,
+            classification=note.classification,
         )
 
 

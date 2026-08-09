@@ -140,10 +140,12 @@ ZAMMAD__WEBHOOK_HMAC_SECRET=replace-with-at-least-32-random-characters
 STORAGE__ROOT=/mnt/archive
 ```
 
-The Zammad URL must be an HTTPS origin without credentials, a path, query parameters, or a
-fragment. TLS verification cannot be disabled. Private or loopback Zammad origins require
-the explicit transport-policy override documented in the
-[configuration reference](docs/config-reference.md).
+The Zammad URL must be an HTTPS origin by default and cannot contain credentials, a path,
+query parameters, or a fragment. Set
+`HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP=true` only to permit an HTTP Zammad origin in
+a reviewed, isolated internal or test deployment. TLS certificate verification remains
+mandatory whenever HTTPS is used. Private or loopback Zammad origins require the separate
+transport-policy override documented in the [configuration reference](docs/config-reference.md).
 
 Configuration is loaded in this order, from highest to lowest precedence:
 

@@ -13,6 +13,7 @@ from chronikwerk.app.constants import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
 from chronikwerk.app.jobs._ticket_pipeline import (
     ProcessTicketResult,
     TicketJobContext,
+    _PipelineOptions,
 )
 from chronikwerk.app.jobs._ticket_pipeline import (
     cleanup_cancelled_pipeline as _cleanup_cancelled_pipeline,
@@ -148,41 +149,70 @@ async def _process_ticket_with_client(
 ) -> ProcessTicketResult:
     """Open a Zammad client session and preserve the job-level error boundary."""
     settings = ctx.settings
-    trigger_tag = str(settings.workflow.trigger_tag).strip() or TRIGGER_TAG
-    require_trigger_tag = bool(settings.workflow.require_tag)
-    force_reprocess = _force_reprocess_requested(payload)
+    options = _PipelineOptions(
+        trigger_tag=str(settings.workflow.trigger_tag).strip() or TRIGGER_TAG,
+        require_trigger_tag=bool(settings.workflow.require_tag),
+        force_reprocess=_force_reprocess_requested(payload),
+    )
 
     async with AsyncZammadClient(connection=settings.zammad_connection) as client:
-        observe_total = True
         total_start = perf_counter()
+        observe_total = True
         try:
-            result, observe_total = await _run_ticket_pipeline(
-                client=client,
-                ctx=ctx,
-                payload=payload,
-                trigger_tag=trigger_tag,
-                require_trigger_tag=require_trigger_tag,
-                force_reprocess=force_reprocess,
+            result, observe_total = await _run_pipeline_with_error_boundary(
+                client,
+                ctx,
+                payload,
+                options,
             )
             return result
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            try:
-                return await _handle_ticket_pipeline_exception(
-                    client=client,
-                    ctx=ctx,
-                    trigger_tag=trigger_tag,
-                    exc=exc,
-                )
-            except asyncio.CancelledError:
-                await _cleanup_cancelled_pipeline(
-                    client=client,
-                    ctx=ctx,
-                    trigger_tag=trigger_tag,
-                )
-                raise
         finally:
             if observe_total:
                 total_seconds.observe(perf_counter() - total_start)
+
+
+async def _run_pipeline_with_error_boundary(
+    client: AsyncZammadClient,
+    ctx: TicketJobContext,
+    payload: dict[str, Any],
+    options: _PipelineOptions,
+) -> tuple[ProcessTicketResult, bool]:
+    try:
+        return await _run_ticket_pipeline(
+            client=client,
+            ctx=ctx,
+            payload=payload,
+            trigger_tag=options.trigger_tag,
+            require_trigger_tag=options.require_trigger_tag,
+            force_reprocess=options.force_reprocess,
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return (
+            await _handle_pipeline_failure(client, ctx, options, exc),
+            True,
+        )
+
+
+async def _handle_pipeline_failure(
+    client: AsyncZammadClient,
+    ctx: TicketJobContext,
+    options: _PipelineOptions,
+    exc: Exception,
+) -> ProcessTicketResult:
+    try:
+        return await _handle_ticket_pipeline_exception(
+            client=client,
+            ctx=ctx,
+            trigger_tag=options.trigger_tag,
+            exc=exc,
+        )
+    except asyncio.CancelledError:
+        await _cleanup_cancelled_pipeline(
+            client=client,
+            ctx=ctx,
+            trigger_tag=options.trigger_tag,
+        )
+        raise
 
 
 async def _release_ticket_lock(ctx: TicketJobContext) -> None:

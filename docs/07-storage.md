@@ -40,6 +40,14 @@ If a replacement fails during commit, the original canonical PDF and sidecar
 remain the authoritative pair. Backup and rollback cleanup failures are logged
 separately from the original write failure and may require filesystem cleanup.
 
+The archive commit completes before Chronikwerk applies terminal Zammad tags or
+creates a success note. A PDF and sidecar can therefore exist while the ticket is
+`pdf:error`, still has `pdf:processing`, or otherwise reflects a partial tag
+update. In that case, verify the PDF checksum against the sidecar and inspect the
+processing history and logs before reprocessing. Do not delete a valid archive
+solely because Zammad finalization failed; a retry may replace the canonical pair
+according to the configured filename pattern.
+
 ## CIFS/SMB Notes
 
 CIFS/SMB durability and locking semantics depend on mount options, server

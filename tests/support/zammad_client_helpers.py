@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
+import respx
 
 from chronikwerk.adapters.zammad.client import (
     AsyncZammadClient,
@@ -18,6 +20,11 @@ from chronikwerk.adapters.zammad.errors import ServerError
 async def no_sleep(_: float) -> None:
     """Replace retry delays with a deterministic no-op."""
     return None
+
+
+def called_tag_items(route: respx.Route) -> list[str]:
+    """Return the tag values posted to one mocked Zammad mutation route."""
+    return [json.loads(call.request.content.decode("utf-8"))["item"] for call in route.calls]
 
 
 def _test_runtime(

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DECISION: docs/adr/0007-deterministic-release-assurance-scripts.md governs this synchronous, fail-fast gate.
 # Verify the small, release-critical repository skeleton before more expensive CI lanes run.
 set -euo pipefail
 

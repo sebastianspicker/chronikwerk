@@ -6,25 +6,19 @@ from fastapi.testclient import TestClient
 
 from chronikwerk.app.server import create_app
 from chronikwerk.config.settings import Settings
+from tests.support.http_security_test_helpers import assert_json_error, make_rate_limit_settings
 from tests.support.process_ticket_helpers import (
     TEST_WEBHOOK_SECRET,
     exhaust_signed_rate_limit,
     install_noop_ingest_processing,
 )
-from tests.support.settings_factory import make_settings
 
 
 def _test_settings(storage_root: str) -> Settings:
     """Build settings isolated to this test scenario."""
-    return make_settings(
+    return make_rate_limit_settings(
         storage_root,
         secret=TEST_WEBHOOK_SECRET,
-        overrides={
-            "hardening": {
-                "rate_limit": {"enabled": True, "rps": 0, "burst": 2},
-                "body_size_limit": {"max_bytes": 1024 * 1024},
-            }
-        },
     )
 
 
@@ -35,8 +29,7 @@ def test_rate_limit_triggers_on_ingest(tmp_path, monkeypatch) -> None:
 
     payload = {"ticket": {"id": 1}}
     resp = exhaust_signed_rate_limit(client, "/ingest", payload)
-    assert resp.status_code == 429
-    assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}
+    assert_json_error(resp, status_code=429, code="rate_limited")
     assert resp.headers["connection"] == "close"
     assert resp.headers.get("X-Request-Id")
 
@@ -48,8 +41,7 @@ def test_rate_limit_triggers_on_ingest_batch(tmp_path, monkeypatch) -> None:
 
     payload = [{"ticket": {"id": 1}}]
     resp = exhaust_signed_rate_limit(client, "/ingest/batch", payload)
-    assert resp.status_code == 429
-    assert resp.json() == {"detail": "rate_limited", "code": "rate_limited"}
+    assert_json_error(resp, status_code=429, code="rate_limited")
     assert resp.headers.get("X-Request-Id")
 
 

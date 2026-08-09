@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -30,6 +32,8 @@ from chronikwerk.config.managed import (
     validation_errors,
 )
 from chronikwerk.config.settings import Settings
+
+_ConfigChangeResult = tuple[dict[str, Any], None] | tuple[None, JSONResponse]
 
 
 class ConfigValidateRequest(BaseModel):
@@ -135,6 +139,55 @@ def _config_diff(settings: Settings, normalized: dict[str, Any]) -> list[dict[st
     ]
 
 
+@dataclass(frozen=True)
+class _ConfigChangeContext:
+    """Carry one revision-checked managed configuration change through validation."""
+
+    request: Request
+    session: AdminSession
+    overlay: dict[str, Any] | Callable[[], dict[str, Any]]
+    acknowledged: bool
+    change: Callable[[dict[str, Any]], dict[str, Any]]
+    preflight: Callable[[], JSONResponse | None] | None = None
+    invalid_code: str = "config_invalid"
+
+
+def _apply_config_change(
+    context: _ConfigChangeContext,
+) -> _ConfigChangeResult:
+    try:
+        if context.preflight is not None:
+            preflight_error = context.preflight()
+            if preflight_error is not None:
+                return None, preflight_error
+        candidate_overlay = context.overlay() if callable(context.overlay) else context.overlay
+        normalized = _normalized_overlay(_settings(context.request), candidate_overlay)
+        acknowledgement_error = _security_acknowledgement_error(
+            context.request,
+            context.session,
+            flatten_mapping(normalized),
+            acknowledged=context.acknowledged,
+        )
+        if acknowledgement_error is not None:
+            return None, acknowledgement_error
+        return context.change(normalized), None
+    except RevisionConflict:
+        return None, _api_error(
+            context.request,
+            409,
+            "config_revision_conflict",
+            "admin.restart_required",
+            locale=context.session.locale,
+        )
+    except (ManagedConfigError, ValueError, OSError) as exc:
+        return None, _invalid_config_error(
+            context.request,
+            context.session,
+            exc,
+            code=context.invalid_code,
+        )
+
+
 async def configuration_page(request: Request) -> Response:
     """Render the administrative configuration page from the safe read model."""
     session, redirect = _html_session(request)
@@ -217,35 +270,27 @@ async def stage_config_api(request: Request, payload: StageRequest) -> Response:
     if error is not None or session is None:
         return error or Response(status_code=401)
     expected = request.headers.get("If-Match", "")
-    try:
-        flattened = flatten_mapping(payload.overlay)
-        locked_error = _environment_owned_error(request, session, flattened)
-        if locked_error is not None:
-            return locked_error
-        normalized = _normalized_overlay(_settings(request), payload.overlay)
-        acknowledgement_error = _security_acknowledgement_error(
-            request,
-            session,
-            flatten_mapping(normalized),
+    metadata, error = _apply_config_change(
+        _ConfigChangeContext(
+            request=request,
+            session=session,
+            overlay=payload.overlay,
             acknowledged=payload.security_acknowledged,
+            change=lambda normalized: request.app.state.managed_config_store.stage(
+                normalized,
+                expected_revision=expected,
+                request_id=_request_id(request),
+            ),
+            preflight=lambda: _environment_owned_error(
+                request,
+                session,
+                flatten_mapping(payload.overlay),
+            ),
         )
-        if acknowledgement_error is not None:
-            return acknowledgement_error
-        metadata = request.app.state.managed_config_store.stage(
-            normalized,
-            expected_revision=expected,
-            request_id=_request_id(request),
-        )
-    except RevisionConflict:
-        return _api_error(
-            request,
-            409,
-            "config_revision_conflict",
-            "admin.restart_required",
-            locale=session.locale,
-        )
-    except (ManagedConfigError, ValueError, OSError) as exc:
-        return _invalid_config_error(request, session, exc)
+    )
+    if error is not None:
+        return error
+    assert metadata is not None
     return JSONResponse({**metadata, "restart_required": True})
 
 
