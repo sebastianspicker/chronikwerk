@@ -1,5 +1,5 @@
 # Build the signed-capable production service separately from its minimal runtime image.
-FROM python:3.14.6-slim AS builder
+FROM python:3.14.7-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -15,7 +15,7 @@ COPY src/ /app/src/
 RUN python -m pip install --no-cache-dir ".[signing]"
 
 
-FROM python:3.14.6-slim AS runtime
+FROM python:3.14.7-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
