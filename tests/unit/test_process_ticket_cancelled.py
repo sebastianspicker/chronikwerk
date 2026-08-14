@@ -67,7 +67,7 @@ def test_process_ticket_with_client_cancellation_does_not_run_error_flow(
 ) -> None:
     settings = make_settings(str(tmp_path))
 
-    async def _cancelled_pipeline(**kwargs):  # noqa: ANN003, ARG001
+    async def _cancelled_pipeline(_request):  # noqa: ANN001, ARG001
         raise asyncio.CancelledError()
 
     called = {"error_handler": 0}
@@ -132,12 +132,16 @@ def test_pipeline_cancellation_restores_retryable_tag_state(monkeypatch, tmp_pat
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
             ticket_pipeline_module.run_ticket_pipeline(
-                client=client,  # type: ignore[arg-type]
-                ctx=ctx,
-                payload={"ticket_id": 1},
-                trigger_tag="pdf:sign",
-                require_trigger_tag=True,
-                force_reprocess=False,
+                ticket_pipeline_module.TicketPipelineRequest(
+                    client=client,  # type: ignore[arg-type]
+                    ctx=ctx,
+                    payload={"ticket_id": 1},
+                    options=ticket_pipeline_module._PipelineOptions(  # noqa: SLF001
+                        trigger_tag="pdf:sign",
+                        require_trigger_tag=True,
+                        force_reprocess=False,
+                    ),
+                )
             )
         )
 
@@ -152,7 +156,7 @@ def test_pipeline_cancellation_restores_retryable_tag_state(monkeypatch, tmp_pat
 def test_error_flow_cancellation_still_restores_retryable_tags(monkeypatch, tmp_path) -> None:
     settings = make_settings(str(tmp_path))
 
-    async def _failed_pipeline(**_kwargs):
+    async def _failed_pipeline(_request):  # noqa: ANN001, ARG001
         raise RuntimeError("render failed")
 
     async def _cancelled_error_handler(**_kwargs):

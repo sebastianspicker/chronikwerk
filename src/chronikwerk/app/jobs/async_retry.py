@@ -6,6 +6,18 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 
+async def _back_off_before_retry(
+    attempt: int,
+    *,
+    max_retries: int,
+    backoff_base: float,
+    backoff_factor: float,
+) -> None:
+    """Wait before a remaining retry without delaying final failure."""
+    if attempt < max_retries:
+        await asyncio.sleep(backoff_base * (backoff_factor**attempt))
+
+
 async def async_retry[T](
     coro_factory: Callable[[], Awaitable[T]],
     *,
@@ -25,8 +37,12 @@ async def async_retry[T](
             return await coro_factory()
         except Exception as exc:  # pylint: disable=broad-exception-caught
             last_exc = exc
-            if attempt < max_retries:
-                await asyncio.sleep(backoff_base * (backoff_factor**attempt))
+            await _back_off_before_retry(
+                attempt,
+                max_retries=max_retries,
+                backoff_base=backoff_base,
+                backoff_factor=backoff_factor,
+            )
     if last_exc is None:
         raise ValueError("max_retries must be >= 0")
     raise last_exc

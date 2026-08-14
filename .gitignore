@@ -162,3 +162,41 @@ coverage.json
 /HARNESS_PRINCIPLES.md
 /code_review.md
 /scripts/topology_inventory.sh
+
+# Shared local indexes and operator records
+.repowise/
+/AUDIT_LEDGER.md
+/remediation-ledger.md
+
+# Public environment templates
+!.env.*.example
+!.env.sample
+!.env.template
+
+# Local-only credentials
+secrets.local.*
+credentials.local.*
+*.local.pem
+*.local.key
+.npmrc.local
+
+# Python caches and test reports
+.pyright/
+.tox/
+.nox/
+coverage/
+
+# Shared build output
+target/
+.build/
+DerivedData/
+xcuserdata/
+
+# Local database sidecars
+*.local.db
+*.local.sqlite
+*.local.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal

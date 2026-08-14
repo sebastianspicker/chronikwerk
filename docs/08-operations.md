@@ -133,6 +133,14 @@ attempted once per processing pass; transport and 5xx failures are not retried
 automatically to avoid duplicate notes. Re-run the ticket through the workflow
 or `POST /retry/{ticket_id}` after resolving the cause.
 
+Archive storage commits before terminal Zammad updates. If the PDF and sidecar
+exist but the ticket is `pdf:error` or remains `pdf:processing`, first verify
+that the pair is complete and that the sidecar checksum matches the PDF. Then
+inspect logs and process-local history for a terminal tag failure. Preserve the
+archive pair, clear stale `pdf:processing` only after confirming no job is still
+running, and use the reprocessing workflow below. There is no automatic
+reconciliation or durable outbox in the supported single-process topology.
+
 ## Reprocessing Workflow
 
 1. Read the latest Chronikwerk ticket note and classification.
@@ -178,7 +186,9 @@ Check:
 ### Ticket remains `pdf:processing`
 
 The process may have exited during background work. Inspect logs and
-`/jobs/history`, then run the reprocessing workflow above.
+`/jobs/history`. If an archive pair already exists, treat it as a possible
+post-commit finalization failure and follow the archive consistency guidance
+above before running the reprocessing workflow.
 
 ## On-Call Fast Triage
 

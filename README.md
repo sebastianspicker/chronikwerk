@@ -140,10 +140,12 @@ ZAMMAD__WEBHOOK_HMAC_SECRET=replace-with-at-least-32-random-characters
 STORAGE__ROOT=/mnt/archive
 ```
 
-The Zammad URL must be an HTTPS origin without credentials, a path, query parameters, or a
-fragment. TLS verification cannot be disabled. Private or loopback Zammad origins require
-the explicit transport-policy override documented in the
-[configuration reference](docs/config-reference.md).
+The Zammad URL must be an HTTPS origin by default and cannot contain credentials, a path,
+query parameters, or a fragment. Set
+`HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP=true` only to permit an HTTP Zammad origin in
+a reviewed, isolated internal or test deployment. TLS certificate verification remains
+mandatory whenever HTTPS is used. Private or loopback Zammad origins require the separate
+transport-policy override documented in the [configuration reference](docs/config-reference.md).
 
 Configuration is loaded in this order, from highest to lowest precedence:
 
@@ -286,6 +288,7 @@ Useful targets:
 | `make typecheck` | Run mypy over `src` and `tests`. |
 | `make complexity` | Enforce the configured lizard limits. |
 | `make duplication` | Run source and full-tree duplication checks. |
+| `make source-length-check` | Enforce the 600-line limit on authored source files. |
 | `make frontend-check` | Type-check frontend sources and compare compiled assets. |
 | `make docs-check` | Validate required Markdown, local links, and screenshot metadata. |
 | `make code-docs-check` | Validate maintained-code purpose text and public docstrings. |
@@ -331,6 +334,27 @@ make browser-setup
 make test-browser
 make pdf-ua-check PDF_FILES="unsigned.pdf signed.pdf"
 ```
+
+## Local demonstration and GitHub Pages
+
+`make dev` starts the real FastAPI service in a hot-reload container. It still
+requires reviewed local configuration, an archive path, and any Zammad or
+signing integrations that the selected workflow enables; it is not a fixture
+server.
+
+For a non-operational visual preview, the maintained administration screenshots
+are rendered from the real templates and CSS with synthetic local configuration:
+
+```bash
+make PYTHON=.venv/bin/python docs-screenshots
+make PYTHON=.venv/bin/python docs-check
+```
+
+Those images do not exercise authentication, JavaScript interaction, Zammad,
+storage, signing, or PDF generation. GitHub Pages is not a product deployment
+target because Chronikwerk requires a Python server, authenticated routes,
+filesystem state, and external service integrations. The repository has no
+Pages workflow or browser-only operational artifact.
 
 ## Deployment and operation
 

@@ -249,26 +249,25 @@ def test_client_key_from_header_whitespace_falls_back_to_scope() -> None:
     assert _client_key_from_header(scope, "x-forwarded-for") == "9.9.9.9"
 
 
-def test_rate_limit_middleware_returns_429_when_exhausted(tmp_path) -> None:
+def _make_ingest_rate_limit_client(tmp_path):
+    """Build the small Starlette app shared by middleware integration checks."""
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.responses import Response
     from starlette.routing import Route
     from starlette.testclient import TestClient
 
-    from tests.support.settings_factory import make_settings
-
-    async def ingest_endpoint(request: Request) -> Response:
+    async def ingest_endpoint(_request: Request) -> Response:
         return Response("ok", status_code=200)
 
-    starlette_app = Starlette(routes=[Route("/ingest", ingest_endpoint, methods=["POST"])])
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"hardening": {"rate_limit": {"enabled": True, "rps": 1.0, "burst": 1}}},
-    )
-    mw_app = RateLimitMiddleware(starlette_app, settings=settings)
+    app = Starlette(routes=[Route("/ingest", ingest_endpoint, methods=["POST"])])
+    settings = _make_settings_with_rate_limit(enabled=True, rps=1.0, burst=1)
+    middleware = RateLimitMiddleware(app, settings=settings)
+    return middleware, TestClient(middleware, raise_server_exceptions=False)
 
-    client = TestClient(mw_app, raise_server_exceptions=False)
+
+def test_rate_limit_middleware_returns_429_when_exhausted(tmp_path) -> None:
+    _middleware, client = _make_ingest_rate_limit_client(tmp_path)
     r1 = client.post("/ingest")
     assert r1.status_code == 200
     r2 = client.post("/ingest")
@@ -277,26 +276,7 @@ def test_rate_limit_middleware_returns_429_when_exhausted(tmp_path) -> None:
 
 def test_rate_limit_middleware_none_limiter_passes_through(tmp_path) -> None:
     """When _limiter is None traffic passes through to the app."""
-    from starlette.applications import Starlette
-    from starlette.requests import Request
-    from starlette.responses import Response
-    from starlette.routing import Route
-    from starlette.testclient import TestClient
-
-    from tests.support.settings_factory import make_settings
-
-    async def ingest_endpoint(request: Request) -> Response:
-        return Response("ok", status_code=200)
-
-    app = Starlette(routes=[Route("/ingest", ingest_endpoint, methods=["POST"])])
-    settings = make_settings(
-        str(tmp_path),
-        overrides={"hardening": {"rate_limit": {"enabled": True, "rps": 1.0, "burst": 1}}},
-    )
-    middleware = RateLimitMiddleware(app, settings=settings)
+    middleware, client = _make_ingest_rate_limit_client(tmp_path)
     middleware._limiter = None  # noqa: SLF001
-
-    wrapped = middleware
-    client = TestClient(wrapped, raise_server_exceptions=False)
     r = client.post("/ingest")
     assert r.status_code == 200

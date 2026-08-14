@@ -14,14 +14,13 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient
 
-from chronikwerk._version import __version__
-from chronikwerk.app.admin import _page_routes
-from chronikwerk.app.server import create_app
-from chronikwerk.config.settings import Settings
+    from chronikwerk.config.settings import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = REPO_ROOT / "docs" / "screenshots"
@@ -94,8 +93,9 @@ def _source_paths() -> list[Path]:
         REPO_ROOT / "src" / "chronikwerk" / "static" / "admin" / "chronikwerk-mark.svg",
     ]
     admin_modules = sorted((REPO_ROOT / "src" / "chronikwerk" / "app" / "admin").glob("*.py"))
+    settings_sources = sorted((REPO_ROOT / "src" / "chronikwerk" / "config").glob("_settings*.py"))
     templates = sorted((REPO_ROOT / "src" / "chronikwerk" / "templates" / "admin").glob("*.html"))
-    return sorted({*explicit, *admin_modules, *templates})
+    return sorted({*explicit, *admin_modules, *settings_sources, *templates})
 
 
 def _source_hashes() -> dict[str, str]:
@@ -154,6 +154,8 @@ def _playwright_version() -> str:
 
 def _settings(work_dir: Path) -> Settings:
     """Build isolated synthetic settings so captures never use operator configuration."""
+    from chronikwerk.config.settings import Settings
+
     archive_root = work_dir / "archive"
     state_dir = work_dir / "admin-state"
     archive_root.mkdir(mode=0o700)
@@ -248,7 +250,7 @@ def _render_png(
     html_path = work_dir / f"{destination.stem}.html"
     rendered_path = work_dir / destination.name
     html_path.write_text(html, encoding="utf-8")
-    subprocess.run(  # nosec B603
+    result = subprocess.run(  # nosec B603
         [
             "node",
             "--input-type=module",
@@ -260,13 +262,24 @@ def _render_png(
             str(spec.height),
         ],
         cwd=REPO_ROOT,
-        check=True,
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    if result.returncode != 0:
+        error = result.stderr.lower()
+        if "executable doesn't exist" in error or "executable does not exist" in error:
+            raise RuntimeError(
+                "pinned Playwright Chromium is unavailable; run `npx playwright install chromium`"
+            )
+        raise RuntimeError("Playwright Chromium renderer failed")
     rendered_path.replace(destination)
 
 
-def _manifest(captured_at: datetime) -> dict[str, object]:
+def _manifest(captured_at: datetime, *, output_dir: Path) -> dict[str, object]:
     """Describe source provenance, renderer limits, and exact output checksums."""
+    from chronikwerk._version import __version__
+
     return {
         "schema_version": 2,
         "candidate_version": __version__,
@@ -291,16 +304,29 @@ def _manifest(captured_at: datetime) -> dict[str, object]:
                 "route": spec.route,
                 "locale": spec.locale,
                 "viewport": {"width": spec.width, "height": spec.height},
-                "sha256": _sha256(OUTPUT_DIR / spec.filename),
+                "sha256": _sha256(output_dir / spec.filename),
             }
             for spec in SCREENSHOTS
         ],
     }
 
 
-def render(captured_at: datetime) -> None:
+def _write_manifest(manifest: dict[str, object], destination: Path) -> None:
+    """Write the canonical manifest format used for generated screenshot evidence."""
+    destination.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def render(captured_at: datetime, *, output_dir: Path = OUTPUT_DIR) -> Path:
     """Generate all previews and atomically replace the matching manifest."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    from fastapi.testclient import TestClient
+
+    from chronikwerk.app.admin import _page_routes
+    from chronikwerk.app.server import create_app
+
+    output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="chronikwerk-doc-screenshots-") as temporary:
         work_dir = Path(temporary).resolve()
         os.environ.setdefault("XDG_CACHE_HOME", str(work_dir / "cache"))
@@ -314,17 +340,83 @@ def render(captured_at: datetime) -> None:
                 html = _authenticated_html(client, spec=spec)
                 _render_png(
                     _inline_assets(html, spec=spec),
-                    destination=OUTPUT_DIR / spec.filename,
+                    destination=output_dir / spec.filename,
                     spec=spec,
                     work_dir=work_dir,
                 )
-        manifest = _manifest(captured_at)
+        manifest = _manifest(captured_at, output_dir=output_dir)
         manifest_tmp = work_dir / "manifest.json"
-        manifest_tmp.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        manifest_tmp.replace(MANIFEST_PATH)
+        _write_manifest(manifest, manifest_tmp)
+        manifest_tmp.replace(output_dir / "manifest.json")
+    return output_dir / "manifest.json"
+
+
+def _read_manifest(path: Path) -> dict[str, object]:
+    """Load a screenshot manifest or report a concise verification failure."""
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"cannot read manifest: {path.relative_to(REPO_ROOT)}") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"invalid manifest object: {path.relative_to(REPO_ROOT)}")
+    return manifest
+
+
+def _manifest_timestamp(manifest: dict[str, object]) -> datetime:
+    """Read the checked-in capture instant required for reproducible rendering."""
+    captured_at = manifest.get("rendered_at_utc")
+    if not isinstance(captured_at, str):
+        raise RuntimeError("manifest rendered_at_utc must be a timestamp")
+    try:
+        return _captured_at(captured_at)
+    except ValueError as exc:
+        raise RuntimeError("manifest rendered_at_utc must include a timezone") from exc
+
+
+def _normalized_manifest(
+    path: Path,
+    *,
+    ignored_fields: frozenset[str] = frozenset(),
+) -> bytes:
+    """Normalize stable manifest data while omitting checkout-relative provenance."""
+    manifest = _read_manifest(path)
+    for field in ignored_fields:
+        manifest.pop(field, None)
+    return (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _verification_errors(rendered_dir: Path) -> list[str]:
+    """Return stable mismatches between checked-in and isolated rendered evidence."""
+    errors: list[str] = []
+    for spec in SCREENSHOTS:
+        expected = OUTPUT_DIR / spec.filename
+        rendered = rendered_dir / spec.filename
+        if not expected.is_file():
+            errors.append(f"missing checked-in PNG: {spec.filename}")
+        elif not rendered.is_file() or _sha256(rendered) != _sha256(expected):
+            errors.append(f"PNG mismatch: {spec.filename}")
+    ignored_manifest_fields = frozenset({"base_revision"})
+    if _normalized_manifest(
+        rendered_dir / "manifest.json",
+        ignored_fields=ignored_manifest_fields,
+    ) != _normalized_manifest(
+        MANIFEST_PATH,
+        ignored_fields=ignored_manifest_fields,
+    ):
+        errors.append("manifest mismatch")
+    return errors
+
+
+def verify() -> None:
+    """Render into a temporary directory and fail when tracked evidence differs."""
+    manifest = _read_manifest(MANIFEST_PATH)
+    captured_at = _manifest_timestamp(manifest)
+    with tempfile.TemporaryDirectory(prefix="chronikwerk-doc-screenshot-verify-") as temporary:
+        rendered_dir = Path(temporary).resolve()
+        render(captured_at, output_dir=rendered_dir)
+        errors = _verification_errors(rendered_dir)
+    if errors:
+        raise RuntimeError("; ".join(errors))
 
 
 def main() -> int:
@@ -334,7 +426,22 @@ def main() -> int:
         "--captured-at",
         help="UTC ISO-8601 timestamp used for rendered process and refresh times",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="render into a temporary directory and compare against checked-in evidence",
+    )
     args = parser.parse_args()
+    if args.verify and args.captured_at:
+        parser.error("--captured-at cannot be combined with --verify")
+    if args.verify:
+        try:
+            verify()
+        except RuntimeError as exc:
+            print(f"screenshot-verify: FAIL: {exc}")
+            return 1
+        print(f"screenshot-verify: OK ({len(SCREENSHOTS)} screenshots)")
+        return 0
     render(_captured_at(args.captured_at))
     print(f"rendered {len(SCREENSHOTS)} screenshots and {MANIFEST_PATH.relative_to(REPO_ROOT)}")
     return 0

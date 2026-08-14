@@ -7,7 +7,7 @@ import uvicorn
 from chronikwerk.bootstrap import build_runtime_application
 
 
-def main() -> int:  # pragma: no cover
+def main() -> int:
     """Start the configured service through the command-line entry point."""
     settings, app = build_runtime_application()
     uvicorn.run(

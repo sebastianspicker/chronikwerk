@@ -113,6 +113,70 @@ def test_non_utf8_config_is_reported_as_safe_config_error(tmp_path: Path) -> Non
     assert "0xff" not in message
 
 
+@pytest.mark.parametrize("contents", ["", "null\n"])
+def test_empty_yaml_is_treated_as_an_empty_configuration(contents: str, tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ConfigValidationError) as exc:
+        load_settings(config_path=config_path)
+
+    assert "zammad.base_url" in str(exc.value)
+    assert "storage.root" in str(exc.value)
+
+
+def test_yaml_root_must_be_a_mapping(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("- not-a-configuration\n", encoding="utf-8")
+
+    with pytest.raises(ConfigValidationError, match="YAML root must be a mapping/object"):
+        load_settings(config_path=config_path)
+
+
+def test_unreadable_yaml_reports_path_without_contents(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("zammad: {}\n", encoding="utf-8")
+
+    def fail_read(_path: Path, **_kwargs: object) -> str:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("chronikwerk.config.load.Path.read_text", fail_read)
+    with pytest.raises(ConfigValidationError) as exc:
+        load_settings(config_path=config_path)
+
+    assert str(config_path) in str(exc.value)
+    assert "Unable to read config file" in str(exc.value)
+
+
+def test_invalid_canonical_alias_is_reported_as_conflict_without_echoing_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "zammad:",
+                "  base_url: https://zammad.example.local",
+                "  api_token: test-token",
+                f"  webhook_hmac_secret: {_VALID_WEBHOOK_SECRET}",
+                "storage:",
+                f"  root: {tmp_path / 'archive'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    secret_like_invalid_value = "not-a-valid-origin-with-secret"
+    monkeypatch.setenv("ZAMMAD_ORIGIN", secret_like_invalid_value)
+    monkeypatch.setenv("ZAMMAD__BASE_URL", "https://zammad.example.local")
+
+    with pytest.raises(ConfigValidationError) as exc:
+        load_settings(config_path=config_path)
+
+    assert "ZAMMAD_ORIGIN" in str(exc.value)
+    assert secret_like_invalid_value not in str(exc.value)
+
+
 def test_validate_settings_requires_webhook_secret() -> None:
     settings = Settings.from_mapping(
         {

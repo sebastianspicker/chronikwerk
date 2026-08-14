@@ -22,6 +22,48 @@ from chronikwerk.config.managed import (
 from tests.support.settings_factory import make_settings
 
 
+def _assert_revision_state(
+    store: ManagedConfigStore,
+    *,
+    current_revision: str | None = None,
+    overlay: dict[str, object] | None = None,
+    revision_count: int | None = None,
+) -> None:
+    """Assert the selected durable state facets shared by fault scenarios."""
+    if current_revision is not None:
+        assert store.current_revision() == current_revision
+    if overlay is not None:
+        assert store.load() == overlay
+    if revision_count is not None:
+        assert len(list(store.revisions_dir.glob("*.json"))) == revision_count
+
+
+def _assert_revision_bytes_unchanged(
+    store: ManagedConfigStore,
+    *,
+    current_revision: str,
+    overlay: dict[str, object],
+    current_bytes: bytes,
+    revision_bytes: dict[str, bytes],
+) -> None:
+    """Assert a rejected stage left both pointers and revision files unchanged."""
+    _assert_revision_state(store, current_revision=current_revision, overlay=overlay)
+    assert store.overlay_path.read_bytes() == current_bytes
+    assert {
+        path.name: path.read_bytes() for path in store.revisions_dir.glob("*.json")
+    } == revision_bytes
+
+
+def _assert_retained_revisions(
+    store: ManagedConfigStore,
+    expected_revisions: list[str],
+    removed_revision: str,
+) -> None:
+    """Assert retention keeps the newest chain and removes the cutoff entry."""
+    assert [item["revision"] for item in store.list_revisions()] == expected_revisions
+    assert not (store.revisions_dir / f"{removed_revision}.json").exists()
+
+
 def _stage_two_revisions(store: ManagedConfigStore) -> None:
     """Create the retention scenario with one current and one old revision."""
     first = store.stage(
@@ -193,9 +235,11 @@ def test_failed_current_pointer_write_removes_orphan_revision(tmp_path: Path, mo
             request_id="second",
         )
 
-    assert store.current_revision() == first["revision"]
-    assert [item["revision"] for item in store.list_revisions()] == [first["revision"]]
-    assert len(list(store.revisions_dir.glob("*.json"))) == 1
+    _assert_revision_state(
+        store,
+        current_revision=first["revision"],
+        revision_count=1,
+    )
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor cleanup required")
@@ -255,8 +299,7 @@ def test_post_replace_fsync_failure_keeps_visible_revision_consistent(
             request_id="fsync-fault",
         )
 
-    assert store.load() == {"pdf": {"max_articles": 77}}
-    assert len(list(store.revisions_dir.glob("*.json"))) == 1
+    _assert_revision_state(store, overlay={"pdf": {"max_articles": 77}}, revision_count=1)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor cleanup required")
@@ -380,12 +423,13 @@ def test_oversized_stage_is_rejected_before_any_state_change(tmp_path: Path) -> 
             request_id="oversized",
         )
 
-    assert store.current_revision() == first["revision"]
-    assert store.load() == {"pdf": {"max_articles": 100}}
-    assert store.overlay_path.read_bytes() == current_bytes
-    assert {
-        path.name: path.read_bytes() for path in store.revisions_dir.glob("*.json")
-    } == revision_bytes
+    _assert_revision_bytes_unchanged(
+        store,
+        current_revision=first["revision"],
+        overlay={"pdf": {"max_articles": 100}},
+        current_bytes=current_bytes,
+        revision_bytes=revision_bytes,
+    )
 
 
 def test_restore_of_same_overlay_creates_new_revision(tmp_path: Path) -> None:
@@ -450,11 +494,11 @@ def test_revision_retention_keeps_only_newest_chain_entries(tmp_path: Path) -> N
         request_id="third",
     )
 
-    assert [item["revision"] for item in store.list_revisions()] == [
-        third["revision"],
-        second["revision"],
-    ]
-    assert not (store.revisions_dir / f"{first['revision']}.json").exists()
+    _assert_retained_revisions(
+        store,
+        [third["revision"], second["revision"]],
+        first["revision"],
+    )
 
 
 def test_revision_chain_missing_before_retention_cutoff_fails_closed(tmp_path: Path) -> None:

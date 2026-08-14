@@ -2,14 +2,37 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import stat
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 
+import pytest
 import yaml
+
+
+def _assert_command_succeeds(proc: subprocess.CompletedProcess[str], marker: str) -> None:
+    """Keep subprocess success and marker checks identical across CI gates."""
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert marker in proc.stdout
+
+
+def _load_screenshot_renderer() -> ModuleType:
+    """Load the standalone screenshot renderer without starting Chromium."""
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "docs" / "render_admin_screenshots.py"
+    )
+    spec = importlib.util.spec_from_file_location("screenshot_renderer_fixture", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_ci_smoke_script_checks_current_repo_layout() -> None:
@@ -44,8 +67,7 @@ def test_brand_identity_gate_rejects_stale_public_names() -> None:
         check=False,
     )
 
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "brand-identity-check: OK" in proc.stdout
+    _assert_command_succeeds(proc, "brand-identity-check: OK")
 
 
 def test_makefile_clean_preserves_the_project_virtualenv() -> None:
@@ -172,8 +194,7 @@ def test_docs_check_validates_required_inventory_and_links() -> None:
         text=True,
         check=False,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "docs-check: OK" in proc.stdout
+    _assert_command_succeeds(proc, "docs-check: OK")
 
 
 def test_screenshot_renderer_is_repository_owned_and_non_browser_claims_are_explicit() -> None:
@@ -185,10 +206,165 @@ def test_screenshot_renderer_is_repository_owned_and_non_browser_claims_are_expl
     )
 
     assert "docs-screenshots:" in makefile
+    assert "docs-screenshots-verify:" in makefile
     assert "scripts/docs/render_admin_screenshots.py" in makefile
     assert renderer.is_file()
     assert "not browser" in screenshot_notes
     assert "not" in screenshot_notes and "accessibility" in screenshot_notes
+
+
+def test_screenshot_renderer_is_a_standalone_importable_script() -> None:
+    """The canonical renderer must not require path-dependent helper imports."""
+    repo_root = Path(__file__).resolve().parents[2]
+    docs_dir = repo_root / "scripts" / "docs"
+    script = (
+        "import importlib, sys; "
+        f"sys.path.insert(0, {str(docs_dir)!r}); "
+        "importlib.import_module(sys.argv[1])"
+    )
+
+    proc = subprocess.run(  # nosec B603
+        [sys.executable, "-c", script, "render_admin_screenshots"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_screenshot_provenance_includes_renderer_and_settings_sources() -> None:
+    """The renderer and extracted settings sources must invalidate screenshots."""
+    repo_root = Path(__file__).resolve().parents[2]
+    docs_dir = repo_root / "scripts" / "docs"
+    script = (
+        "import sys; "
+        f"sys.path.insert(0, {str(docs_dir)!r}); "
+        "import render_admin_screenshots as renderer; "
+        "paths = renderer._source_paths(); "
+        "hashes = renderer._source_hashes(); "
+        "relative_paths = [path.relative_to(renderer.REPO_ROOT).as_posix() for path in paths]; "
+        "assert relative_paths == list(hashes); "
+        "assert all("
+        "hashes[relative] == renderer._sha256(renderer.REPO_ROOT / relative) "
+        "for relative in relative_paths"
+        "); "
+        "print('\\n'.join(relative_paths))"
+    )
+    proc = subprocess.run(  # nosec B603
+        [sys.executable, "-c", script],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    paths = set(proc.stdout.splitlines())
+
+    assert {
+        "scripts/docs/render_admin_screenshots.py",
+        "src/chronikwerk/config/settings.py",
+        "src/chronikwerk/config/_settings_sections.py",
+        "src/chronikwerk/config/_settings_signing.py",
+        "src/chronikwerk/config/_settings_zammad.py",
+    } <= paths
+
+
+def test_screenshot_verify_mode_is_isolated_and_release_gated() -> None:
+    """Keep exact raster replay explicit while portable metadata stays release-gated."""
+    repo_root = Path(__file__).resolve().parents[2]
+    makefile = (repo_root / "Makefile").read_text(encoding="utf-8")
+    renderer = (repo_root / "scripts" / "docs" / "render_admin_screenshots.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "docs-screenshots-verify:" in makefile
+    verify_core = makefile.split("verify-core:", maxsplit=1)[1].split("\n", 1)[0]
+    assert "docs-check" in verify_core
+    assert "docs-screenshots-verify" not in verify_core
+    assert "--verify" in renderer
+    assert "TemporaryDirectory" in renderer
+    assert "output_dir: Path = OUTPUT_DIR" in renderer
+    assert "PNG mismatch" in renderer
+    assert "pinned Playwright Chromium is unavailable" in renderer
+
+
+def test_screenshot_verification_compares_exact_pngs_and_normalized_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Treat raster bytes as exact while ignoring harmless manifest whitespace."""
+    renderer = _load_screenshot_renderer()
+    expected = tmp_path / "expected"
+    rendered = tmp_path / "rendered"
+    expected.mkdir()
+    rendered.mkdir()
+    monkeypatch.setattr(renderer, "OUTPUT_DIR", expected)
+    monkeypatch.setattr(renderer, "MANIFEST_PATH", expected / "manifest.json")
+
+    for spec in renderer.SCREENSHOTS:
+        (expected / spec.filename).write_bytes(b"same image")
+        (rendered / spec.filename).write_bytes(b"same image")
+    (expected / "manifest.json").write_text(
+        '{"base_revision":"old","rendered_at_utc":"2026-01-01T00:00:00Z"}\n'
+    )
+    (rendered / "manifest.json").write_text(
+        '{\n  "base_revision": "new",\n  "rendered_at_utc": "2026-01-01T00:00:00Z"\n}\n'
+    )
+
+    assert renderer._verification_errors(rendered) == []
+    (rendered / "admin-overview.png").write_bytes(b"different image")
+    assert renderer._verification_errors(rendered) == ["PNG mismatch: admin-overview.png"]
+
+
+def test_screenshot_verify_uses_the_manifest_timestamp_and_an_isolated_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Verify rendering starts from the checked-in timestamp, never the working output path."""
+    renderer = _load_screenshot_renderer()
+    expected = tmp_path / "checked-in"
+    expected.mkdir()
+    (expected / "manifest.json").write_text('{"rendered_at_utc":"2026-01-01T00:00:00Z"}\n')
+    seen: list[tuple[datetime, Path]] = []
+
+    def fake_render(captured_at: datetime, *, output_dir: Path) -> Path:
+        seen.append((captured_at, output_dir))
+        return output_dir / "manifest.json"
+
+    monkeypatch.setattr(renderer, "OUTPUT_DIR", expected)
+    monkeypatch.setattr(renderer, "MANIFEST_PATH", expected / "manifest.json")
+    monkeypatch.setattr(renderer, "render", fake_render)
+    monkeypatch.setattr(renderer, "_verification_errors", lambda output_dir: [])
+
+    renderer.verify()
+
+    assert len(seen) == 1
+    assert seen[0][0].isoformat() == "2026-01-01T00:00:00+00:00"
+    assert seen[0][1] != expected
+
+
+def test_screenshot_renderer_reports_a_missing_pinned_chromium(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Fail closed with an actionable environment error when Playwright lacks Chromium."""
+    renderer = _load_screenshot_renderer()
+    missing_browser = subprocess.CompletedProcess(
+        args=["node"],
+        returncode=1,
+        stdout="",
+        stderr="Executable doesn't exist at /temporary/chromium",
+    )
+    monkeypatch.setattr(renderer.subprocess, "run", lambda *args, **kwargs: missing_browser)
+
+    with pytest.raises(RuntimeError, match="pinned Playwright Chromium is unavailable"):
+        renderer._render_png(
+            "<html></html>",
+            destination=tmp_path / "preview.png",
+            spec=renderer.SCREENSHOTS[0],
+            work_dir=tmp_path,
+        )
 
 
 def test_coverage_policy_and_release_gate_are_aligned() -> None:
@@ -204,6 +380,8 @@ def test_coverage_policy_and_release_gate_are_aligned() -> None:
     assert "complexity" in makefile
     assert "-C 10 -L 80" in makefile
     assert "duplication" in makefile
+    assert "source-length-check" in makefile
+    assert "scripts/ci/check_source_lengths.py" in makefile
     assert "verify: verify-core production-image-smoke test-e2e" in makefile
     assert "ci: verify" in makefile
     assert "make verify" in ci or "make verify-core" in ci

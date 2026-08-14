@@ -49,6 +49,15 @@ def _patch_weasyprint_urls():
     return patch.dict("sys.modules", {"weasyprint.urls": mock_module}), FatalURLFetchingError
 
 
+def _assert_blocked_url(template_root: Path, url: str, match: str) -> None:
+    """Assert one URL is rejected by the safe fetcher."""
+    ctx, fatal_error = _patch_weasyprint_urls()
+    with ctx:
+        fetcher = _make_fetcher(template_root)
+        with pytest.raises(fatal_error, match=match):
+            fetcher.fetch(url)
+
+
 # -- data: URLs pass through -------------------------------------------------------
 
 
@@ -97,11 +106,7 @@ def test_file_url_outside_template_root_blocked(tmp_path: Path) -> None:
     secret = tmp_path / "secret.txt"
     secret.write_text("sensitive")
 
-    ctx, FatalError = _patch_weasyprint_urls()
-    with ctx:
-        fetcher = _make_fetcher(template_root)
-        with pytest.raises(FatalError, match="outside template root"):
-            fetcher.fetch(f"file://{secret}")
+    _assert_blocked_url(template_root, f"file://{secret}", "outside template root")
 
 
 def test_file_url_traversal_blocked(tmp_path: Path) -> None:
@@ -110,41 +115,29 @@ def test_file_url_traversal_blocked(tmp_path: Path) -> None:
     secret = tmp_path / "secret.txt"
     secret.write_text("sensitive")
 
-    ctx, FatalError = _patch_weasyprint_urls()
-    with ctx:
-        fetcher = _make_fetcher(template_root)
-        with pytest.raises(FatalError, match="outside template root"):
-            fetcher.fetch(f"file://{template_root}/../secret.txt")
+    _assert_blocked_url(
+        template_root,
+        f"file://{template_root}/../secret.txt",
+        "outside template root",
+    )
 
 
 # -- http/https URLs are blocked ----------------------------------------------------
 
 
 def test_http_url_blocked(tmp_path: Path) -> None:
-    ctx, FatalError = _patch_weasyprint_urls()
-    with ctx:
-        fetcher = _make_fetcher(tmp_path)
-        with pytest.raises(FatalError, match="URL scheme not allowed"):
-            fetcher.fetch("http://evil.example.com/payload.js")
+    _assert_blocked_url(tmp_path, "http://evil.example.com/payload.js", "URL scheme not allowed")
 
 
 def test_https_url_blocked(tmp_path: Path) -> None:
-    ctx, FatalError = _patch_weasyprint_urls()
-    with ctx:
-        fetcher = _make_fetcher(tmp_path)
-        with pytest.raises(FatalError, match="URL scheme not allowed"):
-            fetcher.fetch("https://evil.example.com/payload.js")
+    _assert_blocked_url(tmp_path, "https://evil.example.com/payload.js", "URL scheme not allowed")
 
 
 # -- file:// URL pointing to non-existent file raises --------------------------------
 
 
 def test_file_url_nonexistent_file_raises(tmp_path: Path) -> None:
-    ctx, FatalError = _patch_weasyprint_urls()
-    with ctx:
-        fetcher = _make_fetcher(tmp_path)
-        with pytest.raises(FatalError, match="not a file"):
-            fetcher.fetch(f"file://{tmp_path}/no_such_file.css")
+    _assert_blocked_url(tmp_path, f"file://{tmp_path}/no_such_file.css", "not a file")
 
 
 # -- __call__ delegates to fetch ----------------------------------------------------

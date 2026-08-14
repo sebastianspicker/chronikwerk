@@ -54,6 +54,7 @@ Use the Makefile targets rather than duplicating their command lines in new scri
 | Coverage threshold | `make PYTHON=.venv/bin/python coverage-test` |
 | Complexity limits | `make complexity` |
 | Duplication limits | `make duplication` |
+| Authored source length | `make source-length-check` |
 | Administration assets | `make frontend-check` |
 | Documentation integrity | `make docs-check` |
 | Maintained-code documentation | `make code-docs-check` |
@@ -62,6 +63,11 @@ Use the Makefile targets rather than duplicating their command lines in new scri
 
 `make format` changes Python files. Run it only when the resulting formatting diff belongs
 to the change.
+
+Maintained Python, TypeScript, JavaScript, CSS, HTML, shell, and MJS sources are limited to
+600 physical lines per file. The assembled `src/chronikwerk/static/admin/admin.css` and
+`admin.js` bundles are generated from `frontend/` and are the only source-length
+exemptions.
 
 Browser work requires:
 

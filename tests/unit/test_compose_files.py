@@ -12,13 +12,17 @@ def _load_compose(path: Path) -> dict:
     return yaml.safe_load(path.read_text("utf-8"))
 
 
+def _assert_optional_env_file(service: dict) -> None:
+    """Keep the shared optional env-file contract in one assertion block."""
+    assert service["env_file"] == [{"path": "${CHRONIKWERK_ENV_FILE:-.env}", "required": False}]
+
+
 def test_prod_compose_env_file_is_optional() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     compose = _load_compose(repo_root / "docker-compose.yml")
     service = compose["services"]["chronikwerk"]
 
-    env_file = service["env_file"]
-    assert env_file == [{"path": "${CHRONIKWERK_ENV_FILE:-.env}", "required": False}]
+    _assert_optional_env_file(service)
     assert service["ports"] == [
         "${CHRONIKWERK_PUBLISH_HOST:-127.0.0.1}:${SERVER__PORT:-8080}:${SERVER__PORT:-8080}"
     ]
@@ -32,8 +36,7 @@ def test_dev_compose_env_file_is_optional() -> None:
     compose = _load_compose(repo_root / "docker-compose.dev.yml")
     service = compose["services"]["chronikwerk"]
 
-    env_file = service["env_file"]
-    assert env_file == [{"path": "${CHRONIKWERK_ENV_FILE:-.env}", "required": False}]
+    _assert_optional_env_file(service)
     assert service["ports"] == ["${SERVER__PORT:-8080}:${SERVER__PORT:-8080}"]
     environment = service["environment"]
     assert "OBSERVABILITY__LOG_LEVEL" in environment

@@ -1,6 +1,9 @@
 # pylint: disable=import-outside-toplevel
 """Fail closed when pip-audit findings cannot be proven below the release threshold."""
 
+# DECISION: Governed by docs/adr/0007-deterministic-release-assurance-scripts.md.
+# Keep this release policy synchronous, deterministic, and fail closed.
+
 from __future__ import annotations
 
 import json
@@ -16,6 +19,8 @@ INPUT_PATH = os.environ.get("PIP_AUDIT_INPUT_PATH", "pip-audit.json")
 STATUS_PATH = os.environ.get("PIP_AUDIT_STATUS_PATH", "pip-audit.status.json")
 OSV_BASE = os.environ.get("OSV_BASE_URL", "https://api.osv.dev/v1/vulns/")
 TIMEOUT_S = 20
+_OSV_ATTEMPTS = 4
+_OSV_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 CRITICAL_CVSS = 9.0
 SEVERITY_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
@@ -37,26 +42,11 @@ class AuditReportError(ValueError):
     """Raised when the audit command provenance or report is not trustworthy."""
 
 
-def _validate_required_packages(path: str, required: set[str]) -> None:
-    """Ensure the report covers explicitly required packages before trusting it."""
+def _validate_required_packages(required: set[str], package_names: set[str]) -> None:
+    """Ensure parsed report data covers explicitly required packages."""
     if not required:
         return
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise AuditReportError(f"cannot read pip-audit report: {path}") from exc
-    dependencies = data.get("dependencies") if isinstance(data, dict) else None
-    names = (
-        {
-            dep["name"].lower()
-            for dep in dependencies
-            if isinstance(dep, dict) and isinstance(dep.get("name"), str)
-        }
-        if isinstance(dependencies, list)
-        else set()
-    )
-    missing = sorted(required - names)
+    missing = sorted(required - package_names)
     if missing:
         raise AuditReportError(
             "pip-audit report is missing required packages: " + ", ".join(missing)
@@ -81,8 +71,8 @@ def _load_audit_status(path: str) -> int:
     return exit_code
 
 
-def _load_findings(path: str) -> list[Finding]:
-    """Parse only the report structure needed for a deterministic policy decision."""
+def _load_findings(path: str) -> tuple[list[Finding], set[str]]:
+    """Parse report findings and normalized dependency names from one trusted snapshot."""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -96,12 +86,14 @@ def _load_findings(path: str) -> list[Finding]:
         raise AuditReportError("pip-audit report dependencies must be a list")
 
     findings: list[Finding] = []
+    package_names: set[str] = set()
     for dep in dependencies:
         package, version, vulnerabilities = _parse_dependency(dep)
+        package_names.add(package.strip().lower())
         findings.extend(
             _parse_finding(package, version, vulnerability) for vulnerability in vulnerabilities
         )
-    return findings
+    return findings, package_names
 
 
 def _parse_dependency(dependency: object) -> tuple[str, str, list[object]]:
@@ -143,47 +135,86 @@ def _fetch_osv(vuln_id: str) -> dict | None:
     url = f"{OSV_BASE}{vuln_id}"
     if urllib.parse.urlparse(url).scheme != "https":
         return None
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(url, timeout=TIMEOUT_S) as r:  # nosec B310
-                return json.load(r)
-        except urllib.error.HTTPError as e:
-            # Retry on 429/5xx.
-            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
-                time.sleep(1.5 * (attempt + 1))
-                continue
+    for attempt in range(_OSV_ATTEMPTS):
+        payload, http_error = _load_osv_payload(url)
+        if http_error is None:
+            return payload
+        if not _should_retry_osv(http_error, attempt):
             return None
-        except (
-            OSError,
-            TimeoutError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            urllib.error.URLError,
-        ):
-            return None
+        time.sleep(1.5 * (attempt + 1))
     return None
 
 
-def _severity_from_osv(osv: dict) -> tuple[str | None, float | None]:
+def _load_osv_payload(
+    url: str,
+) -> tuple[dict | None, urllib.error.HTTPError | None]:
+    """Read one OSV response while the caller owns retry policy."""
+    try:
+        with urllib.request.urlopen(  # nosec B310
+            url, timeout=TIMEOUT_S
+        ) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        return None, exc
+    except (
+        OSError,
+        TimeoutError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        urllib.error.URLError,
+    ):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    return payload, None
+
+
+def _should_retry_osv(error: urllib.error.HTTPError, attempt: int) -> bool:
+    """Limit retries to transient OSV failures while attempts remain."""
+    return error.code in _OSV_RETRYABLE_STATUS_CODES and attempt < _OSV_ATTEMPTS - 1
+
+
+def _severity_from_osv(osv: object) -> tuple[str | None, float | None]:
     """Prefer OSV's explicit label, otherwise derive evidence from its CVSS vectors."""
-    db_sev = osv.get("database_specific", {}).get("severity")
-    if isinstance(db_sev, str) and db_sev.strip():
-        label = db_sev.strip().upper()
-        return SEVERITY_ALIASES.get(label, label), None
+    if not isinstance(osv, dict):
+        return None, None
+
+    database_specific = osv.get("database_specific")
+    database_severity = (
+        database_specific.get("severity") if isinstance(database_specific, dict) else None
+    )
+    label = _normalized_database_label(database_severity)
+    if label is not None:
+        return label, None
+
+    cvss_scores = _collect_cvss_scores(osv.get("severity", []))
+    return (None, max(cvss_scores)) if cvss_scores else (None, None)
+
+
+def _normalized_database_label(database_severity: object) -> str | None:
+    """Normalize a non-empty OSV database severity without judging its validity."""
+    if not isinstance(database_severity, str) or not database_severity.strip():
+        return None
+    label = database_severity.strip().upper()
+    return SEVERITY_ALIASES.get(label, label)
+
+
+def _collect_cvss_scores(severity: object) -> list[float]:
+    """Collect every parseable CVSS base score from OSV severity metadata."""
+    if not isinstance(severity, list):
+        return []
 
     cvss_scores: list[float] = []
-    for item in osv.get("severity", []) or []:
+    for item in severity:
+        if not isinstance(item, dict):
+            continue
         score = item.get("score")
         if not isinstance(score, str) or not score.strip():
             continue
         cvss_score = _parse_cvss_score(score.strip())
         if cvss_score is not None:
             cvss_scores.append(cvss_score)
-
-    if not cvss_scores:
-        return None, None
-
-    return None, max(cvss_scores)
+    return cvss_scores
 
 
 def _parse_cvss_score(score: str) -> float | None:
@@ -240,11 +271,11 @@ def _resolve_severity(finding: Finding, osv_cache: dict[str, dict | None]) -> st
     resolved_labels, resolved_cvss = _severity_evidence(finding, osv_cache)
     if any(label not in KNOWN_SEVERITIES for label in resolved_labels):
         return None
-    if resolved_labels:
-        return max(resolved_labels, key=lambda severity: SEVERITY_ORDER.get(severity, 0))
-    if resolved_cvss:
-        return _severity_label_from_cvss(max(resolved_cvss))
-    return None
+    evidence_labels = [*resolved_labels]
+    evidence_labels.extend(_severity_label_from_cvss(score) for score in resolved_cvss)
+    if not evidence_labels:
+        return None
+    return max(evidence_labels, key=lambda severity: SEVERITY_ORDER.get(severity, 0))
 
 
 def _severity_evidence(
@@ -271,35 +302,34 @@ def _severity_evidence(
 def _report_blockers(critical: list[str], high: list[str], unknown: list[str]) -> int:
     """Emit one actionable policy result, treating missing severity as blocking."""
     if critical:
-        print("CRITICAL vulnerabilities found:")
-        for line in critical:
-            print(f"- {line}")
-        return 1
+        return _print_blockers("CRITICAL vulnerabilities found:", critical)
     if high:
-        print("HIGH vulnerabilities found:")
-        for line in high:
-            print(f"- {line}")
-        return 1
+        return _print_blockers("HIGH vulnerabilities found:", high)
     if unknown:
-        print("Vulnerabilities with unknown severity (fail-closed):")
-        for line in unknown:
-            print(f"- {line}")
-        return 1
+        return _print_blockers("Vulnerabilities with unknown severity (fail-closed):", unknown)
 
     print("No CRITICAL or HIGH vulnerabilities found (policy passed).")
     return 0
 
 
+def _print_blockers(heading: str, blockers: list[str]) -> int:
+    """Print one blocker group using the policy's stable command-line format."""
+    print(heading)
+    for line in blockers:
+        print(f"- {line}")
+    return 1
+
+
 def _load_policy_inputs() -> tuple[int, list[Finding]]:
     """Load provenance, findings, and required-package scope before classification."""
     audit_exit_code = _load_audit_status(STATUS_PATH)
-    findings = _load_findings(INPUT_PATH)
+    findings, package_names = _load_findings(INPUT_PATH)
     required_packages = {
         item.strip().lower()
         for item in os.environ.get("PIP_AUDIT_REQUIRED_PACKAGES", "").split(",")
         if item.strip()
     }
-    _validate_required_packages(INPUT_PATH, required_packages)
+    _validate_required_packages(required_packages, package_names)
     return audit_exit_code, findings
 
 

@@ -14,6 +14,27 @@ Chronikwerk is available for local evaluation with non-production data. No sourc
 checkout, package, image, or screenshot should be treated as release evidence until it
 is produced from and verified against the same reviewed tag.
 
+## Current local addendum (2026-08-14)
+
+The July record below is historical. Against the live dirty checkout, a frozen
+development environment from `uv.lock` produced these current results:
+
+- Ruff lint and formatting passed for 254 files;
+- mypy passed across 207 source files;
+- the branch-aware suite passed 812 tests at 94.88 percent coverage;
+- configuration-contract tests passed 5 of 5;
+- brand, 32-document link, code-purpose, 600-line source-limit, complexity, and
+  repository smoke checks passed; and
+- isolated source-distribution and wheel builds succeeded.
+
+The complete gate remains open. Frontend verification cannot run because the
+declared Node dependencies are absent, deterministic screenshot replay cannot
+find its pinned Chromium renderer, and the stopped Docker daemon blocks the
+production-image and Zammad end-to-end lanes. Firefox, WebKit, PDF/UA,
+assistive-technology, live Zammad, storage, signing, and exact-tag evidence also
+remain external. GitHub Pages is not configured or suitable for the operational
+FastAPI service.
+
 ## Implemented surface
 
 The candidate currently provides:

@@ -3,34 +3,36 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi.testclient import TestClient
-
 from chronikwerk.adapters.zammad.models import TagList
+from chronikwerk.app.jobs import _ticket_pipeline as ticket_pipeline_module
 from chronikwerk.app.jobs.ticket_renderer import RenderedTicket
 from chronikwerk.config.settings import Settings
 from chronikwerk.domain.errors import TransientError
+from tests.support.http_security_test_helpers import post_signed_json
 from tests.support.settings_factory import make_settings
 
 TEST_WEBHOOK_SECRET = "test-webhook-secret"
 
 
-def post_signed_json(
-    client: TestClient, path: str, payload: Any, *, secret: str = TEST_WEBHOOK_SECRET
-):
-    """Post a JSON body with the HMAC headers expected by ingest."""
-    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return client.post(
-        path,
-        content=body,
-        headers={"Content-Type": "application/json", "X-Hub-Signature": f"sha256={digest}"},
+def assert_artifact_pair_exists(target_path: Path, sidecar_path: Path) -> None:
+    """Assert that a persisted PDF and its audit sidecar are both present."""
+    assert target_path.exists()
+    assert sidecar_path.exists()
+
+
+async def run_concurrent_process_tickets(
+    process_ticket_fn: Any,
+    payload: Any,
+    settings: Settings,
+    delivery_ids: tuple[str, str] = ("d-1", "d-2"),
+) -> None:
+    """Run two deliveries concurrently for process-local serialization tests."""
+    await asyncio.gather(
+        *(process_ticket_fn(delivery_id, payload, settings) for delivery_id in delivery_ids)
     )
 
 
@@ -63,11 +65,11 @@ def install_noop_ingest_processing(monkeypatch: Any) -> None:
     monkeypatch.setattr(ingest_route, "process_ticket", noop_process_ticket)
 
 
-def exhaust_signed_rate_limit(client: TestClient, path: str, payload: Any):
+def exhaust_signed_rate_limit(client: Any, path: str, payload: Any):
     """Consume a two-request burst and return the rate-limited third response."""
-    assert post_signed_json(client, path, payload).status_code == 202
-    assert post_signed_json(client, path, payload).status_code == 202
-    return post_signed_json(client, path, payload)
+    assert post_signed_json(client, path, payload, secret=TEST_WEBHOOK_SECRET).status_code == 202
+    assert post_signed_json(client, path, payload, secret=TEST_WEBHOOK_SECRET).status_code == 202
+    return post_signed_json(client, path, payload, secret=TEST_WEBHOOK_SECRET)
 
 
 def process_ticket_settings(storage_root: Path) -> Settings:
@@ -251,6 +253,37 @@ def fake_store_ticket_files(tmp_path: Path):
         return stored_pdf_result(tmp_path)
 
     return _store_ticket_files
+
+
+async def successful_pipeline_render(**kwargs: Any) -> RenderedTicket:
+    """Adapt the positional render double to the pipeline's keyword call contract."""
+    return await successful_render(
+        kwargs["client"],
+        kwargs["ticket"],
+        kwargs["tags"],
+        kwargs["ticket_id"],
+        kwargs["settings"],
+    )
+
+
+def install_process_ticket_pipeline_doubles(
+    monkeypatch: Any,
+    *,
+    client_type: type[BaseProcessTicketClient],
+    render: Any,
+    tmp_path: Path,
+) -> None:
+    """Patch the test-only client, renderer, and file store for pipeline scenarios."""
+    monkeypatch.setattr(
+        "chronikwerk.app.jobs.process_ticket.AsyncZammadClient",
+        client_type,
+    )
+    monkeypatch.setattr(ticket_pipeline_module, "build_and_render_pdf", render)
+    monkeypatch.setattr(
+        ticket_pipeline_module,
+        "store_ticket_files",
+        fake_store_ticket_files(tmp_path),
+    )
 
 
 def flaky_then_successful_render():
