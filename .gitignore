@@ -151,7 +151,10 @@ coverage.json
 /.agents/
 /.impeccable/
 /.serena/
-/.codacy/
+/.codacy/*
+!/.codacy/codacy.config.json
+!/.codacy/codacy.yaml
+!/.codacy/codacy.yml
 /.github/codex/
 /.github/workflows/codex.yml
 /.github/copilot-instructions.md
