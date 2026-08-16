@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
 import re
 import threading
 import time
@@ -20,6 +17,7 @@ from chronikwerk.app.jobs.ticket_storage import StorageResult
 from chronikwerk.app.server import create_app
 from chronikwerk.config.settings import Settings
 from chronikwerk.domain.state_machine import TRIGGER_TAG
+from tests.support.http_security_test_helpers import post_signed_json
 from tests.support.settings_factory import make_settings
 from tests.support.zammad_fixtures import (
     archived_ticket_json,
@@ -77,20 +75,23 @@ def _register_ingest_routes() -> None:
     register_archive_mutation_routes()
 
 
-def _ingest_body() -> bytes:
-    """Return a representative ingest request body."""
-    payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
-def _signed_ingest_headers(body: bytes) -> dict[str, str]:
-    """Build signed headers for an ingest request."""
-    digest = hmac.new(_TEST_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return {
-        "Content-Type": "application/json",
-        "X-Hub-Signature": f"sha256={digest}",
-        "X-Zammad-Delivery": "delivery-metrics-20260207-0001",
-    }
+def _metrics_client(tmp_path, token: str | None) -> TestClient:
+    """Build a metrics-enabled client for bearer-token scenarios."""
+    settings = Settings.from_mapping(
+        {
+            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
+            "storage": {"root": str(tmp_path)},
+            "observability": {
+                "metrics_enabled": True,
+                "metrics_bearer_token": token,
+            },
+            "hardening": {
+                "webhook": {},
+                "transport": {"allow_private_networks": True},
+            },
+        }
+    )
+    return TestClient(create_app(settings))
 
 
 def test_metrics_endpoint_returns_prometheus_text(tmp_path) -> None:
@@ -112,19 +113,7 @@ def test_metrics_endpoint_is_not_exposed_when_disabled(tmp_path) -> None:
 
 
 def test_metrics_requires_bearer_when_configured(tmp_path) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": str(tmp_path)},
-            "observability": {"metrics_enabled": True, "metrics_bearer_token": "secret-token"},
-            "hardening": {
-                "webhook": {},
-                "transport": {"allow_private_networks": True},
-            },
-        }
-    )
-    app = create_app(settings)
-    client = TestClient(app)
+    client = _metrics_client(tmp_path, "secret-token")
 
     assert client.get("/metrics").status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code == 401
@@ -135,21 +124,7 @@ def test_metrics_requires_bearer_when_configured(tmp_path) -> None:
 
 @pytest.mark.parametrize("token", [None, "", "   "])
 def test_metrics_fails_closed_when_token_is_missing_or_empty(tmp_path, token) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": str(tmp_path)},
-            "observability": {
-                "metrics_enabled": True,
-                "metrics_bearer_token": token,
-            },
-            "hardening": {
-                "webhook": {},
-                "transport": {"allow_private_networks": True},
-            },
-        }
-    )
-    client = TestClient(create_app(settings))
+    client = _metrics_client(tmp_path, token)
 
     assert client.get("/metrics", headers={"Authorization": "Bearer  "}).status_code == 503
 
@@ -157,7 +132,7 @@ def test_metrics_fails_closed_when_token_is_missing_or_empty(tmp_path, token) ->
 def test_ingest_success_increments_processed_total(tmp_path, monkeypatch) -> None:
     clear_shutting_down()
     app = create_app(_test_settings(str(tmp_path)))
-    body = _ingest_body()
+    payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
     completed = threading.Event()
 
     async def render_and_store_stub(**_kwargs) -> StorageResult:
@@ -180,10 +155,12 @@ def test_ingest_success_increments_processed_total(tmp_path, monkeypatch) -> Non
         )
         with respx.mock:
             _register_ingest_routes()
-            resp = client.post(
+            resp = post_signed_json(
+                client,
                 "/ingest",
-                content=body,
-                headers=_signed_ingest_headers(body),
+                payload,
+                secret=_TEST_WEBHOOK_SECRET,
+                delivery_id="delivery-metrics-20260207-0001",
             )
             assert resp.status_code == 202
             assert completed.wait(timeout=5.0), "background processing did not reach terminal stub"

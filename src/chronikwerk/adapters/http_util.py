@@ -42,6 +42,18 @@ def pin_request_url(
 
 async def read_response_body_limited(response: httpx.Response, *, max_bytes: int) -> bytes:
     """Read a streamed response without allowing its decoded body to exceed ``max_bytes``."""
+    _preflight_response_body_limit(response, max_bytes=max_bytes)
+
+    body = bytearray()
+    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+        if len(body) + len(chunk) > max_bytes:
+            raise ResponseBodyTooLargeError(f"upstream response exceeds {max_bytes}-byte limit")
+        body.extend(chunk)
+    return bytes(body)
+
+
+def _preflight_response_body_limit(response: httpx.Response, *, max_bytes: int) -> None:
+    """Reject unsupported encodings and oversized parseable declared response lengths."""
     content_encoding = (response.headers.get("Content-Encoding") or "identity").strip().lower()
     if content_encoding not in {"", "identity"}:
         raise UnsupportedResponseEncodingError(
@@ -58,13 +70,6 @@ async def read_response_body_limited(response: httpx.Response, *, max_bytes: int
             raise ResponseBodyTooLargeError(
                 f"upstream response declares {declared_length} bytes; limit is {max_bytes} bytes"
             )
-
-    body = bytearray()
-    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
-        if len(body) + len(chunk) > max_bytes:
-            raise ResponseBodyTooLargeError(f"upstream response exceeds {max_bytes}-byte limit")
-        body.extend(chunk)
-    return bytes(body)
 
 
 def timeouts_for(seconds: float) -> httpx.Timeout:

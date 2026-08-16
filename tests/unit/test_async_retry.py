@@ -10,6 +10,12 @@ import pytest
 from chronikwerk.app.jobs.async_retry import async_retry
 
 
+def _assert_sleep_delays(mock_sleep: AsyncMock, expected: list[float]) -> None:
+    """Assert retry sleeps without repeating call-list extraction in each scenario."""
+    actual = [call.args[0] for call in mock_sleep.await_args_list]
+    assert actual == expected
+
+
 def test_succeeds_first_attempt() -> None:
     """Operation succeeds immediately, no retries."""
 
@@ -82,9 +88,7 @@ def test_backoff_timing() -> None:
         # attempt 1 -> sleep(0.5 * 2.0^1) = 1.0
         # attempt 2 -> sleep(0.5 * 2.0^2) = 2.0
         # attempt 3 -> final failure, no sleep
-        expected_delays = [0.5, 1.0, 2.0]
-        actual_delays = [call.args[0] for call in mock_sleep.await_args_list]
-        assert actual_delays == expected_delays
+        _assert_sleep_delays(mock_sleep, [0.5, 1.0, 2.0])
 
     asyncio.run(run())
 
@@ -137,9 +141,7 @@ def test_custom_backoff() -> None:
         # attempt 0 -> sleep(1.0 * 3.0^0) = 1.0
         # attempt 1 -> sleep(1.0 * 3.0^1) = 3.0
         # attempt 2 -> final failure, no sleep
-        expected_delays = [1.0, 3.0]
-        actual_delays = [call.args[0] for call in mock_sleep.await_args_list]
-        assert actual_delays == expected_delays
+        _assert_sleep_delays(mock_sleep, [1.0, 3.0])
 
     asyncio.run(run())
 

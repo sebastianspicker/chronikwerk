@@ -19,8 +19,9 @@ and a Keep-a-Changelog style `CHANGELOG.md`.
 - CI is green for the commit being released.
 - `make verify` is the first local release validation command: it enforces
   branch-aware coverage at 85%, Python and TypeScript checks, complexity and
-  duplication gates, static/unit/integration/contract checks, public and code
-  documentation checks, config checks, build and clean-wheel import,
+  duplication gates, the 600-line authored-source limit,
+  static/unit/integration/contract checks, public and code documentation checks,
+  config checks, build and clean-wheel import,
   production-image unsigned-render smoke, and dedicated Docker E2E.
 - On hosts without Docker, use `make verify-core` for non-container diagnostics;
   it is not release sign-off because image and E2E checks remain mandatory.
@@ -63,10 +64,15 @@ python -m pytest -q
 make frontend-check
 make complexity
 make duplication
+make source-length-check
 make docs-check
 make code-docs-check
 python -m build
 ```
+
+The source-length gate scans maintained code and tests. The shipped administration CSS
+and JavaScript bundles under `src/chronikwerk/static/admin/` are generated artifacts and
+are the only exemptions from the 600-physical-line authored-source limit.
 
 ## Wheel Smoke Test
 

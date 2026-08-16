@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from chronikwerk.config.settings import Settings
@@ -44,3 +45,24 @@ def make_settings(
     if overrides:
         data = _deep_merge(data, overrides)
     return Settings.from_mapping(data)
+
+
+def write_test_config(
+    config_path: Path,
+    storage_root: Path,
+    *,
+    state_dir: Path | None = None,
+) -> None:
+    """Write the shared minimal YAML configuration used by CLI/contract tests."""
+    lines = [
+        "zammad:",
+        "  base_url: https://zammad.example.local",
+        "  api_token: test-token",
+        "  webhook_hmac_secret: test-webhook-hmac-secret-0123456789abcdef",
+        "storage:",
+        f"  root: {storage_root}",
+    ]
+    if state_dir is not None:
+        lines.extend(("admin:", f"  state_dir: {state_dir}"))
+    lines.append("")
+    config_path.write_text("\n".join(lines), encoding="utf-8")

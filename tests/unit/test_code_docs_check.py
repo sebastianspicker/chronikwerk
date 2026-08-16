@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -86,6 +87,25 @@ def test_generated_placeholder_phrases_are_rejected(tmp_path: Path) -> None:
         )
         errors = checker._python_errors(source)
         assert any("uses placeholder documentation" in error for error in errors)
+
+
+def test_top_level_callable_iterator_excludes_nested_definitions(tmp_path: Path) -> None:
+    checker = _load_checker(tmp_path)
+    tree = ast.parse(
+        "def top_level():\n"
+        "    def nested():\n"
+        "        return None\n"
+        "    return nested\n"
+        "\n"
+        "class PublicType:\n"
+        "    def method(self):\n"
+        "        return None\n"
+    )
+
+    assert [node.name for node in checker._top_level_callables(tree)] == [
+        "top_level",
+        "PublicType",
+    ]
 
 
 def test_typescript_and_shell_files_need_purpose_headers(tmp_path: Path) -> None:

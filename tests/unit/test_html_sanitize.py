@@ -42,3 +42,22 @@ def test_sanitizer_fails_closed_for_malformed_link_url() -> None:
     value = sanitize_html_fragment('<a href="http://[::1">unsafe</a>')
 
     assert value == ""
+
+
+def test_sanitizer_rejects_empty_and_nul_links_and_preserves_void_tags() -> None:
+    value = sanitize_html_fragment(
+        '<a href="  ">blank</a><a href="https://safe.invalid\x00">nul</a><br/><hr></hr>'
+    )
+
+    assert value == "<a>blank</a><a>nul</a><br /><hr />"
+
+
+def test_sanitizer_bounds_nesting_and_ignores_disallowed_attributes() -> None:
+    nested = "<div>" * 51 + "content" + "</div>" * 51
+    value = sanitize_html_fragment(
+        nested + '<p data-x="ignored" style="color:red" onclick="nope">safe</p>'
+    )
+
+    assert value.count("<div>") == 50
+    assert value.endswith("<p>safe</p>")
+    assert "data-x" not in value and "style" not in value and "onclick" not in value

@@ -7,6 +7,7 @@ import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from starlette.requests import Request
@@ -128,6 +129,45 @@ def test_batch_is_not_scheduled_after_shutdown_starts(tmp_path) -> None:
         assert admission.running == 0
     finally:
         clear_shutting_down()
+
+
+def test_batch_task_creation_failure_returns_only_uncreated_reservations(
+    tmp_path, monkeypatch
+) -> None:
+    """Batch admission remains atomic until task creation starts failing."""
+    import chronikwerk.app.routes.ingest as ingest_route
+
+    admission = JobAdmission(max_pending=3, max_running=1)
+    cancellation_counts: list[int] = []
+    pending_during_creation: list[int] = []
+    original_cancel = admission.cancel_reservation
+    created: list[int] = []
+
+    def cancel_reservation(count: int = 1) -> None:
+        cancellation_counts.append(count)
+        original_cancel(count)
+
+    def create_task(*, payload, **_kwargs) -> None:
+        pending_during_creation.append(admission.pending)
+        if len(created) == 1:
+            raise RuntimeError("second task creation failed")
+        created.append(payload["ticket_id"])
+
+    monkeypatch.setattr(admission, "cancel_reservation", cancel_reservation)
+    monkeypatch.setattr(ingest_route, "_create_background_task", create_task)
+
+    with pytest.raises(RuntimeError, match="second task creation failed"):
+        _schedule_batch(
+            [(None, {"ticket_id": 1}), (None, {"ticket_id": 2}), (None, {"ticket_id": 3})],
+            settings=make_settings(str(tmp_path)),
+            admission=admission,
+        )
+
+    assert created == [1]
+    assert pending_during_creation == [3, 3]
+    assert cancellation_counts == [2]
+    assert admission.pending == 1
+    original_cancel()
 
 
 def test_batch_records_accepted_history_for_each_created_task(tmp_path, monkeypatch) -> None:
@@ -260,8 +300,16 @@ def test_render_and_storage_leave_event_loop_thread(tmp_path, monkeypatch) -> No
             request_id=None,
         )
         await process_module.render_and_store_ticket(
-            client=None,  # type: ignore[arg-type]
-            ctx=ctx,
+            request=process_module.TicketPipelineRequest(
+                client=cast(Any, None),
+                ctx=ctx,
+                payload={"ticket_id": 1},
+                options=process_module._PipelineOptions(  # noqa: SLF001
+                    trigger_tag="pdf:archive",
+                    require_trigger_tag=True,
+                    force_reprocess=False,
+                ),
+            ),
             ticket=Ticket(id=1, number="T1"),
             tags=TagList([]),
             storage_paths=(Path("a.pdf"), Path("a.json")),

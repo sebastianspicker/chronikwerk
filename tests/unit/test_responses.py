@@ -50,6 +50,22 @@ def _make_authed_request(token: str) -> Request:
     return Request(scope)
 
 
+def _assert_bearer_failure(
+    tmp_path, *, request_token: str, configured_token: str | None, expected_status: int
+) -> None:
+    """Exercise one bearer-token rejection while retaining its expected status."""
+    overrides = {} if configured_token is None else {"retry_bearer_token": configured_token}
+    settings = make_settings(str(tmp_path), overrides=overrides)
+    request = _make_authed_request(request_token)
+    with pytest.raises(Exception) as exc_info:
+        verify_bearer_token(
+            request,
+            settings.retry_bearer_token,
+            missing_detail="retry_token_not_configured",
+        )
+    assert exc_info.value.status_code == expected_status  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # settings_or_503
 # ---------------------------------------------------------------------------
@@ -82,21 +98,21 @@ def test_settings_or_503_raises_503_when_no_state_attr() -> None:
 
 
 def test_verify_bearer_token_raises_503_when_no_token_configured(tmp_path) -> None:
-    s = make_settings(str(tmp_path))
-    req = _make_authed_request("any-token")
-
-    with pytest.raises(Exception) as exc_info:
-        verify_bearer_token(req, s.retry_bearer_token, missing_detail="retry_token_not_configured")
-    assert exc_info.value.status_code == 503  # type: ignore[attr-defined]
+    _assert_bearer_failure(
+        tmp_path,
+        request_token="any-token",
+        configured_token=None,
+        expected_status=503,
+    )
 
 
 def test_verify_bearer_token_raises_401_for_wrong_token(tmp_path) -> None:
-    s = make_settings(str(tmp_path), overrides={"retry_bearer_token": "correct-token"})
-    req = _make_authed_request("wrong-token")
-
-    with pytest.raises(Exception) as exc_info:
-        verify_bearer_token(req, s.retry_bearer_token, missing_detail="retry_token_not_configured")
-    assert exc_info.value.status_code == 401  # type: ignore[attr-defined]
+    _assert_bearer_failure(
+        tmp_path,
+        request_token="wrong-token",
+        configured_token="correct-token",
+        expected_status=401,
+    )
 
 
 def test_verify_bearer_token_succeeds_for_correct_token(tmp_path) -> None:

@@ -67,8 +67,6 @@ def test_storage_writes_reject_paths_outside_storage_root(tmp_path: Path) -> Non
     target = outside / "payload.bin"
     with pytest.raises(ValueError, match="escapes root"):
         write_bytes(target, b"x", storage_root=root)
-    with pytest.raises(ValueError, match="escapes root"):
-        write_bytes(target, b"x", storage_root=root)
 
 
 def test_storage_writes_reject_symlink_traversal_under_root(tmp_path: Path) -> None:

@@ -26,6 +26,17 @@ def should_process(
     return True
 
 
+async def _apply_tag_transition(
+    client: Any,
+    ticket_id: int,
+    remove_tags: Iterable[str],
+    add_tag: str,
+) -> None:
+    for tag in remove_tags:
+        await client.remove_tag(ticket_id, tag)
+    await client.add_tag(ticket_id, add_tag)
+
+
 async def apply_processing(
     client: Any,
     ticket_id: int,
@@ -34,19 +45,23 @@ async def apply_processing(
     force_reprocess: bool = False,
 ) -> None:
     """Mutate Zammad tags to mark work in progress and clear stale terminal state."""
-    if force_reprocess:
-        await client.remove_tag(ticket_id, DONE_TAG)
-    await client.remove_tag(ticket_id, ERROR_TAG)
-    await client.remove_tag(ticket_id, trigger_tag)
-    await client.add_tag(ticket_id, PROCESSING_TAG)
+    remove_tags = (DONE_TAG,) if force_reprocess else ()
+    await _apply_tag_transition(
+        client,
+        ticket_id,
+        (*remove_tags, ERROR_TAG, trigger_tag),
+        PROCESSING_TAG,
+    )
 
 
 async def apply_done(client: Any, ticket_id: int, *, trigger_tag: str = TRIGGER_TAG) -> None:
     """Mutate Zammad tags to record success and clear trigger or error state."""
-    await client.remove_tag(ticket_id, PROCESSING_TAG)
-    await client.remove_tag(ticket_id, ERROR_TAG)
-    await client.remove_tag(ticket_id, trigger_tag)
-    await client.add_tag(ticket_id, DONE_TAG)
+    await _apply_tag_transition(
+        client,
+        ticket_id,
+        (PROCESSING_TAG, ERROR_TAG, trigger_tag),
+        DONE_TAG,
+    )
 
 
 async def apply_error(

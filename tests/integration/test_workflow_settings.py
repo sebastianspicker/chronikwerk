@@ -14,17 +14,14 @@ from chronikwerk.app.jobs import _ticket_pipeline as ticket_pipeline_module
 from chronikwerk.app.jobs.process_ticket import process_ticket
 from chronikwerk.config.settings import Settings
 from chronikwerk.domain.state_machine import DONE_TAG, ERROR_TAG, PROCESSING_TAG
+from tests.support.settings_factory import make_settings
 
 
 def _settings(storage_root: str, *, workflow: dict | None = None) -> Settings:
     """Build settings isolated to this test scenario."""
-    return Settings.from_mapping(
-        {
-            "zammad": {"base_url": "https://zammad.example.local", "api_token": "test-token"},
-            "storage": {"root": storage_root},
-            "hardening": {"transport": {"allow_private_networks": True}},
-            "workflow": workflow or {},
-        }
+    return make_settings(
+        storage_root,
+        overrides={"workflow": workflow or {}},
     )
 
 
@@ -90,113 +87,88 @@ def _mock_tag_routes() -> tuple[respx.Route, respx.Route]:
     return remove_tag_route, add_tag_route
 
 
-def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
-    settings = _settings(str(tmp_path), workflow={"trigger_tag": "pdf:archive"})
+def _assert_archive_exists(tmp_path, settings: Settings, fixed_now: datetime) -> None:
+    """Assert the workflow produced the configured archive path."""
+    expected_filename = build_filename_from_pattern(
+        settings.storage.filename_pattern,
+        ticket_number="20240123",
+        timestamp_utc=fixed_now.date().isoformat(),
+    )
+    assert (tmp_path / "agent" / "A" / "B" / "C" / expected_filename).exists()
+
+
+def _assert_success_tags(removed: list[str], added: list[str], *, trigger_tag: str) -> None:
+    """Assert the common successful workflow tag transition."""
+    assert trigger_tag in removed
+    assert PROCESSING_TAG in added
+    assert DONE_TAG in added
+    assert ERROR_TAG not in added
+
+
+def _run_workflow(
+    tmp_path,
+    monkeypatch,
+    *,
+    workflow: dict,
+    tags: list[str],
+    delivery_id: str,
+) -> tuple[Settings, datetime, respx.Route, respx.Route, respx.Route]:
+    """Run one workflow scenario with the shared Zammad route setup."""
+    settings = _settings(str(tmp_path), workflow=workflow)
     fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(ticket_pipeline_module, "now_utc", lambda: fixed_now)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-1"}
+    payload = {"ticket": {"id": 123}, "_request_id": delivery_id}
 
     with respx.mock:
         _mock_ticket(ticket_id=123)
         _mock_articles(ticket_id=123)
-
         respx.get(
             "https://zammad.example.local/api/v1/tags",
             params={"object": "Ticket", "o_id": "123"},
-        ).mock(return_value=httpx.Response(200, json=["pdf:archive"]))
-
+        ).mock(return_value=httpx.Response(200, json=tags))
         remove_tag_route, add_tag_route = _mock_tag_routes()
-
-        respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-            return_value=httpx.Response(
-                200,
-                json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
-            )
-        )
-
-        asyncio.run(process_ticket("delivery-workflow-1", payload, settings))
-
-        removed = _called_tag_items(remove_tag_route)
-        added = _called_tag_items(add_tag_route)
-
-        assert "pdf:archive" in removed
-        assert PROCESSING_TAG in added
-        assert DONE_TAG in added
-        assert ERROR_TAG not in added
-
-        date_iso = fixed_now.date().isoformat()
-        expected_filename = build_filename_from_pattern(
-            settings.storage.filename_pattern,
-            ticket_number="20240123",
-            timestamp_utc=date_iso,
-        )
-        expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
-        assert expected_pdf_path.exists()
-
-
-def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
-    settings = _settings(str(tmp_path), workflow={"require_tag": False})
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(ticket_pipeline_module, "now_utc", lambda: fixed_now)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-2"}
-
-    with respx.mock:
-        _mock_ticket(ticket_id=123)
-        _mock_articles(ticket_id=123)
-
-        respx.get(
-            "https://zammad.example.local/api/v1/tags",
-            params={"object": "Ticket", "o_id": "123"},
-        ).mock(return_value=httpx.Response(200, json=[]))
-
-        _mock_tag_routes()
-
-        respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
-            return_value=httpx.Response(
-                200,
-                json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
-            )
-        )
-
-        asyncio.run(process_ticket("delivery-workflow-2", payload, settings))
-
-        date_iso = fixed_now.date().isoformat()
-        expected_filename = build_filename_from_pattern(
-            settings.storage.filename_pattern,
-            ticket_number="20240123",
-            timestamp_utc=date_iso,
-        )
-        expected_pdf_path = tmp_path / "agent" / "A" / "B" / "C" / expected_filename
-        assert expected_pdf_path.exists()
-
-
-def test_workflow_acknowledge_on_success_can_be_disabled(tmp_path, monkeypatch) -> None:
-    settings = _settings(str(tmp_path), workflow={"acknowledge_on_success": False})
-    fixed_now = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
-    monkeypatch.setattr(ticket_pipeline_module, "now_utc", lambda: fixed_now)
-
-    payload = {"ticket": {"id": 123}, "_request_id": "req-workflow-3"}
-
-    with respx.mock:
-        _mock_ticket(ticket_id=123)
-        _mock_articles(ticket_id=123)
-
-        respx.get(
-            "https://zammad.example.local/api/v1/tags",
-            params={"object": "Ticket", "o_id": "123"},
-        ).mock(return_value=httpx.Response(200, json=["pdf:sign"]))
-
-        _mock_tag_routes()
-
         article_route = respx.post("https://zammad.example.local/api/v1/ticket_articles").mock(
             return_value=httpx.Response(
                 200,
                 json={"id": 999, "internal": True, "subject": "ok", "body": "<p>ok</p>"},
             )
         )
+        asyncio.run(process_ticket(delivery_id, payload, settings))
 
-        asyncio.run(process_ticket("delivery-workflow-3", payload, settings))
+    return settings, fixed_now, remove_tag_route, add_tag_route, article_route
 
-        assert article_route.call_count == 0
+
+def test_workflow_trigger_tag_is_respected(tmp_path, monkeypatch) -> None:
+    settings, fixed_now, remove_tag_route, add_tag_route, _article_route = _run_workflow(
+        tmp_path,
+        monkeypatch,
+        workflow={"trigger_tag": "pdf:archive"},
+        tags=["pdf:archive"],
+        delivery_id="delivery-workflow-1",
+    )
+    removed = _called_tag_items(remove_tag_route)
+    added = _called_tag_items(add_tag_route)
+    _assert_success_tags(removed, added, trigger_tag="pdf:archive")
+    _assert_archive_exists(tmp_path, settings, fixed_now)
+
+
+def test_workflow_require_tag_can_be_disabled(tmp_path, monkeypatch) -> None:
+    settings, fixed_now, _remove_tag_route, _add_tag_route, _article_route = _run_workflow(
+        tmp_path,
+        monkeypatch,
+        workflow={"require_tag": False},
+        tags=[],
+        delivery_id="delivery-workflow-2",
+    )
+    _assert_archive_exists(tmp_path, settings, fixed_now)
+
+
+def test_workflow_acknowledge_on_success_can_be_disabled(tmp_path, monkeypatch) -> None:
+    _settings_result, _fixed_now, _remove_tag_route, _add_tag_route, article_route = _run_workflow(
+        tmp_path,
+        monkeypatch,
+        workflow={"acknowledge_on_success": False},
+        tags=["pdf:sign"],
+        delivery_id="delivery-workflow-3",
+    )
+    assert article_route.call_count == 0

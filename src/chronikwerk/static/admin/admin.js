@@ -47,15 +47,19 @@ var draftValue = (values, path) => Object.entries(values).find(([candidate]) => 
 function formSecurityAcknowledged(form) {
   return form.elements.security_acknowledged.checked;
 }
-function preserveConfigDraft() {
-  const form = qs("[data-config-form]");
-  if (!form) return;
+var configDraftEntries = (form) => {
   const entries = [];
   qsa(".config-field", form).forEach((row) => {
     const control = configControl(row);
     const path = row.dataset.path;
     if (control && !control.disabled && path) entries.push([path, control.value]);
   });
+  return entries;
+};
+function preserveConfigDraft() {
+  const form = qs("[data-config-form]");
+  if (!form) return;
+  const entries = configDraftEntries(form);
   try {
     window.sessionStorage.setItem(
       configDraftKey,
@@ -209,6 +213,21 @@ var requestConfigValidation = async (form, errorSummary) => {
     return null;
   }
 };
+var setConfigValidationButtonState = (button, isValidating) => {
+  if (!button) return;
+  button.disabled = isValidating;
+  if (isValidating) button.setAttribute("aria-busy", "true");
+  else button.removeAttribute("aria-busy");
+};
+var handleConfigValidationResult = (form, errorSummary, result) => {
+  if (!result) return null;
+  if (!result.response.ok) {
+    showValidationErrors(form, errorSummary, result.data);
+    return null;
+  }
+  showConfigReview(form, result.data);
+  return result.data;
+};
 var stageValidatedConfig = async (form, overlay, button) => {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
@@ -247,22 +266,11 @@ function initConfigForm() {
     const submit = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
     const errorSummary = qs("[data-config-errors]", form);
     clearValidationFeedback(form, errorSummary);
-    if (submit) {
-      submit.disabled = true;
-      submit.setAttribute("aria-busy", "true");
-    }
+    setConfigValidationButtonState(submit, true);
     const result = await requestConfigValidation(form, errorSummary);
-    if (submit) {
-      submit.removeAttribute("aria-busy");
-      submit.disabled = false;
-    }
-    if (!result) return;
-    if (!result.response.ok) {
-      showValidationErrors(form, errorSummary, result.data);
-      return;
-    }
-    validatedOverlay = result.data.overlay ?? null;
-    showConfigReview(form, result.data);
+    setConfigValidationButtonState(submit, false);
+    const data = handleConfigValidationResult(form, errorSummary, result);
+    if (data) validatedOverlay = data.overlay ?? null;
   };
   form.addEventListener("input", invalidateConfigReview);
   form.addEventListener("change", invalidateConfigReview);
@@ -284,7 +292,10 @@ var overviewElements = () => {
   const running = qs("[data-admission-running]");
   const pending = qs("[data-admission-pending]");
   const refreshed = qs("[data-last-refresh]");
-  if (!status || !running || !pending || !refreshed) return null;
+  if (!status) return null;
+  if (!running) return null;
+  if (!pending) return null;
+  if (!refreshed) return null;
   return { status, running, pending, refreshed };
 };
 var setCapacityBar = (selector, current, max) => {

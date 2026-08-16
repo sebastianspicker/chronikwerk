@@ -312,14 +312,17 @@ class ManagedConfigStore(_ManagedFileIO):
         except _PostReplaceError:
             raise
         except Exception as primary_error:
-            try:
-                self._unlink_revision(revision_path.name)
-            except (ManagedConfigError, OSError) as cleanup_error:
-                primary_error.add_note(
-                    "Failed to remove the staged revision after the current-pointer "
-                    f"write failed: {type(cleanup_error).__name__}"
-                )
+            self._rollback_staged_revision(revision_path, primary_error)
             raise
+
+    def _rollback_staged_revision(self, revision_path: Path, primary_error: Exception) -> None:
+        try:
+            self._unlink_revision(revision_path.name)
+        except (ManagedConfigError, OSError) as cleanup_error:
+            primary_error.add_note(
+                "Failed to remove the staged revision after the current-pointer "
+                f"write failed: {type(cleanup_error).__name__}"
+            )
 
     def _prune_staged_revision(self, revision: str) -> None:
         try:

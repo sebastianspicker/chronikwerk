@@ -131,23 +131,31 @@ class _AllowlistHTMLSanitizer(HTMLParser):
         """Preserve permitted self-closing markup during sanitization."""
         self.handle_starttag(tag, attrs)
 
-    def handle_endtag(self, tag: str) -> None:
-        """Close allowed elements without reproducing skipped or malformed nesting."""
-        tag = tag.lower()
-        if tag in _DROP_WITH_CONTENT:
-            for index in range(len(self._skip_stack) - 1, -1, -1):
-                if self._skip_stack[index] == tag:
-                    del self._skip_stack[index:]
-                    break
-            return
-        if self._skip_stack or tag in _VOID_TAGS:
-            return
+    def _discard_skipped_tag(self, tag: str) -> None:
+        """Pop the skipped tag and its nested descendants when it closes."""
+        for index in range(len(self._skip_stack) - 1, -1, -1):
+            if self._skip_stack[index] == tag:
+                del self._skip_stack[index:]
+                return
+
+    def _close_open_tag(self, tag: str) -> None:
+        """Close a matching open tag and any malformed nested descendants."""
         for index in range(len(self._open) - 1, -1, -1):
             if self._open[index].name == tag:
                 for item in reversed(self._open[index:]):
                     self._out.append(f"</{item.name}>")
                 del self._open[index:]
                 return
+
+    def handle_endtag(self, tag: str) -> None:
+        """Close allowed elements without reproducing skipped or malformed nesting."""
+        tag = tag.lower()
+        if tag in _DROP_WITH_CONTENT:
+            self._discard_skipped_tag(tag)
+            return
+        if self._skip_stack or tag in _VOID_TAGS:
+            return
+        self._close_open_tag(tag)
 
     def handle_data(self, data: str) -> None:
         """Append textual content while preserving meaningful spacing."""

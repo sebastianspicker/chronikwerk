@@ -11,6 +11,7 @@ from chronikwerk.app.middleware.body_size_limit import (
     BodySizeLimitMiddleware,
     _BodyTooLarge,
     _content_length_exceeds_limit,
+    _is_admin_request,
     _is_limited_path,
     _limited_receive_factory,
 )
@@ -48,6 +49,30 @@ def test_is_limited_path_non_protected_path_is_false() -> None:
 def test_is_limited_path_ingest_path_is_true() -> None:
     scope: dict[str, Any] = {"type": "http", "path": "/ingest"}
     assert _is_limited_path(scope, 1000) is True
+
+
+# ---------------------------------------------------------------------------
+# _is_admin_request
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("scope", "admin_enabled", "expected"),
+    [
+        ({"type": "http", "method": "POST", "path": "/admin"}, True, True),
+        ({"type": "http", "method": "PUT", "path": "/admin/api/v1/config"}, True, True),
+        ({"type": "http", "method": "GET", "path": "/admin/api/v1/config"}, True, False),
+        ({"type": "http", "method": "POST", "path": "/administrator"}, True, False),
+        ({"type": "http", "method": "POST", "path": "/admin"}, False, False),
+        ({"type": "websocket", "method": "POST", "path": "/admin"}, True, False),
+    ],
+)
+def test_is_admin_request_matches_only_enabled_admin_mutations(
+    scope: dict[str, Any],
+    admin_enabled: bool,
+    expected: bool,
+) -> None:
+    assert _is_admin_request(scope, admin_enabled=admin_enabled) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +152,14 @@ def _make_scope(path: str = "/ingest", content_length: int | None = None) -> dic
     return {"type": "http", "method": "POST", "path": path, "headers": headers}
 
 
+def _assert_rejection(responses: list[Any], status: int = 413) -> None:
+    """Assert that middleware emitted the expected rejection response."""
+    assert any(
+        message.get("type") == "http.response.start" and message.get("status") == status
+        for message in responses
+    )
+
+
 def test_middleware_passes_non_ingest_path_through(tmp_path) -> None:
     overrides = {"hardening": {"body_size_limit": {"max_bytes": 100}}}
     settings = make_settings(str(tmp_path), overrides=overrides)
@@ -161,9 +194,7 @@ def test_middleware_rejects_oversized_content_length(tmp_path) -> None:
 
     asyncio.run(middleware(scope, _unread_receive, _fake_send))
 
-    assert any(
-        msg.get("type") == "http.response.start" and msg.get("status") == 413 for msg in responses
-    )
+    _assert_rejection(responses)
     response_start = next(msg for msg in responses if msg.get("type") == "http.response.start")
     assert (b"connection", b"close") in response_start["headers"]
 
@@ -194,9 +225,7 @@ def test_middleware_rejects_streaming_body_over_limit(tmp_path) -> None:
 
     asyncio.run(middleware(scope, _oversized_receive, _fake_send))
 
-    assert any(
-        msg.get("type") == "http.response.start" and msg.get("status") == 413 for msg in responses
-    )
+    _assert_rejection(responses)
 
 
 def test_middleware_times_out_a_stalled_stream(tmp_path) -> None:
@@ -251,10 +280,7 @@ def test_middleware_caps_unauthenticated_admin_login_bodies(tmp_path, path: str)
 
     asyncio.run(middleware(scope, _drain_receive, _fake_send))
 
-    assert any(
-        message.get("type") == "http.response.start" and message.get("status") == 413
-        for message in responses
-    )
+    _assert_rejection(responses)
 
 
 @pytest.mark.parametrize(
@@ -294,10 +320,7 @@ def test_middleware_caps_all_admin_mutation_bodies(
     scope["method"] = method
     asyncio.run(middleware(scope, _unread_receive, _send))
 
-    assert any(
-        message.get("type") == "http.response.start" and message.get("status") == 413
-        for message in responses
-    )
+    _assert_rejection(responses)
 
 
 def test_middleware_caps_chunked_unauthenticated_admin_body(tmp_path, monkeypatch) -> None:
@@ -335,10 +358,7 @@ def test_middleware_caps_chunked_unauthenticated_admin_body(tmp_path, monkeypatc
         )
     )
 
-    assert any(
-        message.get("type") == "http.response.start" and message.get("status") == 413
-        for message in responses
-    )
+    _assert_rejection(responses)
 
 
 def test_middleware_with_no_settings() -> None:
@@ -383,7 +403,4 @@ def test_disabled_configured_limit_still_uses_absolute_safety_cap(
     middleware = BodySizeLimitMiddleware(_inner, settings=settings)
     asyncio.run(middleware(_make_scope("/ingest"), _receive, _send))
 
-    assert any(
-        message.get("type") == "http.response.start" and message.get("status") == 413
-        for message in responses
-    )
+    _assert_rejection(responses)

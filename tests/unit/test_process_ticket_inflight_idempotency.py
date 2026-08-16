@@ -5,17 +5,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from chronikwerk.app.jobs import (
-    _ticket_pipeline as ticket_pipeline_module,
-)
 from chronikwerk.app.jobs import ticket_stores
 from chronikwerk.app.jobs.process_ticket import process_ticket
 from tests.support.process_ticket_helpers import (
     InflightRetryProcessTicketClient,
-    fake_store_ticket_files,
     flaky_then_successful_render,
+    install_process_ticket_pipeline_doubles,
     process_ticket_payload,
     process_ticket_settings,
+    run_concurrent_process_tickets,
 )
 
 
@@ -25,31 +23,17 @@ def test_skipped_inflight_delivery_id_is_not_poisoned_for_retry(
     ticket_stores.reset_for_tests()
     InflightRetryProcessTicketClient.reset()
 
-    monkeypatch.setattr(
-        "chronikwerk.app.jobs.process_ticket.AsyncZammadClient",
-        InflightRetryProcessTicketClient,
-    )
-    monkeypatch.setattr(
-        ticket_pipeline_module,
-        "build_and_render_pdf",
-        flaky_then_successful_render(),
-    )
-    monkeypatch.setattr(
-        ticket_pipeline_module,
-        "store_ticket_files",
-        fake_store_ticket_files(tmp_path),
+    install_process_ticket_pipeline_doubles(
+        monkeypatch,
+        client_type=InflightRetryProcessTicketClient,
+        render=flaky_then_successful_render(),
+        tmp_path=tmp_path,
     )
 
     settings = process_ticket_settings(tmp_path)
     payload = process_ticket_payload()
 
-    async def _run_concurrent_once() -> None:
-        await asyncio.gather(
-            process_ticket("d-1", payload, settings),
-            process_ticket("d-2", payload, settings),
-        )
-
-    asyncio.run(_run_concurrent_once())
+    asyncio.run(run_concurrent_process_tickets(process_ticket, payload, settings))
 
     # Retry delivery d-2 after the in-flight run is over.
     asyncio.run(process_ticket("d-2", payload, settings))

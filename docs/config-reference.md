@@ -3,6 +3,9 @@
 Source of truth:
 
 - `src/chronikwerk/config/settings.py`
+- `src/chronikwerk/config/_settings_sections.py`
+- `src/chronikwerk/config/_settings_signing.py`
+- `src/chronikwerk/config/_settings_zammad.py`
 - `src/chronikwerk/config/load.py`
 - `src/chronikwerk/config/validate.py`
 
@@ -131,7 +134,7 @@ Validated service startup requires:
 | `hardening.body_size_limit.timeout_seconds` | `10.0` | `HARDENING__BODY_SIZE_LIMIT__TIMEOUT_SECONDS` | Whole-body deadline for ingest and every body-bearing admin request. |
 | `hardening.webhook.require_delivery_id` | `false` | `HARDENING__WEBHOOK__REQUIRE_DELIVERY_ID` | Require `X-Zammad-Delivery`. |
 | `hardening.transport.trust_env` | `false` | `HARDENING__TRANSPORT__TRUST_ENV` or `ZAMMAD_TRUST_ENV` | Allow proxy and certificate environment settings for outbound HTTP. |
-| `hardening.transport.allow_insecure_http` | `false` | `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP` | Compatibility option for auxiliary/test transports; the Zammad connection remains HTTPS-only. |
+| `hardening.transport.allow_insecure_http` | `false` | `HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP` | Explicitly permit an HTTP Zammad origin for a reviewed, isolated internal or test deployment. HTTPS remains the default, and certificate verification remains mandatory whenever HTTPS is used. |
 | `hardening.transport.allow_private_networks` | `false` | `HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS` or `ZAMMAD_ALLOW_PRIVATE_ORIGIN` | Explicitly allow non-global Zammad addresses for reviewed internal deployments. |
 
 ## Admission

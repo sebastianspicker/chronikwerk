@@ -1,5 +1,5 @@
 /* Assembled by scripts/ci/assemble_admin_css.py; do not edit directly. */
-/* Sources: frontend/admin/css/*.css (9 files) */
+/* Sources: frontend/admin/css/*.css (10 files) */
 
 /* ===== frontend/admin/css/00-tokens.css ===== */
 /* Chronikwerk Admin: design tokens (Instrument Ledger) */
@@ -1086,6 +1086,7 @@ dialog form {
   margin: 10px 0 0;
 }
 
+/* ===== frontend/admin/css/45-evidence.css ===== */
 /* Evidence dossier */
 .dossier,
 .evidence-inspector {

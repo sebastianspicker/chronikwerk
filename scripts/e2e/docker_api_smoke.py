@@ -351,12 +351,21 @@ def _print_dry_run(args: argparse.Namespace, dataset: dict[str, Any]) -> int:
 
 
 def _prepare_stack(args: argparse.Namespace, compose_file: Path) -> list[str]:
-    """Remove a stale project and reserve ports before the real startup phase."""
+    """Reject unrelated port owners while recovering a retained project safely."""
     base = _compose_base(args.project, compose_file)
+    try:
+        _assert_ports_available([args.archiver_url, args.mock_url])
+    except E2EFailure:
+        running = _run_checked(
+            [*base, "ps", "--status", "running", "--quiet"],
+            phase="startup",
+        )
+        if not running.strip():
+            raise
+        _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
+        _assert_ports_available([args.archiver_url, args.mock_url])
+        return base
     _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
-    _assert_ports_available(
-        [args.archiver_url, args.mock_url],
-    )
     return base
 
 
@@ -459,6 +468,7 @@ def run(args: argparse.Namespace) -> int:
 
     base = _prepare_stack(args, compose_file)
 
+    primary_error: BaseException | None = None
     try:
         print("E2E: starting Docker test stack")
         _run_checked([*base, "up", "-d", "--build"], phase="startup")
@@ -482,13 +492,23 @@ def run(args: argparse.Namespace) -> int:
             compose_file=compose_file,
             expected_after_retry=expected_after_retry,
         )
-        print("E2E: PASS")
-        return 0
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         if args.keep_stack:
             print("E2E: keeping Docker stack running (--keep-stack)")
         else:
-            _run_command([*base, "down", "-v", "--remove-orphans"])
+            try:
+                _run_checked([*base, "down", "-v", "--remove-orphans"], phase="cleanup")
+            except E2EFailure as cleanup_error:
+                if primary_error is None:
+                    raise
+                primary_error.add_note(f"cleanup failure: {cleanup_error}")
+                print(f"ERROR: cleanup failure: {cleanup_error}", file=sys.stderr)
+
+    print("E2E: PASS")
+    return 0
 
 
 def main() -> int:

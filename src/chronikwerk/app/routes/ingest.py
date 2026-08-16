@@ -115,19 +115,38 @@ def _schedule_background_task(
     settings: Settings,
     admission: JobAdmission,
 ) -> bool:
+    """Schedule one job while retaining the single-job compatibility seam."""
+    return _schedule_jobs(
+        [(delivery_id, payload)],
+        settings=settings,
+        admission=admission,
+    )
+
+
+def _schedule_jobs(
+    jobs: list[tuple[str | None, dict[str, Any]]],
+    *,
+    settings: Settings,
+    admission: JobAdmission,
+) -> bool:
+    """Reserve and create a complete job group without partial admission."""
     if is_shutting_down():
         return False
-    if not admission.try_reserve():
+    if jobs and not admission.try_reserve(len(jobs)):
         return False
+
+    created = 0
     try:
-        _create_background_task(
-            delivery_id=delivery_id,
-            payload=payload,
-            settings=settings,
-            admission=admission,
-        )
+        for delivery_id, payload in jobs:
+            _create_background_task(
+                delivery_id=delivery_id,
+                payload=payload,
+                settings=settings,
+                admission=admission,
+            )
+            created += 1
     except Exception:
-        admission.cancel_reservation()
+        admission.cancel_reservation(len(jobs) - created)
         raise
     return True
 
@@ -179,25 +198,7 @@ def _schedule_batch(
     settings: Settings,
     admission: JobAdmission,
 ) -> bool:
-    if is_shutting_down():
-        return False
-    if jobs and not admission.try_reserve(len(jobs)):
-        return False
-
-    created = 0
-    try:
-        for delivery_id, payload in jobs:
-            _create_background_task(
-                delivery_id=delivery_id,
-                payload=payload,
-                settings=settings,
-                admission=admission,
-            )
-            created += 1
-    except Exception:
-        admission.cancel_reservation(len(jobs) - created)
-        raise
-    return True
+    return _schedule_jobs(jobs, settings=settings, admission=admission)
 
 
 def _overload_error() -> JSONResponse:

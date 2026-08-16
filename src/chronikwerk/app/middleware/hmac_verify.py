@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from starlette.datastructures import Headers
@@ -20,6 +21,18 @@ _ALGORITHMS: dict[str, tuple[int, Any]] = {
     "sha256": (hashlib.sha256().digest_size, hashlib.sha256),
 }
 _STRICT_SIGNATURE_DOMAIN = b"zammad-webhook-v1\0"
+
+
+@dataclass(frozen=True, slots=True)
+class _VerificationContext:
+    """Validated signature details and ASGI request handles for verification."""
+
+    signature: bytes
+    digest_ctor: type
+    signature_prefix: bytes
+    receive: Receive
+    scope: Scope
+    send: Send
 
 
 def _secret_bytes(settings: Settings | None) -> bytes | None:
@@ -173,7 +186,7 @@ class HmacVerifyMiddleware:
         receive: Receive,
         scope: Scope,
         send: Send,
-    ) -> tuple[bytes, type, str] | None:
+    ) -> _VerificationContext | None:
         signature_raw = headers.get(_SIGNATURE_HEADER)
         if not signature_raw:
             await _send_rejection(_forbidden(), scope, receive, send)
@@ -184,29 +197,43 @@ class HmacVerifyMiddleware:
             await _send_rejection(_forbidden(), scope, receive, send)
             return None
 
-        return parsed
+        signature, digest_ctor, _algo_name = parsed
+        return _VerificationContext(
+            signature=signature,
+            digest_ctor=digest_ctor,
+            signature_prefix=self._signature_prefix(headers),
+            receive=receive,
+            scope=scope,
+            send=send,
+        )
+
+    def _signature_prefix(self, headers: Headers) -> bytes:
+        delivery_id = _normalized_delivery_id(headers.get(DELIVERY_ID_HEADER))
+        if self._require_delivery_id and delivery_id is not None:
+            return _strict_signature_prefix(delivery_id)
+        return b""
 
     async def _verify_body_signature(
         self,
-        signature: bytes,
-        digest_ctor: type,
-        signature_prefix: bytes,
-        receive: Receive,
-        scope: Scope,
-        send: Send,
+        verification: _VerificationContext,
     ) -> list[bytes] | None:
         if self._secret is None:
-            await _send_rejection(_service_misconfigured(), scope, receive, send)
+            await _send_rejection(
+                _service_misconfigured(),
+                verification.scope,
+                verification.receive,
+                verification.send,
+            )
             return None
-        mac = hmac.new(self._secret, digestmod=digest_ctor)
-        mac.update(signature_prefix)
-        chunks, disconnected = await _read_body(receive, on_chunk=mac.update)
+        mac = hmac.new(self._secret, digestmod=verification.digest_ctor)
+        mac.update(verification.signature_prefix)
+        chunks, disconnected = await _read_body(verification.receive, on_chunk=mac.update)
         if disconnected:
-            await _forbidden()(scope, receive, send)
+            await _forbidden()(verification.scope, verification.receive, verification.send)
             return None
 
-        if not hmac.compare_digest(signature, mac.digest()):
-            await _forbidden()(scope, receive, send)
+        if not hmac.compare_digest(verification.signature, mac.digest()):
+            await _forbidden()(verification.scope, verification.receive, verification.send)
             return None
 
         return chunks
@@ -230,16 +257,7 @@ class HmacVerifyMiddleware:
         if parsed is None:
             return
 
-        signature, digest_ctor, _algo_name = parsed
-        delivery_id = _normalized_delivery_id(headers.get(DELIVERY_ID_HEADER))
-        signature_prefix = (
-            _strict_signature_prefix(delivery_id)
-            if self._require_delivery_id and delivery_id is not None
-            else b""
-        )
-        chunks = await self._verify_body_signature(
-            signature, digest_ctor, signature_prefix, receive, scope, send
-        )
+        chunks = await self._verify_body_signature(parsed)
         if chunks is None:
             return
 

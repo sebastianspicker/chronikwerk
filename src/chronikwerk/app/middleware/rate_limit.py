@@ -47,23 +47,7 @@ class _InMemoryTokenBucketLimiter:
         """Return True if the request for key is within the rate limit, False otherwise."""
         now = float(self._now())
         async with self._lock:
-            if len(self._buckets) > self._max_entries:
-                # Bug #P2-1: Optimized eviction: avoid sorted() which is O(N log N).
-                # Pop the first few entries (oldest inserted) until we are slightly below limit.
-                to_evict_count = len(self._buckets) - self._max_entries + _EVICTION_HEADROOM
-                to_evict_count = min(to_evict_count, _EVICTION_BATCH_CAP)
-
-                # Collect keys first to avoid "dictionary changed size during iteration"
-                it = iter(self._buckets)
-                keys_to_remove = []
-                for _ in range(to_evict_count):
-                    try:
-                        keys_to_remove.append(next(it))
-                    except StopIteration:
-                        break
-
-                for k in keys_to_remove:
-                    self._buckets.pop(k, None)
+            self._evict_excess_buckets()
 
             bucket = self._buckets.get(key)
             if bucket is None:
@@ -80,6 +64,32 @@ class _InMemoryTokenBucketLimiter:
                 return True
 
             return False
+
+    def _evict_excess_buckets(self) -> None:
+        """Evict oldest inserted buckets when the store has exceeded its bound.
+
+        The caller holds ``self._lock`` so the insertion order and bucket mutations
+        remain consistent with admission and token accounting.
+        """
+        if len(self._buckets) <= self._max_entries:
+            return
+
+        # Bug #P2-1: Avoid sorted(), which is O(N log N).
+        # Pop the first few entries (oldest inserted) until slightly below the limit.
+        to_evict_count = len(self._buckets) - self._max_entries + _EVICTION_HEADROOM
+        to_evict_count = min(to_evict_count, _EVICTION_BATCH_CAP)
+
+        # Collect keys first to avoid "dictionary changed size during iteration".
+        it = iter(self._buckets)
+        keys_to_remove = []
+        for _ in range(to_evict_count):
+            try:
+                keys_to_remove.append(next(it))
+            except StopIteration:
+                break
+
+        for key in keys_to_remove:
+            self._buckets.pop(key, None)
 
 
 def _client_key_from_scope(scope: Scope) -> str:
@@ -158,12 +168,7 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        path = scope.get("path")
-        if (
-            not self._enabled
-            or path not in self._paths
-            or (path in self._admin_auth_paths and scope.get("method") != "POST")
-        ):
+        if not self._should_limit(scope):
             await self.app(scope, receive, send)
             return
 
@@ -178,3 +183,12 @@ class RateLimitMiddleware:
             return
 
         await self.app(scope, receive, send)
+
+    def _should_limit(self, scope: Scope) -> bool:
+        """Return whether this request belongs to a protected admission path."""
+        if not self._enabled:
+            return False
+        path = scope.get("path")
+        if path not in self._paths:
+            return False
+        return path not in self._admin_auth_paths or scope.get("method") == "POST"

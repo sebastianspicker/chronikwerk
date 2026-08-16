@@ -31,6 +31,45 @@ def test_private_network_override_allows_internal_literal() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["example.test/api", "ftp://example.test/api", "https:///api"],
+)
+def test_url_requires_an_http_scheme_and_host(url: str) -> None:
+    with pytest.raises(PermanentError, match="must include an https:// host"):
+        validate_url_policy(url)
+
+
+def test_plain_http_requires_explicit_override() -> None:
+    url = "http://example.test/api"
+
+    with pytest.raises(PermanentError, match="Plain HTTP upstream URL is not allowed"):
+        validate_url_policy(url)
+
+    validate_url_policy(url, allow_insecure_http=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://localhost/api",
+        "https://localhost.localdomain/api",
+        "https://localhost6/api",
+        "https://localhost6.localdomain/api",
+        "https://ip6-localhost/api",
+        "https://archive.localhost/api",
+    ],
+)
+def test_localhost_names_are_rejected(url: str) -> None:
+    with pytest.raises(PermanentError, match="Localhost outbound URL is not allowed"):
+        validate_url_policy(url)
+
+
+@pytest.mark.parametrize("url", ["https://localhost/api", "https://archive.localhost/api"])
+def test_private_network_override_allows_localhost_names(url: str) -> None:
+    validate_url_policy(url, allow_private_networks=True)
+
+
 def test_embedded_url_credentials_are_rejected_without_leaking_them() -> None:
     secret = "super-secret-password"
 

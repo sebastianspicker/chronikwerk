@@ -13,7 +13,7 @@ from pydantic import SecretStr
 
 from chronikwerk.adapters.signing.sign_pdf import sign_pdf, sign_pdf_with_provenance
 from chronikwerk.config.settings import SigningSettings
-from chronikwerk.domain.errors import PermanentError
+from chronikwerk.domain.errors import PermanentError, TransientError
 from tests.support.signing_test_helpers import (
     sample_pdf_bytes,
     write_test_pfx,
@@ -109,6 +109,46 @@ def test_sign_pdf_wrong_password_raises(tmp_path: Path) -> None:
     signing = _make_settings(pfx_path=pfx_path, pfx_password="wrong")
     with pytest.raises(PermanentError):
         sign_pdf(sample_pdf_bytes(), signing)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (ValueError("invalid bundle"), PermanentError),
+        (RuntimeError("unexpected signer defect"), RuntimeError),
+    ],
+)
+def test_signer_initialisation_only_normalises_pkcs12_load_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    expected: type[Exception],
+) -> None:
+    from pyhanko.sign import signers
+
+    import chronikwerk.adapters.signing.sign_pdf as signing_module
+
+    monkeypatch.setattr(
+        signing_module,
+        "_validate_cert_not_expired",
+        lambda _pfx_bytes, _password: (
+            datetime.now(UTC) - timedelta(days=1),
+            datetime.now(UTC) + timedelta(days=1),
+        ),
+    )
+
+    def fail_to_load(*_args: object, **_kwargs: object) -> object:
+        raise failure
+
+    monkeypatch.setattr(signers.SimpleSigner, "load_pkcs12_data", fail_to_load)
+    material = signing_module._PfxMaterial(  # noqa: SLF001
+        path=tmp_path / "bundle.pfx",
+        pfx_bytes=b"invalid",
+        password=None,
+    )
+
+    with pytest.raises(expected):
+        signing_module._build_signer_entry(material)  # noqa: SLF001
 
 
 def test_sign_pdf_expired_cert_raises(tmp_path: Path) -> None:
@@ -219,3 +259,132 @@ def test_signer_cache_reloads_rotated_pfx_when_mtime_is_preserved(tmp_path: Path
 
     assert first.certificate_fingerprint != second.certificate_fingerprint
     assert second.pdf_bytes.startswith(b"%PDF-")
+
+
+def test_signer_rejects_bundle_without_private_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    import chronikwerk.adapters.signing.sign_pdf as signing_module
+
+    monkeypatch.setattr(
+        pkcs12,
+        "load_key_and_certificates",
+        lambda _data, _password: (None, object(), ()),
+    )
+
+    with pytest.raises(PermanentError, match="private key and certificate"):
+        signing_module._validate_cert_not_expired(b"not-a-pfx", None)  # noqa: SLF001
+
+
+def test_signer_cache_returns_current_valid_entry_without_rebuilding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import chronikwerk.adapters.signing.sign_pdf as signing_module
+
+    now = datetime.now(UTC)
+    material = signing_module._PfxMaterial(tmp_path / "cached.pfx", b"pfx", None)  # noqa: SLF001
+    cached = signing_module._CachedSigner(  # noqa: SLF001
+        signer=object(),
+        pfx_bytes=b"pfx",
+        password=None,
+        certificate_fingerprint="cached",
+        certificate_not_before=now - timedelta(minutes=1),
+        certificate_not_after=now + timedelta(minutes=1),
+        last_cert_check=signing_module.time.monotonic(),
+    )
+    with signing_module._signer_cache_lock:  # noqa: SLF001
+        signing_module._signer_cache[str(material.path)] = cached  # noqa: SLF001
+    monkeypatch.setattr(
+        signing_module,
+        "_build_signer_entry",
+        lambda _material: pytest.fail("fresh cached signer must be reused"),
+    )
+
+    assert signing_module._get_cached_signer(material) is cached  # noqa: SLF001
+
+
+def test_signer_recheck_uses_no_entry_when_cache_changes_during_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import chronikwerk.adapters.signing.sign_pdf as signing_module
+
+    now = datetime.now(UTC)
+    material = signing_module._PfxMaterial(tmp_path / "raced.pfx", b"pfx", None)  # noqa: SLF001
+    cached = signing_module._CachedSigner(  # noqa: SLF001
+        signer=object(),
+        pfx_bytes=b"pfx",
+        password=None,
+        certificate_fingerprint="cached",
+        certificate_not_before=now - timedelta(minutes=1),
+        certificate_not_after=now + timedelta(minutes=1),
+        last_cert_check=0,
+    )
+    with signing_module._signer_cache_lock:  # noqa: SLF001
+        signing_module._signer_cache[str(material.path)] = cached  # noqa: SLF001
+
+    def recheck_and_rotate(_bytes: bytes, _password: bytes | None) -> tuple[datetime, datetime]:
+        with signing_module._signer_cache_lock:  # noqa: SLF001
+            signing_module._signer_cache.pop(str(material.path), None)  # noqa: SLF001
+        return now - timedelta(minutes=1), now + timedelta(minutes=1)
+
+    monkeypatch.setattr(signing_module, "_validate_cert_not_expired", recheck_and_rotate)
+
+    assert (
+        signing_module._signer_after_cert_recheck(  # noqa: SLF001
+            str(material.path), material, (material.pfx_bytes, material.password)
+        )
+        is None
+    )
+
+
+def test_signer_cache_preserves_existing_equivalent_entry(tmp_path: Path) -> None:
+    import chronikwerk.adapters.signing.sign_pdf as signing_module
+
+    now = datetime.now(UTC)
+    path = str(tmp_path / "concurrent.pfx")
+    existing = signing_module._CachedSigner(  # noqa: SLF001
+        signer=object(),
+        pfx_bytes=b"same",
+        password=b"secret",
+        certificate_fingerprint="existing",
+        certificate_not_before=now - timedelta(minutes=1),
+        certificate_not_after=now + timedelta(minutes=1),
+        last_cert_check=0,
+    )
+    replacement = signing_module._CachedSigner(  # noqa: SLF001
+        signer=object(),
+        pfx_bytes=b"same",
+        password=b"secret",
+        certificate_fingerprint="replacement",
+        certificate_not_before=now - timedelta(minutes=1),
+        certificate_not_after=now + timedelta(minutes=1),
+        last_cert_check=0,
+    )
+    with signing_module._signer_cache_lock:  # noqa: SLF001
+        signing_module._signer_cache[path] = existing  # noqa: SLF001
+
+    assert signing_module._cache_new_signer(path, replacement) is existing  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [(OSError("tsa offline"), TransientError), (ValueError("bad PDF"), PermanentError)],
+)
+def test_signature_write_classifies_network_and_document_failures(
+    failure: Exception, expected: type[Exception]
+) -> None:
+    import chronikwerk.adapters.signing.sign_pdf as signing_module
+
+    class FailingSigner:
+        def sign_pdf(self, _writer: object, *, output: io.BytesIO) -> None:
+            del output
+            raise failure
+
+    with pytest.raises(expected):
+        signing_module._apply_pdf_signature(  # noqa: SLF001
+            b"%PDF",
+            pdf_signer=FailingSigner(),
+            writer_type=lambda _source: object(),
+        )

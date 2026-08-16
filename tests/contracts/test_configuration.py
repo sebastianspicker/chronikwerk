@@ -8,6 +8,7 @@ import pytest
 
 from chronikwerk.config.load import load_settings
 from chronikwerk.config.validate import ConfigValidationError
+from tests.support.settings_factory import write_test_config
 
 
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -24,20 +25,7 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_configuration_valid_yaml_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
     config = tmp_path / "config.yaml"
-    config.write_text(
-        "\n".join(
-            [
-                "zammad:",
-                "  base_url: https://zammad.example.local",
-                "  api_token: test-token",
-                "  webhook_hmac_secret: test-webhook-hmac-secret-0123456789abcdef",
-                "storage:",
-                f"  root: {tmp_path}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    write_test_config(config, tmp_path)
 
     settings = load_settings(config_path=config)
 

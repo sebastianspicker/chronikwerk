@@ -212,11 +212,15 @@ def test_connection_rejects_empty_or_whitespace_tokens_without_echoing_them(toke
         assert token not in str(exc.value)
 
 
-def test_connection_canonicalizes_hostname_and_ipv6_variants() -> None:
+def test_connection_canonicalizes_idna_hostname_ip_and_ipv6_variants() -> None:
     hostname = ZammadConnection(origin="HTTPS://Zammad.Example./", api_token=SecretStr("token"))
+    idna = ZammadConnection(origin="https://B\u00dcCHER.example/", api_token=SecretStr("token"))
+    ipv4 = ZammadConnection(origin="https://192.0.2.8/", api_token=SecretStr("token"))
     ipv6 = ZammadConnection(origin="https://[2001:0db8::1]:8443/", api_token=SecretStr("token"))
 
     assert hostname.origin == "https://zammad.example"
+    assert idna.origin == "https://xn--bcher-kva.example"
+    assert ipv4.origin == "https://192.0.2.8"
     assert ipv6.origin == "https://[2001:db8::1]:8443"
 
 

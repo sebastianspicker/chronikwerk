@@ -41,6 +41,20 @@ class StorageResult:
 
 
 @dataclass(frozen=True)
+class StoreTicketFilesRequest:
+    """Collect all inputs required to persist one archived ticket."""
+
+    pdf_bytes: bytes
+    snapshot: Snapshot
+    target_path: Path
+    sidecar_path: Path
+    ticket_id: int
+    now: datetime
+    settings: Settings
+    signing_cert_fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
 class AuditWriteContext:
     """Collect non-secret values needed for the archive audit sidecar."""
 
@@ -60,6 +74,26 @@ class RollbackFailure:
     operation: str
     path: Path
     error: Exception
+
+
+@dataclass(slots=True)
+class _StorageTransaction:
+    """Track canonical files, backups, and commit state for one archive write."""
+
+    target_path: Path
+    sidecar_path: Path
+    transaction_id: str
+    storage_root: Path
+    fsync: bool
+    pdf_backup: Path | None = None
+    sidecar_backup: Path | None = None
+    pdf_committed: bool = False
+    sidecar_committed: bool = False
+
+    @property
+    def backup_paths(self) -> tuple[Path | None, Path | None]:
+        """Return backups in cleanup order: sidecar first, then PDF."""
+        return self.sidecar_backup, self.pdf_backup
 
 
 class StorageTransactionError(Exception):
@@ -215,60 +249,59 @@ def _append_rollback_failure(
 
 
 def _rollback_committed_files(
-    *,
-    target_path: Path,
-    sidecar_path: Path,
-    pdf_backup: Path | None,
-    sidecar_backup: Path | None,
-    pdf_committed: bool,
-    sidecar_committed: bool,
-    storage_root: Path,
-    fsync: bool,
+    transaction: _StorageTransaction,
 ) -> list[RollbackFailure]:
     failures: list[RollbackFailure] = []
-    if sidecar_committed:
+    if transaction.sidecar_committed:
         _append_rollback_failure(
             failures,
-            _remove_for_rollback(sidecar_path, storage_root=storage_root, fsync=fsync),
+            _remove_for_rollback(
+                transaction.sidecar_path,
+                storage_root=transaction.storage_root,
+                fsync=transaction.fsync,
+            ),
         )
-    if pdf_committed:
+    if transaction.pdf_committed:
         _append_rollback_failure(
             failures,
-            _remove_for_rollback(target_path, storage_root=storage_root, fsync=fsync),
+            _remove_for_rollback(
+                transaction.target_path,
+                storage_root=transaction.storage_root,
+                fsync=transaction.fsync,
+            ),
         )
     _append_rollback_failure(
         failures,
         _restore_backup(
-            sidecar_backup,
-            sidecar_path,
-            storage_root=storage_root,
-            fsync=fsync,
+            transaction.sidecar_backup,
+            transaction.sidecar_path,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
         ),
     )
     _append_rollback_failure(
         failures,
         _restore_backup(
-            pdf_backup,
-            target_path,
-            storage_root=storage_root,
-            fsync=fsync,
+            transaction.pdf_backup,
+            transaction.target_path,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
         ),
     )
     return failures
 
 
 def _inspect_recovery_paths(
-    backup_paths: tuple[Path | None, ...],
+    transaction: _StorageTransaction,
     *,
-    storage_root: Path,
     failures: list[RollbackFailure],
 ) -> tuple[Path, ...]:
     recovery_paths: list[Path] = []
-    for backup_path in backup_paths:
+    for backup_path in transaction.backup_paths:
         if backup_path is None:
             continue
         try:
-            if path_entry_exists(backup_path, storage_root=storage_root):
+            if path_entry_exists(backup_path, storage_root=transaction.storage_root):
                 recovery_paths.append(backup_path)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             _log_cleanup_failure("recovery_inspect", backup_path, exc)
@@ -278,76 +311,55 @@ def _inspect_recovery_paths(
 
 def _commit_files_to_storage(
     tmp_dir: Path,
-    target_path: Path,
-    sidecar_path: Path,
-    *,
-    transaction_id: str,
-    storage_root: Path,
-    fsync: bool,
+    transaction: _StorageTransaction,
 ) -> None:
     """Atomically rename files from *tmp_dir* into their final locations.
 
     Order matters: the PDF is committed first, then the sidecar last.
     The sidecar arriving last signals a complete, successful archival.
     """
-    backups: tuple[Path | None, Path | None] = (None, None)
-    committed: tuple[bool, bool] = (False, False)
     try:
-        pdf_backup = _backup_if_exists(
-            target_path, transaction_id=transaction_id, storage_root=storage_root, fsync=fsync
+        transaction.pdf_backup = _backup_if_exists(
+            transaction.target_path,
+            transaction_id=transaction.transaction_id,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
         )
-        backups = (pdf_backup, None)
-        sidecar_backup = _backup_if_exists(
-            sidecar_path, transaction_id=transaction_id, storage_root=storage_root, fsync=fsync
+        transaction.sidecar_backup = _backup_if_exists(
+            transaction.sidecar_path,
+            transaction_id=transaction.transaction_id,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
         )
-        backups = (pdf_backup, sidecar_backup)
         move_file_within_root(
-            tmp_dir / target_path.name, target_path, storage_root=storage_root, fsync=fsync
+            tmp_dir / transaction.target_path.name,
+            transaction.target_path,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
         )
-        committed = (True, False)
+        transaction.pdf_committed = True
         move_file_within_root(
-            tmp_dir / sidecar_path.name, sidecar_path, storage_root=storage_root, fsync=fsync
+            tmp_dir / transaction.sidecar_path.name,
+            transaction.sidecar_path,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
         )
-        committed = (True, True)
+        transaction.sidecar_committed = True
     except Exception as primary_error:
-        _raise_rollback_error(
-            primary_error,
-            target_path=target_path,
-            sidecar_path=sidecar_path,
-            backups=backups,
-            committed=committed,
-            storage_root=storage_root,
-            fsync=fsync,
-        )
+        _raise_rollback_error(primary_error, transaction)
         raise
-    _cleanup_backups(backups, storage_root=storage_root, fsync=fsync)
+    _cleanup_backups(transaction)
 
 
 def _raise_rollback_error(
     primary_error: Exception,
-    *,
-    target_path: Path,
-    sidecar_path: Path,
-    backups: tuple[Path | None, Path | None],
-    committed: tuple[bool, bool],
-    storage_root: Path,
-    fsync: bool,
+    transaction: _StorageTransaction,
 ) -> None:
-    pdf_backup, sidecar_backup = backups
-    pdf_committed, sidecar_committed = committed
-    rollback_failures = _rollback_committed_files(
-        target_path=target_path,
-        sidecar_path=sidecar_path,
-        pdf_backup=pdf_backup,
-        sidecar_backup=sidecar_backup,
-        pdf_committed=pdf_committed,
-        sidecar_committed=sidecar_committed,
-        storage_root=storage_root,
-        fsync=fsync,
-    )
+    rollback_failures = _rollback_committed_files(transaction)
     if rollback_failures:
         recovery_paths = _inspect_recovery_paths(
-            (sidecar_backup, pdf_backup), storage_root=storage_root, failures=rollback_failures
+            transaction,
+            failures=rollback_failures,
         )
         raise StorageTransactionError(
             primary_error, tuple(rollback_failures), recovery_paths
@@ -355,11 +367,14 @@ def _raise_rollback_error(
 
 
 def _cleanup_backups(
-    backups: tuple[Path | None, Path | None], *, storage_root: Path, fsync: bool
+    transaction: _StorageTransaction,
 ) -> None:
-    pdf_backup, sidecar_backup = backups
-    _cleanup_backup(sidecar_backup, storage_root=storage_root, fsync=fsync)
-    _cleanup_backup(pdf_backup, storage_root=storage_root, fsync=fsync)
+    for backup_path in transaction.backup_paths:
+        _cleanup_backup(
+            backup_path,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
+        )
 
 
 def store_ticket_files(
@@ -372,46 +387,67 @@ def store_ticket_files(
     settings: Settings,
     signing_cert_fingerprint: str | None = None,
 ) -> StorageResult:
-    """Write a PDF and audit sidecar to their final paths.
+    """Write a ticket archive through the historical public API."""
+    return store_ticket_files_request(
+        StoreTicketFilesRequest(
+            pdf_bytes=pdf_bytes,
+            snapshot=snapshot,
+            target_path=target_path,
+            sidecar_path=sidecar_path,
+            ticket_id=ticket_id,
+            now=now,
+            settings=settings,
+            signing_cert_fingerprint=signing_cert_fingerprint,
+        )
+    )
+
+
+def store_ticket_files_request(request: StoreTicketFilesRequest) -> StorageResult:
+    """Write a PDF and audit sidecar from the application storage request.
 
     Uses a temp directory under the target parent; all files are renamed into place.
     The sidecar is moved last so its presence reliably indicates a complete archival.
     """
     transaction_id = uuid.uuid4().hex
-    temp_archive_root = target_path.parent / f".tmp-archiving-{ticket_id}-{transaction_id}"
-    sha256_hex = sha256(pdf_bytes).hexdigest()
+    temp_archive_root = request.target_path.parent / (
+        f".tmp-archiving-{request.ticket_id}-{transaction_id}"
+    )
+    sha256_hex = sha256(request.pdf_bytes).hexdigest()
+    transaction = _StorageTransaction(
+        target_path=request.target_path,
+        sidecar_path=request.sidecar_path,
+        transaction_id=transaction_id,
+        storage_root=request.settings.storage.root,
+        fsync=request.settings.storage.fsync,
+    )
 
     try:
         _write_staged_files(
             temp_archive_root,
-            pdf_bytes,
-            sidecar_path.name,
+            request.pdf_bytes,
+            request.sidecar_path.name,
             context=AuditWriteContext(
-                ticket_id=ticket_id,
-                snapshot=snapshot,
-                now=now,
-                target_path=target_path,
+                ticket_id=request.ticket_id,
+                snapshot=request.snapshot,
+                now=request.now,
+                target_path=request.target_path,
                 sha256_hex=sha256_hex,
-                settings=settings,
-                signing_cert_fingerprint=signing_cert_fingerprint,
+                settings=request.settings,
+                signing_cert_fingerprint=request.signing_cert_fingerprint,
             ),
         )
         _commit_files_to_storage(
             temp_archive_root,
-            target_path,
-            sidecar_path,
-            transaction_id=transaction_id,
-            storage_root=settings.storage.root,
-            fsync=settings.storage.fsync,
+            transaction,
         )
     finally:
-        _cleanup_temp_archive(temp_archive_root, settings)
+        _cleanup_temp_archive(temp_archive_root, request.settings)
 
     return StorageResult(
-        target_path=target_path,
-        sidecar_path=sidecar_path,
+        target_path=request.target_path,
+        sidecar_path=request.sidecar_path,
         sha256_hex=sha256_hex,
-        size_bytes=len(pdf_bytes),
+        size_bytes=len(request.pdf_bytes),
     )
 
 

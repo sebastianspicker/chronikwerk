@@ -25,22 +25,21 @@ def _settings(tmp_path: Path, **overrides) -> Settings:
     return Settings.from_mapping(data)
 
 
-def test_metrics_without_token_is_rejected(tmp_path: Path) -> None:
-    settings = _settings(tmp_path, observability={"metrics_enabled": True})
-
+def _assert_validation_error_contains(settings: Settings, expected: str) -> None:
+    """Validate settings and assert the reported path is present."""
     with pytest.raises(ConfigValidationError) as exc:
         validate_settings(settings)
+    assert expected in str(exc.value)
 
-    assert "observability.metrics_bearer_token" in str(exc.value)
+
+def test_metrics_without_token_is_rejected(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, observability={"metrics_enabled": True})
+    _assert_validation_error_contains(settings, "observability.metrics_bearer_token")
 
 
 def test_history_without_token_is_rejected(tmp_path: Path) -> None:
     settings = _settings(tmp_path, observability={"history_enabled": True})
-
-    with pytest.raises(ConfigValidationError) as exc:
-        validate_settings(settings)
-
-    assert "observability.history_bearer_token" in str(exc.value)
+    _assert_validation_error_contains(settings, "observability.history_bearer_token")
 
 
 @pytest.mark.parametrize(
@@ -99,10 +98,7 @@ def test_delivery_id_requires_ttl(tmp_path: Path) -> None:
         hardening={"webhook": {"require_delivery_id": True}},
     )
 
-    with pytest.raises(ConfigValidationError) as exc:
-        validate_settings(settings)
-
-    assert "workflow.delivery_id_ttl_seconds" in str(exc.value)
+    _assert_validation_error_contains(settings, "workflow.delivery_id_ttl_seconds")
 
 
 def test_plain_http_tsa_url_is_rejected(tmp_path: Path) -> None:
@@ -118,10 +114,7 @@ def test_plain_http_tsa_url_is_rejected(tmp_path: Path) -> None:
         },
     )
 
-    with pytest.raises(ConfigValidationError) as exc:
-        validate_settings(settings)
-
-    assert "signing.timestamp.rfc3161.tsa_url" in str(exc.value)
+    _assert_validation_error_contains(settings, "signing.timestamp.rfc3161.tsa_url")
 
 
 def test_localhost_tsa_url_is_rejected(tmp_path: Path) -> None:
@@ -137,10 +130,7 @@ def test_localhost_tsa_url_is_rejected(tmp_path: Path) -> None:
         },
     )
 
-    with pytest.raises(ConfigValidationError) as exc:
-        validate_settings(settings)
-
-    assert "signing.timestamp.rfc3161.tsa_url" in str(exc.value)
+    _assert_validation_error_contains(settings, "signing.timestamp.rfc3161.tsa_url")
 
 
 def test_timestamp_without_signing_is_rejected(tmp_path: Path) -> None:

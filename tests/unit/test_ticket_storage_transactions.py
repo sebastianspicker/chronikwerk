@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,13 @@ import pytest
 
 from chronikwerk.app.jobs import ticket_storage
 from chronikwerk.domain.snapshot_models import AttachmentMeta
-from tests.unit.test_ticket_storage_errors import _settings, _snapshot
+from tests.support.ticket_storage_helpers import (
+    StorageRequestOverrides,
+    assert_no_partial_artifacts,
+    storage_request,
+    storage_settings,
+    storage_snapshot,
+)
 
 
 def _paths(tmp_path: Path) -> tuple[Path, Path]:
@@ -22,16 +27,14 @@ def _paths(tmp_path: Path) -> tuple[Path, Path]:
 
 def _store(tmp_path: Path, pdf_bytes: bytes) -> tuple[Path, Path]:
     """Persist one artifact pair before simulating a replacement failure."""
-    settings = _settings(tmp_path)
+    settings = storage_settings(tmp_path)
     target, sidecar = _paths(tmp_path)
-    ticket_storage.store_ticket_files(
-        pdf_bytes=pdf_bytes,
-        snapshot=_snapshot(),
-        target_path=target,
-        sidecar_path=sidecar,
-        ticket_id=100,
-        now=datetime(2025, 1, 1, tzinfo=UTC),
-        settings=settings,
+    ticket_storage.store_ticket_files_request(
+        storage_request(
+            pdf_bytes=pdf_bytes,
+            paths=(target, sidecar),
+            settings=settings,
+        )
     )
     return target, sidecar
 
@@ -45,6 +48,22 @@ def _fail_new_sidecar_move(sidecar: Path, original_move: Any):
         original_move(src, dst, *_args, **kwargs)
 
     return move
+
+
+def _assert_transaction_error(
+    error: ticket_storage.StorageTransactionError,
+    *,
+    rollback_operation: str,
+    rollback_message: str,
+    recovery_paths: tuple[Path, ...],
+) -> None:
+    """Assert the common primary and rollback error contract."""
+    assert isinstance(error.primary_error, OSError)
+    assert str(error.primary_error) == "sidecar move failed"
+    assert [(failure.operation, str(failure.error)) for failure in error.rollback_failures] == [
+        (rollback_operation, rollback_message)
+    ]
+    assert error.recovery_paths == recovery_paths
 
 
 def test_replacement_sidecar_failure_restores_complete_prior_pair(
@@ -82,9 +101,7 @@ def test_first_write_sidecar_failure_leaves_no_partial_canonical_pair(
     with pytest.raises(OSError, match="sidecar move failed"):
         _store(tmp_path, b"new-pdf")
 
-    assert not target.exists()
-    assert not sidecar.exists()
-    assert not list(target.parent.glob(".tmp-archiving-*"))
+    assert_no_partial_artifacts(target, sidecar)
 
 
 def test_backup_failure_preserves_prior_pair(
@@ -128,13 +145,13 @@ def test_rollback_restore_failure_exposes_primary_error_and_backup_path(
         _store(tmp_path, b"new-pdf")
 
     error = raised.value
-    assert isinstance(error.primary_error, OSError)
-    assert str(error.primary_error) == "sidecar move failed"
-    assert [(failure.operation, str(failure.error)) for failure in error.rollback_failures] == [
-        ("rollback_restore", "sidecar restore failed")
-    ]
     backups = list(tmp_path.rglob(f"{sidecar.name}.bak.*"))
-    assert error.recovery_paths == tuple(backups)
+    _assert_transaction_error(
+        error,
+        rollback_operation="rollback_restore",
+        rollback_message="sidecar restore failed",
+        recovery_paths=tuple(backups),
+    )
     assert target.read_bytes() == b"old-pdf"
     assert not sidecar.exists()
 
@@ -163,19 +180,18 @@ def test_rollback_remove_failure_is_reported_with_primary_error(
     with pytest.raises(ticket_storage.StorageTransactionError) as raised:
         _store(tmp_path, b"new-pdf")
 
-    error = raised.value
-    assert isinstance(error.primary_error, OSError)
-    assert str(error.primary_error) == "sidecar move failed"
-    assert [(failure.operation, str(failure.error)) for failure in error.rollback_failures] == [
-        ("rollback_remove", "pdf rollback remove failed")
-    ]
-    assert error.recovery_paths == ()
+    _assert_transaction_error(
+        raised.value,
+        rollback_operation="rollback_remove",
+        rollback_message="pdf rollback remove failed",
+        recovery_paths=(),
+    )
 
 
 def test_attachment_metadata_is_not_archived_as_binary_or_sidecar_entries(
     tmp_path: Path,
 ) -> None:
-    snapshot = _snapshot()
+    snapshot = storage_snapshot()
     snapshot = snapshot.model_copy(
         update={
             "articles": [
@@ -194,17 +210,16 @@ def test_attachment_metadata_is_not_archived_as_binary_or_sidecar_entries(
             ]
         }
     )
-    settings = _settings(tmp_path)
+    settings = storage_settings(tmp_path)
     target, sidecar = _paths(tmp_path)
 
-    ticket_storage.store_ticket_files(
-        pdf_bytes=b"%PDF",
-        snapshot=snapshot,
-        target_path=target,
-        sidecar_path=sidecar,
-        ticket_id=100,
-        now=datetime(2025, 1, 1, tzinfo=UTC),
-        settings=settings,
+    ticket_storage.store_ticket_files_request(
+        storage_request(
+            pdf_bytes=b"%PDF",
+            paths=(target, sidecar),
+            settings=settings,
+            overrides=StorageRequestOverrides(snapshot=snapshot),
+        )
     )
 
     assert not (target.parent / "attachments").exists()

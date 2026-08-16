@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -12,6 +9,7 @@ from fastapi.testclient import TestClient
 from chronikwerk.app.constants import FORCE_REPROCESS_KEY
 from chronikwerk.app.server import create_app
 from chronikwerk.config.settings import Settings
+from tests.support.http_security_test_helpers import post_signed_json
 from tests.support.process_ticket_helpers import (
     capture_process_ticket_calls,
     install_noop_ingest_processing,
@@ -26,18 +24,6 @@ def _test_settings(storage_root: str, *, overrides: dict[str, Any] | None = None
     return make_settings(storage_root, secret=_TEST_WEBHOOK_SECRET, overrides=overrides)
 
 
-def _signed_headers(body: bytes, headers: dict[str, str] | None = None) -> dict[str, str]:
-    """Build authenticated webhook headers for a test payload."""
-    digest = hmac.new(_TEST_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    signed = {
-        "Content-Type": "application/json",
-        "X-Hub-Signature": f"sha256={digest}",
-    }
-    if headers:
-        signed.update(headers)
-    return signed
-
-
 def _post_signed(
     client: TestClient,
     path: str,
@@ -46,8 +32,13 @@ def _post_signed(
     headers: dict[str, str] | None = None,
 ):
     """Submit a correctly signed test request to the application."""
-    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return client.post(path, content=body, headers=_signed_headers(body, headers))
+    return post_signed_json(
+        client,
+        path,
+        payload,
+        secret=_TEST_WEBHOOK_SECRET,
+        extra_headers=headers,
+    )
 
 
 def _test_settings_require_delivery_id(storage_root: str) -> Settings:
@@ -72,22 +63,43 @@ def _post_ingest_with_request_id(tmp_path, monkeypatch, request_id: str):
     )
 
 
-def test_ingest_accepts_and_extracts_ticket_id(tmp_path, monkeypatch) -> None:
+def _ingest_client(tmp_path, monkeypatch):
+    """Build an ingest client and capture its background processing calls."""
     app = create_app(_test_settings(str(tmp_path)))
     calls = capture_process_ticket_calls(monkeypatch)
-    client = TestClient(app)
+    return TestClient(app), calls
+
+
+def _assert_accepted_ticket(response, ticket_id: int) -> None:
+    """Assert the common accepted-ticket response contract."""
+    assert response.status_code == 202
+    assert response.json() == {"status": "accepted", "ticket_id": ticket_id}
+
+
+def _assert_retry_accepted(
+    response, calls, ticket_id: int, *, require_empty_delivery_id: bool
+) -> None:
+    """Assert the common retry admission contract while preserving delivery semantics."""
+    _assert_accepted_ticket(response, ticket_id)
+    assert len(calls) == 1
+    if require_empty_delivery_id:
+        assert calls[0][0] is None
+    assert calls[0][1]["ticket_id"] == ticket_id
+    assert calls[0][1][FORCE_REPROCESS_KEY] is True
+
+
+def test_ingest_accepts_and_extracts_ticket_id(tmp_path, monkeypatch) -> None:
+    client, calls = _ingest_client(tmp_path, monkeypatch)
 
     response = _post_signed(client, "/ingest", {"ticket": {"id": 123}})
-    assert response.status_code == 202
-    assert response.json() == {"status": "accepted", "ticket_id": 123}
+    _assert_accepted_ticket(response, 123)
     assert response.headers.get("X-Request-Id")
     assert len(calls) == 1
 
 
 def test_ingest_rejects_payload_without_ticket_id(tmp_path) -> None:
     """Schema validation: payload must contain ticket.id or ticket_id (422)."""
-    app = create_app(_test_settings(str(tmp_path)))
-    client = TestClient(app)
+    client = TestClient(create_app(_test_settings(str(tmp_path))))
 
     response = _post_signed(client, "/ingest", {})
     assert response.status_code == 422
@@ -107,9 +119,7 @@ def test_request_id_header_invalid_value_is_replaced(tmp_path, monkeypatch) -> N
 
 
 def test_ingest_passes_delivery_id_header_to_process_ticket(tmp_path, monkeypatch) -> None:
-    app = create_app(_test_settings(str(tmp_path)))
-    calls = capture_process_ticket_calls(monkeypatch)
-    client = TestClient(app)
+    client, calls = _ingest_client(tmp_path, monkeypatch)
 
     response = _post_signed(
         client,
@@ -129,9 +139,7 @@ def test_ingest_passes_delivery_id_header_to_process_ticket(tmp_path, monkeypatc
 
 
 def test_ingest_ignores_force_reprocess_field_from_public_payload(tmp_path, monkeypatch) -> None:
-    app = create_app(_test_settings(str(tmp_path)))
-    calls = capture_process_ticket_calls(monkeypatch)
-    client = TestClient(app)
+    client, calls = _ingest_client(tmp_path, monkeypatch)
 
     response = _post_signed(
         client,
@@ -169,9 +177,7 @@ def test_ingest_without_settings_fails_closed(tmp_path) -> None:
 
 def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
     """Schema validation: ticket.id must be a positive int (422); no background run."""
-    app = create_app(_test_settings(str(tmp_path)))
-    calls = capture_process_ticket_calls(monkeypatch)
-    client = TestClient(app)
+    client, calls = _ingest_client(tmp_path, monkeypatch)
 
     response = _post_signed(client, "/ingest", {"ticket": {"id": True}})
     assert response.status_code == 422
@@ -181,9 +187,7 @@ def test_ingest_rejects_invalid_ticket_id_type(tmp_path, monkeypatch) -> None:
 
 
 def test_ingest_batch_uses_per_item_delivery_ids_when_header_present(tmp_path, monkeypatch) -> None:
-    app = create_app(_test_settings(str(tmp_path)))
-    calls = capture_process_ticket_calls(monkeypatch)
-    client = TestClient(app)
+    client, calls = _ingest_client(tmp_path, monkeypatch)
 
     response = _post_signed(
         client,
@@ -206,9 +210,7 @@ def test_ingest_batch_uses_per_item_delivery_ids_when_header_present(tmp_path, m
 def test_batch_ingest_ignores_force_reprocess_flag_from_public_payload(
     tmp_path, monkeypatch
 ) -> None:
-    app = create_app(_test_settings(str(tmp_path)))
-    calls = capture_process_ticket_calls(monkeypatch)
-    client = TestClient(app)
+    client, calls = _ingest_client(tmp_path, monkeypatch)
 
     response = _post_signed(
         client,
@@ -258,12 +260,7 @@ def test_retry_endpoint_accepts_ticket_id(tmp_path, monkeypatch) -> None:
         "/retry/987",
         headers={"Authorization": "Bearer test-retry-token"},
     )
-    assert response.status_code == 202
-    assert response.json() == {"status": "accepted", "ticket_id": 987}
-    assert len(calls) == 1
-    assert calls[0][0] is None
-    assert calls[0][1]["ticket_id"] == 987
-    assert calls[0][1][FORCE_REPROCESS_KEY] is True
+    _assert_retry_accepted(response, calls, 987, require_empty_delivery_id=True)
 
 
 def test_retry_requires_auth(tmp_path) -> None:
@@ -286,10 +283,7 @@ def test_retry_with_valid_token(tmp_path, monkeypatch) -> None:
         "/retry/123",
         headers={"Authorization": "Bearer test-retry-token"},
     )
-    assert response.status_code == 202
-    assert response.json() == {"status": "accepted", "ticket_id": 123}
-    assert len(calls) == 1
-    assert calls[0][1][FORCE_REPROCESS_KEY] is True
+    _assert_retry_accepted(response, calls, 123, require_empty_delivery_id=False)
 
 
 def test_retry_with_invalid_token(tmp_path) -> None:
@@ -337,3 +331,39 @@ def test_batch_ingest_at_max_size(tmp_path, monkeypatch) -> None:
     assert response.status_code == 202
     assert response.json() == {"status": "accepted", "count": 100}
     assert len(calls) == 100
+
+
+def test_ingest_dry_runs_do_not_schedule_jobs(tmp_path, monkeypatch) -> None:
+    client, calls = _ingest_client(tmp_path, monkeypatch)
+
+    single = _post_signed(client, "/ingest?dry_run=true", {"ticket_id": 123})
+    batch = _post_signed(
+        client,
+        "/ingest/batch?dry_run=true",
+        [{"ticket_id": 123}, {"ticket_id": 456}],
+    )
+
+    assert single.json() == {"status": "dry_run_accepted", "ticket_id": 123}
+    assert batch.json() == {"status": "dry_run_accepted", "count": 2}
+    assert calls == []
+
+
+def test_ingest_and_retry_report_background_capacity_with_retry_hint(tmp_path, monkeypatch) -> None:
+    import chronikwerk.app.routes.ingest as ingest_route
+
+    app = create_app(
+        _test_settings(str(tmp_path), overrides={"retry_bearer_token": "test-retry-token"})
+    )
+    monkeypatch.setattr(ingest_route, "_schedule_background_task", lambda **_kwargs: False)
+    client = TestClient(app)
+
+    ingest_response = _post_signed(client, "/ingest", {"ticket_id": 123})
+    retry_response = client.post(
+        "/retry/123",
+        headers={"Authorization": "Bearer test-retry-token"},
+    )
+
+    assert ingest_response.status_code == 503
+    assert ingest_response.json()["code"] == "job_capacity_exhausted"
+    assert retry_response.status_code == 503
+    assert retry_response.json()["code"] == "job_capacity_exhausted"

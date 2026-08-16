@@ -6,13 +6,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
-from chronikwerk.app.admin._config_routes import (
-    _invalid_config_error,
-    _normalized_overlay,
-    _security_acknowledgement_error,
-)
+from chronikwerk.app.admin._config_routes import _apply_config_change, _ConfigChangeContext
 from chronikwerk.app.admin._route_support import (
-    _api_error,
     _api_session,
     _html_session,
     _render,
@@ -21,12 +16,7 @@ from chronikwerk.app.admin._route_support import (
     _urlencoded,
 )
 from chronikwerk.app.admin.auth import csrf_token_matches, session_from_request
-from chronikwerk.config.managed import (
-    ManagedConfigError,
-    RevisionConflict,
-    flatten_mapping,
-    validate_candidate,
-)
+from chronikwerk.config.managed import ManagedConfigError, RevisionConflict, validate_candidate
 
 
 class RestoreRequest(BaseModel):
@@ -104,37 +94,23 @@ async def restore_api(
     if error is not None or session is None:
         return error or Response(status_code=401)
     expected = request.headers.get("If-Match", "")
-    try:
-        overlay = request.app.state.managed_config_store.revision_overlay(revision)
-        normalized = _normalized_overlay(_settings(request), overlay)
-        acknowledgement_error = _security_acknowledgement_error(
-            request,
-            session,
-            flatten_mapping(normalized),
+    metadata, error = _apply_config_change(
+        _ConfigChangeContext(
+            request=request,
+            session=session,
+            overlay=lambda: request.app.state.managed_config_store.revision_overlay(revision),
             acknowledged=payload.security_acknowledged,
-        )
-        if acknowledgement_error is not None:
-            return acknowledgement_error
-        metadata = request.app.state.managed_config_store.restore(
-            revision,
-            expected_revision=expected,
-            request_id=_request_id(request),
-        )
-    except RevisionConflict:
-        return _api_error(
-            request,
-            409,
-            "config_revision_conflict",
-            "admin.restart_required",
-            locale=session.locale,
-        )
-    except (ManagedConfigError, ValueError, OSError) as exc:
-        return _invalid_config_error(
-            request,
-            session,
-            exc,
-            code="config_restore_failed",
-        )
+            change=lambda _normalized: request.app.state.managed_config_store.restore(
+                revision,
+                expected_revision=expected,
+                request_id=_request_id(request),
+            ),
+            invalid_code="config_restore_failed",
+        ),
+    )
+    if error is not None:
+        return error
+    assert metadata is not None
     return JSONResponse({**metadata, "restart_required": True})
 
 

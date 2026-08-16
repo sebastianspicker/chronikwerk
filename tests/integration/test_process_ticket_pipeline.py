@@ -27,20 +27,12 @@ from chronikwerk.domain.state_machine import (
     TRIGGER_TAG,
 )
 from tests.support.settings_factory import make_settings
+from tests.support.zammad_client_helpers import called_tag_items
 
 
 def _test_settings(storage_root: str) -> Settings:
     """Build settings isolated to this test scenario."""
     return make_settings(storage_root)
-
-
-def _called_tag_items(route: respx.Route) -> list[str]:
-    """Return a collector for Zammad tag mutation calls."""
-    items: list[str] = []
-    for call in route.calls:
-        body = json.loads(call.request.content.decode("utf-8"))
-        items.append(body.get("item"))
-    return items
 
 
 def _payload(request_id: str, *, force_reprocess: bool = False) -> dict[str, Any]:
@@ -178,6 +170,49 @@ def _expected_pdf_path(tmp_path, settings: Settings, fixed_now: datetime):  # no
     return tmp_path / "agent" / "A" / "B" / "C" / expected_filename
 
 
+def _assert_error_tags(
+    routes: _ProcessRoutes,
+    *,
+    trigger_in_added: bool,
+    trigger_in_removed: bool = False,
+    processing_in_removed: bool = True,
+) -> None:
+    """Assert the common processing/error tag transition for failed runs."""
+    added = called_tag_items(routes.add_tag)
+    removed = called_tag_items(routes.remove_tag)
+
+    assert PROCESSING_TAG in added
+    assert DONE_TAG not in added
+    assert (TRIGGER_TAG in added) is trigger_in_added
+    assert ERROR_TAG in added
+    if processing_in_removed:
+        assert PROCESSING_TAG in removed
+    if trigger_in_removed:
+        assert TRIGGER_TAG in removed
+
+
+def _assert_error_note(routes: _ProcessRoutes, *body_parts: str) -> None:
+    """Assert that the failure note exists and includes each expected fragment."""
+    assert routes.note.called
+    req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
+    assert f"PDF archiver error ({VERSION})" in req["subject"]
+    for body_part in body_parts:
+        assert body_part in req["body"]
+
+
+def _assert_success_tags(routes: _ProcessRoutes) -> None:
+    """Assert the common processing/done tag transition for successful runs."""
+    added = called_tag_items(routes.add_tag)
+    removed = called_tag_items(routes.remove_tag)
+
+    assert PROCESSING_TAG in added
+    assert DONE_TAG in added
+    assert ERROR_TAG not in added
+    assert TRIGGER_TAG in removed
+    assert ERROR_TAG in removed
+    assert PROCESSING_TAG in removed
+
+
 def test_process_ticket_pipeline_happy_path_writes_pdf_and_updates_tags(
     tmp_path, monkeypatch
 ) -> None:
@@ -207,16 +242,7 @@ def test_process_ticket_pipeline_happy_path_writes_pdf_and_updates_tags(
         assert b"archived at" not in written
 
         assert routes.articles is not None and routes.articles.called
-        added = _called_tag_items(routes.add_tag)
-        removed = _called_tag_items(routes.remove_tag)
-
-        assert PROCESSING_TAG in added
-        assert DONE_TAG in added
-        assert ERROR_TAG not in added
-
-        assert TRIGGER_TAG in removed
-        assert ERROR_TAG in removed
-        assert PROCESSING_TAG in removed
+        _assert_success_tags(routes)
 
         assert routes.note.called
         req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
@@ -248,21 +274,8 @@ def test_process_ticket_pipeline_failure_sets_error_tag_and_posts_note(
         expected_path = _expected_pdf_path(tmp_path, settings, fixed_now)
         assert not expected_path.exists()
 
-        added = _called_tag_items(routes.add_tag)
-        removed = _called_tag_items(routes.remove_tag)
-
-        assert PROCESSING_TAG in added
-        assert DONE_TAG not in added
-        assert TRIGGER_TAG not in added  # permanent: drop trigger to prevent loops
-        assert ERROR_TAG in added
-
-        assert PROCESSING_TAG in removed  # removed during apply_error/best-effort cleanup
-
-        assert routes.note.called
-        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
-        assert f"PDF archiver error ({VERSION})" in req["subject"]
-        assert "Permanent" in req["body"]
-        assert "PermissionError" in req["body"]
+        _assert_error_tags(routes, trigger_in_added=False)
+        _assert_error_note(routes, "Permanent", "PermissionError")
 
 
 def test_process_ticket_pipeline_transient_failure_keeps_trigger_and_posts_note(
@@ -282,20 +295,8 @@ def test_process_ticket_pipeline_transient_failure_keeps_trigger_and_posts_note(
 
         asyncio.run(process_ticket("delivery-err-transient-1", payload, settings))
 
-        added = _called_tag_items(routes.add_tag)
-        removed = _called_tag_items(routes.remove_tag)
-
-        assert PROCESSING_TAG in added
-        assert DONE_TAG not in added
-        assert TRIGGER_TAG in added  # transient: keep trigger for retries
-        assert ERROR_TAG in added
-
-        assert PROCESSING_TAG in removed
-
-        assert routes.note.called
-        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
-        assert f"PDF archiver error ({VERSION})" in req["subject"]
-        assert "Transient" in req["body"]
+        _assert_error_tags(routes, trigger_in_added=True)
+        _assert_error_note(routes, "Transient")
 
 
 def test_process_ticket_pipeline_force_reprocess_overrides_done_tag(tmp_path, monkeypatch) -> None:
@@ -308,8 +309,8 @@ def test_process_ticket_pipeline_force_reprocess_overrides_done_tag(tmp_path, mo
 
         asyncio.run(process_ticket("delivery-force-1", payload, settings))
 
-        added = _called_tag_items(routes.add_tag)
-        removed = _called_tag_items(routes.remove_tag)
+        added = called_tag_items(routes.add_tag)
+        removed = called_tag_items(routes.remove_tag)
 
         assert PROCESSING_TAG in added
         assert DONE_TAG in added
@@ -335,22 +336,13 @@ def test_process_ticket_pipeline_invalid_archive_path_is_permanent_and_writes_no
         assert list(tmp_path.rglob("*.pdf")) == []
         assert list(tmp_path.rglob("*.pdf.json")) == []
 
-        added = _called_tag_items(routes.add_tag)
-        removed = _called_tag_items(routes.remove_tag)
-
-        assert PROCESSING_TAG in added
-        assert DONE_TAG not in added
-        assert TRIGGER_TAG not in added
-        assert ERROR_TAG in added
-
-        assert PROCESSING_TAG in removed
-        assert TRIGGER_TAG in removed
-
-        assert routes.note.called
-        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
-        assert f"PDF archiver error ({VERSION})" in req["subject"]
-        assert "Permanent" in req["body"]
-        assert "ValueError" in req["body"]
+        _assert_error_tags(
+            routes,
+            trigger_in_added=False,
+            trigger_in_removed=True,
+            processing_in_removed=False,
+        )
+        _assert_error_note(routes, "Permanent", "ValueError")
 
 
 def test_process_ticket_pipeline_enforces_pdf_max_articles_setting(tmp_path, monkeypatch) -> None:
@@ -370,18 +362,9 @@ def test_process_ticket_pipeline_enforces_pdf_max_articles_setting(tmp_path, mon
 
         asyncio.run(process_ticket("delivery-max-articles-1", payload, settings))
 
-        removed = _called_tag_items(routes.remove_tag)
-        added = _called_tag_items(routes.add_tag)
+        _assert_error_tags(routes, trigger_in_added=False, trigger_in_removed=True)
 
-        assert TRIGGER_TAG in removed
-        assert PROCESSING_TAG in added
-        assert ERROR_TAG in added
-        assert DONE_TAG not in added
-
-        assert routes.note.called
-        req = json.loads(routes.note.calls[0].request.content.decode("utf-8"))
-        assert "Permanent" in req["body"]
-        assert "too many articles" in req["body"]
+        _assert_error_note(routes, "Permanent", "too many articles")
 
 
 def test_process_ticket_pipeline_pdf_max_articles_zero_disables_limit(
@@ -403,12 +386,26 @@ def test_process_ticket_pipeline_pdf_max_articles_zero_disables_limit(
 
         asyncio.run(process_ticket("delivery-max-articles-disabled", payload, settings))
 
-        removed = _called_tag_items(routes.remove_tag)
-        added = _called_tag_items(routes.add_tag)
-
-        assert TRIGGER_TAG in removed
-        assert PROCESSING_TAG in added
-        assert DONE_TAG in added
-        assert ERROR_TAG not in added
+        _assert_success_tags(routes)
 
         assert routes.note.called
+
+
+def test_process_ticket_pipeline_skips_ticket_without_required_trigger(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _test_settings(str(tmp_path))
+    _patch_fixed_now(monkeypatch)
+
+    with respx.mock:
+        routes = _register_process_routes(tags=["not-the-trigger"], include_articles_route=False)
+
+        result = asyncio.run(process_ticket("delivery-skip-1", _payload("req-skip-1"), settings))
+
+        assert result.status == "skipped_not_triggered"
+        assert result.ticket_id == 123
+        assert routes.ticket.called
+        assert routes.tags.called
+        assert not routes.remove_tag.called
+        assert not routes.add_tag.called
+        assert not routes.note.called

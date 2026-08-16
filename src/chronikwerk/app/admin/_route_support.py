@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import Request
@@ -16,8 +16,22 @@ from chronikwerk.app.admin.auth import (
     session_from_request,
 )
 from chronikwerk.app.admin.templates import render_admin_template
+from chronikwerk.app.routes.ingest import schedule_retry as _ingest_schedule_retry
 from chronikwerk.config.settings import Settings
 from chronikwerk.i18n import normalize_locale, translate
+
+
+class _RetryScheduler(Protocol):
+    def __call__(self, request: Request, *, ticket_id: int, settings: Settings) -> bool: ...
+
+
+_retry_scheduler: _RetryScheduler = _ingest_schedule_retry
+
+
+def _configure_retry_scheduler(scheduler: _RetryScheduler) -> None:
+    """Install the aggregate route's compatibility-aware retry adapter."""
+    global _retry_scheduler
+    _retry_scheduler = scheduler
 
 
 def _settings(request: Request) -> Settings:
@@ -91,9 +105,14 @@ def _html_session(request: Request) -> tuple[AdminSession | None, RedirectRespon
 
 
 def _safe_next(value: str | None) -> str:
-    if value and (value == "/admin" or value.startswith("/admin?") or value.startswith("/admin/")):
-        return value
-    return "/admin"
+    if not value:
+        return "/admin"
+    return value if _is_admin_destination(value) else "/admin"
+
+
+def _is_admin_destination(value: str) -> bool:
+    """Accept only local paths within the administration namespace."""
+    return value == "/admin" or value.startswith("/admin?") or value.startswith("/admin/")
 
 
 def _safe_admin_referer(request: Request, value: str | None) -> str:
@@ -170,7 +189,5 @@ def _render(
 
 
 def _schedule_retry(request: Request, *, ticket_id: int, settings: Settings) -> bool:
-    """Resolve through the aggregate module to preserve its monkeypatch seam."""
-    from chronikwerk.app.admin import routes
-
-    return routes.schedule_retry(request, ticket_id=ticket_id, settings=settings)
+    """Schedule through the retry adapter selected by the route composition root."""
+    return _retry_scheduler(request, ticket_id=ticket_id, settings=settings)

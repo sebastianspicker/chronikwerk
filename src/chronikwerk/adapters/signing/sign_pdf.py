@@ -154,7 +154,7 @@ def _build_signer_entry(
             other_certs=(),
             passphrase=pfx.password,
         )
-    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+    except ValueError as exc:
         raise PermanentError("Failed to initialise signer from PKCS#12/PFX bundle") from exc
     if signer is None:
         raise PermanentError("Failed to initialise signer from PKCS#12/PFX bundle")

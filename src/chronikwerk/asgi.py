@@ -4,4 +4,4 @@ from __future__ import annotations
 
 from chronikwerk.bootstrap import build_runtime_application
 
-settings, app = build_runtime_application()  # pragma: no cover
+settings, app = build_runtime_application()

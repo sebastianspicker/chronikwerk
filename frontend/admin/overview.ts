@@ -10,7 +10,10 @@ const overviewElements = (): OverviewElements | null => {
   const running = qs<HTMLElement>('[data-admission-running]');
   const pending = qs<HTMLElement>('[data-admission-pending]');
   const refreshed = qs<HTMLTimeElement>('[data-last-refresh]');
-  if (!status || !running || !pending || !refreshed) return null;
+  if (!status) return null;
+  if (!running) return null;
+  if (!pending) return null;
+  if (!refreshed) return null;
   return {status, running, pending, refreshed};
 };
 

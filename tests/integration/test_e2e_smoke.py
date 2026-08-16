@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
-import json
 from datetime import UTC, datetime
 
 import httpx
@@ -20,25 +17,13 @@ from chronikwerk.domain.state_machine import (
     PROCESSING_TAG,
     TRIGGER_TAG,
 )
+from tests.support.http_security_test_helpers import post_signed_json
 from tests.support.settings_factory import make_settings
+from tests.support.zammad_client_helpers import called_tag_items
+from tests.support.zammad_fixtures import html_article_json
 
 SECRET = "test-webhook-hmac-secret-0123456789abcdef"
 ZAMMAD__BASE_URL = "https://zammad.example.local"
-
-
-def _sign(body: bytes, secret: str) -> str:
-    """Create the HMAC signature expected by the test request."""
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return f"sha256={digest}"
-
-
-def _called_tag_items(route: respx.Route) -> list[str]:
-    """Return a collector for Zammad tag mutation calls."""
-    items: list[str] = []
-    for call in route.calls:
-        body = json.loads(call.request.content.decode("utf-8"))
-        items.append(body.get("item"))
-    return items
 
 
 def _create_test_app(tmp_path):
@@ -50,26 +35,19 @@ def _create_test_app(tmp_path):
     return app
 
 
-async def _post_signed(app, path: str, body: bytes, delivery_id: str) -> httpx.Response:
+async def _post_signed(app, path: str, payload, delivery_id: str) -> httpx.Response:
     """Submit a correctly signed test request to the application."""
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
+        response = await post_signed_json(
+            client,
             path,
-            content=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-Hub-Signature": _sign(body, SECRET),
-                "X-Zammad-Delivery": delivery_id,
-            },
+            payload,
+            secret=SECRET,
+            delivery_id=delivery_id,
         )
         await wait_for_tasks(timeout=5.0)
         return response
-
-
-def _body(payload) -> bytes:
-    """Serialize a payload canonically before signing the request."""
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _ticket_json(
@@ -92,20 +70,6 @@ def _ticket_json(
                 "archive_path": archive_path or ["A", "B", "C"],
             }
         },
-    }
-
-
-def _article_json() -> dict[str, object]:
-    """Return a representative Zammad article API response."""
-    return {
-        "id": 1,
-        "created_at": "2026-02-07T11:59:00Z",
-        "internal": False,
-        "subject": "Hello",
-        "body": "<p>Hello World</p>",
-        "content_type": "text/html",
-        "from": "customer@example.invalid",
-        "attachments": [],
     }
 
 
@@ -162,16 +126,14 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
     fixed_now = _set_fixed_now(monkeypatch)
 
     payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
-    body = _body(payload)
-
     with respx.mock(assert_all_called=True) as zammad:
         ticket_route = _register_ticket(zammad, 123, _ticket_json(123))
         tags_route = _register_tags(zammad, 123)
-        _register_articles(zammad, 123, [_article_json()])
+        _register_articles(zammad, 123, [html_article_json()])
         remove_tag_route, add_tag_route, article_route = _register_mutation_routes(zammad)
 
         response = asyncio.run(
-            _post_signed(app, "/ingest", body, "delivery-smoke-e2e-20260207-0001")
+            _post_signed(app, "/ingest", payload, "delivery-smoke-e2e-20260207-0001")
         )
 
         assert response.status_code == 202
@@ -186,8 +148,8 @@ def test_e2e_smoke_ingest_happy_path_writes_pdf_and_updates_zammad(tmp_path, mon
         assert tags_route.called
         assert article_route.called
 
-        added = _called_tag_items(add_tag_route)
-        removed = _called_tag_items(remove_tag_route)
+        added = called_tag_items(add_tag_route)
+        removed = called_tag_items(remove_tag_route)
 
         assert PROCESSING_TAG in added
         assert DONE_TAG in added
@@ -203,16 +165,14 @@ def test_e2e_smoke_ingest_duplicate_delivery_id_is_idempotent(tmp_path, monkeypa
     _set_fixed_now(monkeypatch)
 
     payload = {"ticket": {"id": 123}, "user": {"login": "agent-from-webhook"}}
-    body = _body(payload)
-
     with respx.mock(assert_all_called=True) as zammad:
         ticket_route = _register_ticket(zammad, 123, _ticket_json(123))
         tags_route = _register_tags(zammad, 123)
         _register_articles(zammad, 123, [])
         _, _, article_route = _register_mutation_routes(zammad)
 
-        first = asyncio.run(_post_signed(app, "/ingest", body, "delivery-smoke-dedupe-1"))
-        second = asyncio.run(_post_signed(app, "/ingest", body, "delivery-smoke-dedupe-1"))
+        first = asyncio.run(_post_signed(app, "/ingest", payload, "delivery-smoke-dedupe-1"))
+        second = asyncio.run(_post_signed(app, "/ingest", payload, "delivery-smoke-dedupe-1"))
 
         assert first.status_code == 202
         assert second.status_code == 202
@@ -231,8 +191,6 @@ def test_e2e_smoke_batch_duplicate_delivery_id_is_idempotent(tmp_path, monkeypat
         {"ticket": {"id": 101}, "user": {"login": "agent-101"}},
         {"ticket": {"id": 202}, "user": {"login": "agent-202"}},
     ]
-    body = _body(payloads)
-
     with respx.mock(assert_all_called=True) as zammad:
         ticket_101 = _register_ticket(
             zammad,
@@ -262,8 +220,8 @@ def test_e2e_smoke_batch_duplicate_delivery_id_is_idempotent(tmp_path, monkeypat
         articles_202 = _register_articles(zammad, 202, [])
         _, _, article_route = _register_mutation_routes(zammad)
 
-        first = asyncio.run(_post_signed(app, "/ingest/batch", body, "delivery-smoke-batch-1"))
-        second = asyncio.run(_post_signed(app, "/ingest/batch", body, "delivery-smoke-batch-1"))
+        first = asyncio.run(_post_signed(app, "/ingest/batch", payloads, "delivery-smoke-batch-1"))
+        second = asyncio.run(_post_signed(app, "/ingest/batch", payloads, "delivery-smoke-batch-1"))
 
         assert first.status_code == 202
         assert second.status_code == 202

@@ -6,7 +6,7 @@ import errno
 import os
 import shutil
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -159,14 +159,28 @@ def unlink_file_within_root(
     fsync: bool = True,
 ) -> None:
     """Unlink one entry beneath storage_root without following symlinks."""
+    _remove_within_root(
+        path,
+        storage_root=storage_root,
+        missing_ok=missing_ok,
+        fsync=fsync,
+        remover=lambda parent_fd, leaf: os.unlink(leaf, dir_fd=parent_fd),
+    )
+
+
+def _remove_within_root(
+    path: Path,
+    *,
+    storage_root: Path,
+    missing_ok: bool,
+    fsync: bool,
+    remover: Callable[[int, str], None],
+) -> None:
     try:
         with _open_parent_under_root(storage_root, path, create=False) as (parent_fd, leaf):
-            os.unlink(leaf, dir_fd=parent_fd)
+            remover(parent_fd, leaf)
             if fsync:
-                try:
-                    os.fsync(parent_fd)
-                except OSError:
-                    pass
+                _fsync_fd_best_effort(parent_fd)
     except FileNotFoundError:
         if not missing_ok:
             raise
@@ -183,54 +197,72 @@ def remove_tree_within_root(
     if not _RMTREE_AVOIDS_SYMLINK_ATTACKS:
         raise RuntimeError("secure archive cleanup requires symlink-safe shutil.rmtree")
 
+    _remove_within_root(
+        path,
+        storage_root=storage_root,
+        missing_ok=missing_ok,
+        fsync=fsync,
+        remover=lambda parent_fd, leaf: shutil.rmtree(leaf, dir_fd=parent_fd),
+    )
+
+
+def _fsync_fd_best_effort(fd: int) -> None:
     try:
-        with _open_parent_under_root(storage_root, path, create=False) as (parent_fd, leaf):
-            shutil.rmtree(leaf, dir_fd=parent_fd)
+        os.fsync(fd)
+    except OSError:
+        pass
+
+
+def _unlink_temp_best_effort(parent_fd: int, temp_leaf: str) -> None:
+    try:
+        os.unlink(temp_leaf, dir_fd=parent_fd)
+    except OSError:
+        pass
+
+
+def _write_temp_and_replace(
+    parent_fd: int,
+    target_leaf: str,
+    data: bytes,
+    *,
+    fsync: bool,
+) -> None:
+    temp_leaf = f".tmp-{uuid.uuid4().hex}"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(temp_leaf, flags, 0o640, dir_fd=parent_fd)
+        with os.fdopen(fd, "wb") as file_obj:
+            file_obj.write(data)
+            file_obj.flush()
+            os.fchmod(file_obj.fileno(), 0o640)
             if fsync:
-                try:
-                    os.fsync(parent_fd)
-                except OSError:
-                    pass
-    except FileNotFoundError:
-        if not missing_ok:
-            raise
+                os.fsync(file_obj.fileno())
+
+        os.replace(
+            temp_leaf,
+            target_leaf,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+    except Exception:
+        _unlink_temp_best_effort(parent_fd, temp_leaf)
+        raise
 
 
 def write_bytes(target_path: Path, data: bytes, *, storage_root: Path, fsync: bool = True) -> None:
     """Atomically write within storage_root without following any path symlink."""
     target, parent = _validate_and_prepare(target_path, storage_root)
 
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     with _open_parent_under_root(storage_root, target, create=True) as (parent_fd, leaf):
-        temp_leaf = f".tmp-{uuid.uuid4().hex}"
-        try:
-            fd = os.open(temp_leaf, flags, 0o640, dir_fd=parent_fd)
-            with os.fdopen(fd, "wb") as f:
-                f.write(data)
-                f.flush()
-                os.fchmod(f.fileno(), 0o640)
-                if fsync:
-                    os.fsync(f.fileno())
-
-            os.replace(
-                temp_leaf,
-                leaf,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
-            )
-        except Exception:
-            try:
-                os.unlink(temp_leaf, dir_fd=parent_fd)
-            except OSError:
-                pass
-            raise
-
+        _write_temp_and_replace(
+            parent_fd,
+            leaf,
+            data,
+            fsync=fsync,
+        )
         if fsync:
-            try:
-                os.fsync(parent_fd)
-            except OSError:
-                pass
+            _fsync_fd_best_effort(parent_fd)
 
     # Retain the existing best-effort behavior for filesystems that only accept a
     # path-opened directory descriptor. The security property does not depend on it.
@@ -252,7 +284,7 @@ def _reject_symlinks_under_root(root: Path, target_dir: Path) -> None:
 
     try:
         relative = dir_resolved.relative_to(root_resolved)
-    except Exception as exc:  # pragma: no cover  # pylint: disable=broad-exception-caught
+    except ValueError as exc:
         raise ValueError("target path escapes root") from exc
 
     current = root_resolved

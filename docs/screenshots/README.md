@@ -39,6 +39,12 @@ For a byte-for-byte replay, pass the manifest's `rendered_at_utc` value as
 make docs-screenshots CAPTURED_AT=2026-07-19T12:00:00Z
 ```
 
+`make docs-screenshots-verify` performs the same replay without replacing the tracked
+files. Exact raster comparison depends on the recorded Chromium and compatible system
+fonts, so this target is intentionally separate from the cross-platform `verify-core`
+gate. `verify-core` retains portable source, manifest, dimension, and image-checksum
+validation through `docs-check`.
+
 The manifest records a selected bundle of application, template, translation, and CSS
 inputs used by these renders. `make docs-check` fails when a recorded source, dimensions,
 or image checksum drifts. Full browser interaction and assistive-technology evidence must

@@ -45,17 +45,21 @@ def _snapshot(article_count: int) -> Snapshot:
     )
 
 
+def _settings(**sections: dict[str, Any]) -> Settings:
+    """Build the shared renderer settings baseline with scenario-specific sections."""
+    mapping: dict[str, Any] = {
+        "zammad": {
+            "base_url": "https://zammad.example.invalid",
+            "api_token": "token",
+        },
+        "storage": {"root": "/tmp/archive"},
+    }
+    mapping.update(sections)
+    return Settings.from_mapping(mapping)
+
+
 def test_build_and_render_pdf_forwards_unlimited_article_setting(monkeypatch) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.invalid",
-                "api_token": "token",
-            },
-            "storage": {"root": "/tmp/archive"},
-            "pdf": {"max_articles": 0},
-        }
-    )
+    settings = _settings(pdf={"max_articles": 0})
     snapshot = _snapshot(251)
     seen: dict[str, Any] = {}
 
@@ -87,16 +91,7 @@ def test_build_and_render_pdf_forwards_unlimited_article_setting(monkeypatch) ->
 
 
 def test_cap_articles_uses_snapshot_copy_without_mutating_original() -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.invalid",
-                "api_token": "token",
-            },
-            "storage": {"root": "/tmp/archive"},
-            "pdf": {"max_articles": 1, "article_limit_mode": "cap_and_continue"},
-        }
-    )
+    settings = _settings(pdf={"max_articles": 1, "article_limit_mode": "cap_and_continue"})
     snapshot = _snapshot(2)
 
     capped = ticket_renderer._cap_articles_if_configured(
@@ -115,16 +110,9 @@ def test_cap_articles_uses_snapshot_copy_without_mutating_original() -> None:
 
 @pytest.mark.parametrize("trust_env", [True, False])
 def test_signing_forwards_transport_trust_env(monkeypatch, trust_env: bool) -> None:
-    settings = Settings.from_mapping(
-        {
-            "zammad": {
-                "base_url": "https://zammad.example.invalid",
-                "api_token": "token",
-            },
-            "storage": {"root": "/tmp/archive"},
-            "signing": {"enabled": True, "pfx_path": "/tmp/test.pfx"},
-            "hardening": {"transport": {"trust_env": trust_env}},
-        }
+    settings = _settings(
+        signing={"enabled": True, "pfx_path": "/tmp/test.pfx"},
+        hardening={"transport": {"trust_env": trust_env}},
     )
     seen: dict[str, Any] = {}
 

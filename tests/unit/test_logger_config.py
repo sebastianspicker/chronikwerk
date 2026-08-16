@@ -12,6 +12,23 @@ import structlog
 from chronikwerk.observability.logger import configure_logging
 
 
+def _capture_exception_output(log_format: str) -> str:
+    """Render a secret-bearing exception through the requested log format."""
+    configure_logging(log_level="INFO", log_format=log_format)
+    stream = io.StringIO()
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.stream = stream
+
+    logger = structlog.get_logger("test.logger")
+    try:
+        raise RuntimeError("Authorization: Bearer topsecret token=abc123")
+    except RuntimeError:
+        logger.exception("expected_exception")
+    return stream.getvalue()
+
+
 def test_configure_logging_reduces_fonttools_noise() -> None:
     configure_logging(log_level="INFO")
     logger = logging.getLogger("fontTools")
@@ -35,41 +52,13 @@ def test_human_logging_does_not_emit_format_exc_info_warning() -> None:
 
 
 def test_human_logging_redacts_secrets_in_exception_traceback() -> None:
-    configure_logging(log_level="INFO", log_format="human")
-
-    stream = io.StringIO()
-    root = logging.getLogger()
-    for handler in root.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.stream = stream
-
-    logger = structlog.get_logger("test.logger")
-    try:
-        raise RuntimeError("Authorization: Bearer topsecret token=abc123")
-    except RuntimeError:
-        logger.exception("expected_exception")
-
-    output = stream.getvalue()
+    output = _capture_exception_output("human")
     assert "topsecret" not in output
     assert "abc123" not in output
 
 
 def test_json_logging_redacts_secrets_in_exception_traceback() -> None:
-    configure_logging(log_level="INFO", log_format="json")
-
-    stream = io.StringIO()
-    root = logging.getLogger()
-    for handler in root.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.stream = stream
-
-    logger = structlog.get_logger("test.logger")
-    try:
-        raise RuntimeError("Authorization: Bearer topsecret token=abc123")
-    except RuntimeError:
-        logger.exception("expected_exception")
-
-    payload = json.loads(stream.getvalue())
+    payload = json.loads(_capture_exception_output("json"))
     rendered = json.dumps(payload)
     assert "topsecret" not in rendered
     assert "abc123" not in rendered

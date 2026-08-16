@@ -14,6 +14,15 @@ _PERMANENT_DNS_ERRORS = frozenset(
     for name in ("EAI_NONAME", "EAI_NODATA", "EAI_BADFLAGS", "EAI_FAMILY", "EAI_SERVICE")
     if isinstance(error := getattr(socket, name, None), int)
 )
+_LOCALHOST_NAMES = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "localhost6",
+        "localhost6.localdomain",
+        "ip6-localhost",
+    }
+)
 
 
 def _host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -29,6 +38,31 @@ def _validate_ip(host: str, *, allow_private_networks: bool) -> None:
         raise PermanentError("Outbound URL targets a non-global address")
 
 
+def _is_localhost_name(host: str) -> bool:
+    return host in _LOCALHOST_NAMES or host.endswith(".localhost")
+
+
+def _require_url_origin(parsed: ParseResult) -> tuple[str, str]:
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname
+    if scheme not in {"https", "http"} or hostname is None:
+        raise PermanentError("Outbound URL must include an https:// host")
+    if parsed.username is not None or parsed.password is not None:
+        raise PermanentError("Outbound URL must not include credentials")
+    return scheme, hostname
+
+
+def _require_allowed_scheme(scheme: str, *, allow_insecure_http: bool) -> None:
+    if scheme == "http" and not allow_insecure_http:
+        raise PermanentError("Plain HTTP upstream URL is not allowed")
+
+
+def _require_allowed_host(host: str, *, allow_private_networks: bool) -> None:
+    if _is_localhost_name(host) and not allow_private_networks:
+        raise PermanentError("Localhost outbound URL is not allowed")
+    _validate_ip(host, allow_private_networks=allow_private_networks)
+
+
 def _validated_url_host(
     url: str,
     *,
@@ -36,25 +70,10 @@ def _validated_url_host(
     allow_private_networks: bool,
 ) -> tuple[ParseResult, str]:
     parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    if scheme not in {"https", "http"} or not parsed.hostname:
-        raise PermanentError("Outbound URL must include an https:// host")
-    if parsed.username is not None or parsed.password is not None:
-        raise PermanentError("Outbound URL must not include credentials")
-    if scheme == "http" and not allow_insecure_http:
-        raise PermanentError("Plain HTTP upstream URL is not allowed")
-
-    host = parsed.hostname.rstrip(".").lower()
-    localhost_names = {
-        "localhost",
-        "localhost.localdomain",
-        "localhost6",
-        "localhost6.localdomain",
-        "ip6-localhost",
-    }
-    if (host in localhost_names or host.endswith(".localhost")) and not allow_private_networks:
-        raise PermanentError("Localhost outbound URL is not allowed")
-    _validate_ip(host, allow_private_networks=allow_private_networks)
+    scheme, hostname = _require_url_origin(parsed)
+    _require_allowed_scheme(scheme, allow_insecure_http=allow_insecure_http)
+    host = hostname.rstrip(".").lower()
+    _require_allowed_host(host, allow_private_networks=allow_private_networks)
     return parsed, host
 
 

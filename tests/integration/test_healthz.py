@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from chronikwerk.app.routes import healthz as healthz_module
@@ -69,3 +70,42 @@ def test_healthz_deep_check_is_single_flight(tmp_path, monkeypatch) -> None:
                 await asyncio.gather(first, second, return_exceptions=True)
 
     asyncio.run(_run())
+
+
+def test_healthz_uses_stable_version_when_distribution_metadata_is_unavailable(
+    tmp_path, monkeypatch
+) -> None:
+    def package_missing(_distribution_name: str) -> str:
+        raise healthz_module.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(healthz_module.metadata, "version", package_missing)
+
+    response = TestClient(create_app(make_settings(str(tmp_path)))).get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["version"] == "0.0.0"
+
+
+@pytest.mark.parametrize(
+    ("storage_result", "expected_healthy"),
+    [
+        ({"available": True}, True),
+        ({"available": False}, False),
+        ({"writable": True}, True),
+        ({"writable": False}, False),
+        ({"detail": "not-classified"}, False),
+        (None, False),
+    ],
+)
+def test_deep_health_check_classifies_available_writable_and_unknown_results(
+    tmp_path, monkeypatch, storage_result: object, expected_healthy: bool
+) -> None:
+    def check_storage(_settings) -> object:
+        return storage_result
+
+    monkeypatch.setattr(healthz_module, "_check_storage", check_storage)
+
+    checks, healthy = asyncio.run(healthz_module._deep_checks(make_settings(str(tmp_path))))
+
+    assert checks == {"storage": storage_result}
+    assert healthy is expected_healthy

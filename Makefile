@@ -3,7 +3,7 @@ PYTHON ?= python
 NPM ?= npm
 NPX ?= npx
 
-.PHONY: dev lint format typecheck complexity duplication frontend-install frontend-typecheck frontend-build frontend-check frontend-update test test-fast test-unit test-int test-contracts test-all test-e2e browser-setup test-browser pdf-ua-check smoke brand-check docs-screenshots docs-check code-docs-check docker-smoke qa build coverage-test config-check clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
+.PHONY: dev lint format typecheck complexity duplication frontend-install frontend-typecheck frontend-build frontend-check frontend-update test test-fast test-unit test-int test-contracts test-all test-e2e browser-setup test-browser pdf-ua-check smoke brand-check docs-screenshots docs-screenshots-verify docs-check code-docs-check source-length-check docker-smoke qa build coverage-test config-check clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -107,13 +107,19 @@ docs-check:
 code-docs-check:
 	$(PYTHON) scripts/ci/check_code_docs.py
 
+source-length-check:
+	$(PYTHON) scripts/ci/check_source_lengths.py
+
 docs-screenshots:
 	$(PYTHON) scripts/docs/render_admin_screenshots.py $(if $(CAPTURED_AT),--captured-at $(CAPTURED_AT))
+
+docs-screenshots-verify:
+	$(PYTHON) scripts/docs/render_admin_screenshots.py --verify
 
 docker-smoke:
 	docker build -t chronikwerk:local .
 
-qa: lint smoke brand-check docs-check code-docs-check frontend-check complexity duplication
+qa: lint smoke brand-check docs-check code-docs-check source-length-check frontend-check complexity duplication
 	$(PYTHON) -m mypy . --config-file pyproject.toml
 	$(MAKE) coverage-test
 
@@ -129,7 +135,7 @@ clean-wheel-smoke: build
 production-image-smoke:
 	bash scripts/ci/production_image_smoke.sh
 
-verify-core: lint brand-check docs-check code-docs-check frontend-check complexity duplication
+verify-core: lint brand-check docs-check code-docs-check source-length-check frontend-check complexity duplication
 	$(PYTHON) -m mypy . --config-file pyproject.toml
 	$(MAKE) coverage-test
 	$(MAKE) config-check

@@ -9,6 +9,7 @@ from chronikwerk.adapters.zammad.errors import (
     ServerError,
 )
 from chronikwerk.app.jobs.ticket_notes import (
+    ErrorNotePayload,
     action_hint,
     error_code_and_hint,
     error_note_html,
@@ -180,26 +181,30 @@ class TestErrorNoteHtml:
 
     def test_code_and_hint_included(self) -> None:
         html = error_note_html(
-            classification="permanent",
-            message="boom",
-            action="retry",
-            request_id="r1",
-            delivery_id="d1",
-            timestamp_utc="2025-01-01T00:00:00Z",
-            code="missing_archive_path",
-            hint="Set archive_path",
+            ErrorNotePayload(
+                classification="permanent",
+                message="boom",
+                action="retry",
+                request_id="r1",
+                delivery_id="d1",
+                timestamp_utc="2025-01-01T00:00:00Z",
+                code="missing_archive_path",
+                hint="Set archive_path",
+            )
         )
         assert "missing_archive_path" in html
         assert "Set archive_path" in html
 
     def test_no_code_no_hint(self) -> None:
         html = error_note_html(
-            classification="permanent",
-            message="boom",
-            action="retry",
-            request_id=None,
-            delivery_id=None,
-            timestamp_utc="2025-01-01T00:00:00Z",
+            ErrorNotePayload(
+                classification="permanent",
+                message="boom",
+                action="retry",
+                request_id=None,
+                delivery_id=None,
+                timestamp_utc="2025-01-01T00:00:00Z",
+            )
         )
         assert "unknown" in html  # request_id fallback
         assert "none" in html  # delivery_id fallback

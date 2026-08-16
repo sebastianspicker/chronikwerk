@@ -4,30 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.support.env_file_helpers import parse_env_file
+
 
 def _parse_env_example(repo_root: Path) -> dict[str, str]:
-    """
-    Parse `.env.example` as a simple KEY=VALUE file:
-    - ignores blank lines and comments
-    - keeps the last occurrence of a key
-    """
-    values: dict[str, str] = {}
+    """Parse `.env.example`, skipping when the host locks the file."""
     try:
-        lines = (repo_root / ".env.example").read_text("utf-8").splitlines()
+        return parse_env_file(repo_root / ".env.example")
     except PermissionError:
         import pytest
 
         pytest.skip("PermissionError reading .env.example (system locked)")
-
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
 
 
 def test_env_example_does_not_force_missing_config_path() -> None:
