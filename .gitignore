@@ -96,6 +96,7 @@ coverage.json
 *.tsr
 
 # IDEs
+/.mcp.json
 .idea/
 .vscode/
 .cursor/

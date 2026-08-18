@@ -14,10 +14,10 @@ Chronikwerk is available for local evaluation with non-production data. No sourc
 checkout, package, image, or screenshot should be treated as release evidence until it
 is produced from and verified against the same reviewed tag.
 
-## Current local addendum (2026-08-14)
+## Local addendum (2026-08-14)
 
-The July record below is historical. Against the live dirty checkout, a frozen
-development environment from `uv.lock` produced these current results:
+The July record below is historical. A frozen development environment from
+`uv.lock` produced these results on the addendum date:
 
 - Ruff lint and formatting passed for 254 files;
 - mypy passed across 207 source files;
