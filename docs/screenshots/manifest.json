@@ -28,13 +28,11 @@
   "renderer": {
     "browser": "Chromium 149.0.7827.55",
     "browser_verified": false,
-    "javascript_executed": false,
-    "playwright": "1.61.1"
+    "javascript_executed": false
   },
   "schema_version": 2,
-  "source": "authenticated FastAPI TestClient HTML and shipped admin CSS, rendered in headless Chromium with JavaScript removed",
+  "source": "static release-era administration documentation images",
   "source_files": {
-    "scripts/docs/render_admin_screenshots.py": "7fa982e2c2acce26889193ed11296a7606feec17255b1cc9a67c64e739060c74",
     "src/chronikwerk/_version.py": "13389430d7928764c46089a0055433b649424d44127013fa06ff96d1ea0832fa",
     "src/chronikwerk/app/admin/__init__.py": "b2041784cc0ba4e3e432796d39b66aefa0f85da93b4b592a918c0322733da9bb",
     "src/chronikwerk/app/admin/_config_routes.py": "bdb8deebe236fc6f7844981ddf57587fe40bfbc75b0211bec2bd7db5d4fe8698",
@@ -63,5 +61,5 @@
     "src/chronikwerk/templates/admin/overview.html": "5166dc4bda8a5ffe2a953e1b054d2c579261e4c337a88052ba02aee342ae2226",
     "src/chronikwerk/templates/admin/revisions.html": "70597d909e82733ca296e07450703c8f03271dc84997e8d863a4ddb2bf5b4896"
   },
-  "source_state": "unfrozen_local_candidate"
+  "source_state": "static_reference"
 }

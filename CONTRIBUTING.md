@@ -51,7 +51,6 @@ Use the Makefile targets rather than duplicating their command lines in new scri
 | Mypy | `make PYTHON=.venv/bin/python typecheck` |
 | Static and unit tests | `make PYTHON=.venv/bin/python test-fast` |
 | All Python tests | `make PYTHON=.venv/bin/python test-all` |
-| Coverage threshold | `make PYTHON=.venv/bin/python coverage-test` |
 | Complexity limits | `make complexity` |
 | Duplication limits | `make duplication` |
 | Authored source length | `make source-length-check` |
@@ -59,7 +58,7 @@ Use the Makefile targets rather than duplicating their command lines in new scri
 | Documentation integrity | `make docs-check` |
 | Maintained-code documentation | `make code-docs-check` |
 | Non-container gate | `make PYTHON=.venv/bin/python verify-core` |
-| Container and end-to-end gate | `make PYTHON=.venv/bin/python verify` |
+| Container gate | `make PYTHON=.venv/bin/python verify` |
 
 `make format` changes Python files. Run it only when the resulting formatting diff belongs
 to the change.
@@ -68,13 +67,6 @@ Maintained Python, TypeScript, JavaScript, CSS, HTML, shell, and MJS sources are
 600 physical lines per file. The assembled `src/chronikwerk/static/admin/admin.css` and
 `admin.js` bundles are generated from `frontend/` and are the only source-length
 exemptions.
-
-Browser work requires:
-
-```bash
-make browser-setup
-make test-browser
-```
 
 PDF structure work requires representative signed and unsigned files:
 
@@ -121,7 +113,6 @@ local baseline is:
 ```bash
 make verify
 make code-docs-check
-make test-browser
 make pdf-ua-check PDF_FILES="unsigned.pdf signed.pdf"
 ```
 

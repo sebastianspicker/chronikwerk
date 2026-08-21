@@ -35,7 +35,6 @@ SCAN_FILES = (
     Path("docker-compose.dev.yml"),
     Path("docker-compose.yml"),
     Path("package.json"),
-    Path("playwright.config.ts"),
     Path("pyproject.toml"),
     Path("tsconfig.admin.json"),
     Path("tsconfig.json"),

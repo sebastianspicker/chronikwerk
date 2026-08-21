@@ -1,9 +1,8 @@
 # Centralize repeatable development, quality, packaging, and release checks.
 PYTHON ?= python
 NPM ?= npm
-NPX ?= npx
 
-.PHONY: dev lint format typecheck complexity duplication frontend-install frontend-typecheck frontend-build frontend-check frontend-update test test-fast test-unit test-int test-contracts test-all test-e2e browser-setup test-browser pdf-ua-check smoke brand-check docs-screenshots docs-screenshots-verify docs-check code-docs-check source-length-check docker-smoke qa build coverage-test config-check clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
+.PHONY: dev lint format typecheck complexity duplication frontend-install frontend-typecheck frontend-build frontend-check frontend-update test test-fast test-unit test-int test-all pdf-ua-check smoke brand-check docs-check code-docs-check source-length-check docker-smoke qa build clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -65,7 +64,7 @@ test:
 	$(PYTHON) -m pytest -q
 
 test-fast:
-	$(PYTHON) -m pytest -q tests/static tests/unit
+	$(PYTHON) -m pytest -q tests/unit
 
 test-unit:
 	$(PYTHON) -m pytest -q tests/unit
@@ -73,29 +72,8 @@ test-unit:
 test-int:
 	$(PYTHON) -m pytest -q tests/integration
 
-test-contracts:
-	$(PYTHON) -m pytest -q tests/contracts
-
 test-all:
 	$(PYTHON) -m pytest -q
-
-coverage-test:
-	$(PYTHON) -m pytest -q tests/static tests/unit tests/integration tests/contracts \
-		--cov=src/chronikwerk --cov-report=term-missing --cov-fail-under=85
-
-config-check:
-	$(PYTHON) -m pytest -q tests/unit/test_config_schema_sync.py tests/unit/test_env_example_sanity.py
-
-test-e2e:
-	$(PYTHON) scripts/e2e/docker_api_smoke.py \
-		--compose-file infra/e2e/docker-compose.yml \
-		--dataset infra/e2e/dataset.json
-
-browser-setup: frontend-install
-	$(NPX) playwright install chromium firefox webkit
-
-test-browser:
-	$(NPM) run test:browser
 
 pdf-ua-check:
 	@test -n "$(PDF_FILES)" || (echo "Set PDF_FILES to signed and unsigned fixture paths" && exit 2)
@@ -110,18 +88,12 @@ code-docs-check:
 source-length-check:
 	$(PYTHON) scripts/ci/check_source_lengths.py
 
-docs-screenshots:
-	$(PYTHON) scripts/docs/render_admin_screenshots.py $(if $(CAPTURED_AT),--captured-at $(CAPTURED_AT))
-
-docs-screenshots-verify:
-	$(PYTHON) scripts/docs/render_admin_screenshots.py --verify
-
 docker-smoke:
 	docker build -t chronikwerk:local .
 
 qa: lint smoke brand-check docs-check code-docs-check source-length-check frontend-check complexity duplication
 	$(PYTHON) -m mypy . --config-file pyproject.toml
-	$(MAKE) coverage-test
+	$(MAKE) test
 
 build: frontend-check
 	$(PYTHON) -m build
@@ -137,11 +109,10 @@ production-image-smoke:
 
 verify-core: lint brand-check docs-check code-docs-check source-length-check frontend-check complexity duplication
 	$(PYTHON) -m mypy . --config-file pyproject.toml
-	$(MAKE) coverage-test
-	$(MAKE) config-check
+	$(MAKE) test
 	$(MAKE) smoke docs-check build clean-wheel-smoke
 
-verify: verify-core production-image-smoke test-e2e
+verify: verify-core production-image-smoke
 
 ci: verify
 

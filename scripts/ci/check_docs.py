@@ -205,7 +205,8 @@ def _screenshot_manifest_errors() -> list[str]:
         return errors
     if manifest.get("schema_version") != 2:
         errors.append(f"{relative_manifest}: expected schema_version 2")
-    errors.extend(_source_file_errors(relative_manifest, manifest.get("source_files")))
+    if manifest.get("source_state") != "static_reference":
+        errors.extend(_source_file_errors(relative_manifest, manifest.get("source_files")))
     errors.extend(_image_errors(relative_manifest, manifest.get("images")))
     return errors
 

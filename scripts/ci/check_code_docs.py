@@ -12,19 +12,16 @@ PYTHON_ROOTS = (
     Path("src/chronikwerk"),
     Path("scripts"),
     Path("tests"),
-    Path("infra/e2e"),
 )
 DOCUMENTED_PYTHON_SURFACES = (
     Path("src/chronikwerk"),
     Path("scripts"),
-    Path("infra/e2e"),
 )
 TEST_ROOT = Path("tests")
 TYPESCRIPT_ROOTS = (
     Path("frontend"),
-    Path("tests/browser"),
 )
-TYPESCRIPT_FILES = (Path("playwright.config.ts"),)
+TYPESCRIPT_FILES: tuple[Path, ...] = ()
 SHELL_ROOTS = (Path("scripts"),)
 PLACEHOLDER_DOCSTRING_FRAGMENTS = (
     "Regression coverage for ",

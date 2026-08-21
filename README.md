@@ -87,10 +87,9 @@ For local development:
 - Python 3.14 or newer
 - Node.js 24 through 26
 - System libraries required by WeasyPrint
-- Docker for container and end-to-end checks
+- Docker for container checks
 
-Browser checks install pinned Playwright browsers separately. PDF/UA validation requires
-veraPDF 1.30.1.
+PDF/UA validation requires veraPDF 1.30.1.
 
 ## Installation
 
@@ -256,13 +255,10 @@ config/              Example YAML configuration
 docs/                Architecture, API, configuration, operation, and security references
 examples/            Example webhook and ticket snapshot data
 frontend/            Administration TypeScript and CSS sources
-infra/e2e/           Docker end-to-end fixture and mock Zammad service
 infra/systemd/       Optional Docker Compose systemd wrapper
 scripts/ci/          Repository validation and image-smoke scripts
-scripts/docs/        Administration screenshot capture
-scripts/e2e/         Docker API smoke runner
 src/chronikwerk/     Python package, templates, and compiled administration assets
-tests/               Static, unit, integration, contract, and browser tests
+tests/               Focused unit and integration tests
 ```
 
 The administration source files are under `frontend/`. The browser-served CSS and
@@ -304,8 +300,6 @@ The Python test suites are divided by scope:
 - `tests/static`: type-check and static contracts.
 - `tests/unit`: isolated behavior and configuration contracts.
 - `tests/integration`: application, storage, rendering, and workflow integration.
-- `tests/contracts`: security, deployment, documentation, and runtime constraints.
-- `tests/browser`: Playwright and axe checks for the administration application.
 
 Run the narrow suite while editing:
 
@@ -325,13 +319,11 @@ Run container validation:
 make PYTHON=.venv/bin/python verify
 ```
 
-`make verify` adds the production-image smoke test and Docker end-to-end test. It does not
-include the separate browser, PDF/UA, dependency-security workflow, or manual release gates.
+`make verify` adds the production-image smoke test. It does not include the separate
+PDF/UA, dependency-security workflow, or manual release gates.
 Those checks use:
 
 ```bash
-make browser-setup
-make test-browser
 make pdf-ua-check PDF_FILES="unsigned.pdf signed.pdf"
 ```
 
@@ -346,7 +338,6 @@ For a non-operational visual preview, the maintained administration screenshots
 are rendered from the real templates and CSS with synthetic local configuration:
 
 ```bash
-make PYTHON=.venv/bin/python docs-screenshots
 make PYTHON=.venv/bin/python docs-check
 ```
 

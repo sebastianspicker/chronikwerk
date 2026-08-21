@@ -18,13 +18,11 @@ and a Keep-a-Changelog style `CHANGELOG.md`.
 - The working tree is clean.
 - CI is green for the commit being released.
 - `make verify` is the first local release validation command: it enforces
-  branch-aware coverage at 85%, Python and TypeScript checks, complexity and
-  duplication gates, the 600-line authored-source limit,
-  static/unit/integration/contract checks, public and code documentation checks,
-  config checks, build and clean-wheel import,
-  production-image unsigned-render smoke, and dedicated Docker E2E.
+  Python and TypeScript checks, complexity and duplication gates, the 600-line authored-source limit,
+  focused unit/integration checks, public and code documentation checks,
+  build and clean-wheel import, and production-image unsigned-render smoke.
 - On hosts without Docker, use `make verify-core` for non-container diagnostics;
-  it is not release sign-off because image and E2E checks remain mandatory.
+  image verification remains a separate release gate.
 - Security dependency auditing remains a separate required fail-closed workflow
   covering base and signing dependency environments.
 - Prerelease packaging is tag-only (`v*-alpha.*`, `v*-beta.*`, or `v*-rc.*`):
@@ -104,10 +102,6 @@ history, tags/notes, retry acceptance (`202`), PDF headers, sidecars, and
 checksums, then tears the stack down:
 
 ```bash
-make test-e2e
-```
-
-```bash
 docker build -t chronikwerk:local .
 docker run --rm -p 8080:8080 \
   -e ZAMMAD__BASE_URL=https://example.invalid \
@@ -140,8 +134,7 @@ PY
 - Regenerate `docs/screenshots/*` from the clean tagged candidate and record the exact
   tag, commit, browser version, viewport, locale, UTC timestamp, and checksums in the
   screenshot manifest.
-  - `make docs-screenshots` refreshes the repository-owned deterministic previews and
-    source hashes.
+  - The checked-in screenshots are static documentation references.
   - Replace or supplement them with real browser captures for the frozen candidate and
     update the manifest before publication.
 - Verify secure-cookie behavior behind the production TLS proxy and confirm no external

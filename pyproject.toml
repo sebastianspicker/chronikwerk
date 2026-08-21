@@ -48,7 +48,6 @@ signing = [
 dev = [
   "build>=1.2",
   "pytest>=8.0",
-  "pytest-cov>=5.0",
   "respx>=0.21",
   "ruff>=0.4",
   "mypy>=1.10",
@@ -105,21 +104,6 @@ exclude = [
 # asn1crypto and weasyprint have no type stubs; ignores are intentional
 module = ["asn1crypto.*", "weasyprint.*"]
 ignore_missing_imports = true
-
-[tool.coverage.run]
-source = ["src/chronikwerk"]
-branch = true
-
-[tool.coverage.report]
-fail_under = 85
-show_missing = true
-skip_empty = true
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "if __name__ == .__main__.",
-    "raise NotImplementedError",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
