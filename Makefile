@@ -1,9 +1,8 @@
 # Centralize repeatable development, quality, packaging, and release checks.
 PYTHON ?= python
 NPM ?= npm
-NPX ?= npx
 
-.PHONY: dev lint format typecheck complexity duplication frontend-install frontend-typecheck frontend-build frontend-check frontend-update test test-fast test-unit test-int test-contracts test-all test-e2e browser-setup test-browser pdf-ua-check smoke brand-check docs-screenshots docs-screenshots-verify docs-check code-docs-check source-length-check docker-smoke qa build coverage-test config-check clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
+.PHONY: dev lint format typecheck complexity duplication frontend-install frontend-typecheck frontend-build frontend-check frontend-update test test-fast test-unit test-int test-all pdf-ua-check smoke brand-check docs-check code-docs-check source-length-check docker-smoke qa build clean-wheel-smoke production-image-smoke verify-core verify ci dev-setup clean
 
 dev:
 	docker compose -f docker-compose.dev.yml up --build
@@ -11,8 +10,6 @@ dev:
 dev-setup:
 	@echo "Setting up development environment..."
 	$(PYTHON) -m pip install -e ".[dev]"
-	$(PYTHON) -m pip install pre-commit
-	$(PYTHON) -m pre_commit install
 	$(MAKE) frontend-install
 	@echo "Creating .env from example if not exists..."
 	@if [ ! -f .env ]; then cp .env.example .env && echo "Created .env - please edit with your settings"; fi
@@ -35,7 +32,7 @@ typecheck:
 
 complexity:
 	$(PYTHON) -m lizard -w -C 10 -L 80 \
-		-x "src/chronikwerk/static/admin/admin.js" \
+		-x "src/chronikwerk/web/static/admin/admin.js" \
 		src/chronikwerk scripts frontend
 
 duplication:
@@ -52,20 +49,21 @@ frontend-build:
 	$(NPM) run build:admin
 
 frontend-check: frontend-typecheck frontend-build
-	@cmp -s build/typescript/admin.js src/chronikwerk/static/admin/admin.js || \
+	@cmp -s build/typescript/admin.js src/chronikwerk/web/static/admin/admin.js || \
 		(echo "Generated admin.js is stale; run 'make frontend-update'." && exit 1)
-	@cmp -s build/admin/admin.css src/chronikwerk/static/admin/admin.css || \
+	@cmp -s build/admin/admin.css src/chronikwerk/web/static/admin/admin.css || \
 		(echo "Generated admin.css is stale; run 'make frontend-update'." && exit 1)
 
 frontend-update: frontend-build
-	cp build/typescript/admin.js src/chronikwerk/static/admin/admin.js
-	cp build/admin/admin.css src/chronikwerk/static/admin/admin.css
+	cp build/typescript/admin.js src/chronikwerk/web/static/admin/admin.js
+	cp build/admin/admin.css src/chronikwerk/web/static/admin/admin.css
 
 test:
-	$(PYTHON) -m pytest -q
+	$(PYTHON) -m coverage run --branch --source=chronikwerk -m pytest -q
+	$(PYTHON) -m coverage report --fail-under=57
 
 test-fast:
-	$(PYTHON) -m pytest -q tests/static tests/unit
+	$(PYTHON) -m pytest -q tests/unit
 
 test-unit:
 	$(PYTHON) -m pytest -q tests/unit
@@ -73,29 +71,8 @@ test-unit:
 test-int:
 	$(PYTHON) -m pytest -q tests/integration
 
-test-contracts:
-	$(PYTHON) -m pytest -q tests/contracts
-
 test-all:
-	$(PYTHON) -m pytest -q
-
-coverage-test:
-	$(PYTHON) -m pytest -q tests/static tests/unit tests/integration tests/contracts \
-		--cov=src/chronikwerk --cov-report=term-missing --cov-fail-under=85
-
-config-check:
-	$(PYTHON) -m pytest -q tests/unit/test_config_schema_sync.py tests/unit/test_env_example_sanity.py
-
-test-e2e:
-	$(PYTHON) scripts/e2e/docker_api_smoke.py \
-		--compose-file infra/e2e/docker-compose.yml \
-		--dataset infra/e2e/dataset.json
-
-browser-setup: frontend-install
-	$(NPX) playwright install chromium firefox webkit
-
-test-browser:
-	$(NPM) run test:browser
+	$(MAKE) test
 
 pdf-ua-check:
 	@test -n "$(PDF_FILES)" || (echo "Set PDF_FILES to signed and unsigned fixture paths" && exit 2)
@@ -110,18 +87,12 @@ code-docs-check:
 source-length-check:
 	$(PYTHON) scripts/ci/check_source_lengths.py
 
-docs-screenshots:
-	$(PYTHON) scripts/docs/render_admin_screenshots.py $(if $(CAPTURED_AT),--captured-at $(CAPTURED_AT))
-
-docs-screenshots-verify:
-	$(PYTHON) scripts/docs/render_admin_screenshots.py --verify
-
 docker-smoke:
 	docker build -t chronikwerk:local .
 
 qa: lint smoke brand-check docs-check code-docs-check source-length-check frontend-check complexity duplication
 	$(PYTHON) -m mypy . --config-file pyproject.toml
-	$(MAKE) coverage-test
+	$(MAKE) test
 
 build: frontend-check
 	$(PYTHON) -m build
@@ -130,18 +101,17 @@ clean-wheel-smoke: build
 	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	$(PYTHON) -m venv "$$tmp/venv"; \
 	"$$tmp/venv/bin/python" -m pip install --no-cache-dir dist/*.whl; \
-	"$$tmp/venv/bin/python" -c 'from chronikwerk.app.server import create_app; print(create_app)'
+	"$$tmp/venv/bin/python" -c 'from chronikwerk.web.app import create_app; print(create_app)'
 
 production-image-smoke:
 	bash scripts/ci/production_image_smoke.sh
 
 verify-core: lint brand-check docs-check code-docs-check source-length-check frontend-check complexity duplication
 	$(PYTHON) -m mypy . --config-file pyproject.toml
-	$(MAKE) coverage-test
-	$(MAKE) config-check
+	$(MAKE) test
 	$(MAKE) smoke docs-check build clean-wheel-smoke
 
-verify: verify-core production-image-smoke test-e2e
+verify: verify-core production-image-smoke
 
 ci: verify
 

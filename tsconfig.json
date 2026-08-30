@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["frontend/**/*.ts", "playwright.config.ts", "tests/browser/**/*.ts"]
+  "include": ["frontend/**/*.ts"]
 }

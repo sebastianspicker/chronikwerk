@@ -13,13 +13,12 @@ MAINTAINED_ROOTS = (
     "scripts",
     "tests",
     "frontend",
-    "infra/e2e",
 )
-ROOT_SOURCES = ("playwright.config.ts",)
+ROOT_SOURCES: tuple[str, ...] = ()
 SOURCE_SUFFIXES = {".css", ".html", ".js", ".mjs", ".py", ".sh", ".ts"}
 GENERATED_EXEMPTIONS = {
-    "src/chronikwerk/static/admin/admin.css",
-    "src/chronikwerk/static/admin/admin.js",
+    "src/chronikwerk/web/static/admin/admin.css",
+    "src/chronikwerk/web/static/admin/admin.js",
 }
 
 

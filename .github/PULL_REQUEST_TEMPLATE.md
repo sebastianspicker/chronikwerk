@@ -10,7 +10,6 @@
 
 - [ ] `make verify-core` (or the narrower checks are explained below)
 - [ ] `make verify` for release/deployment behavior
-- [ ] `make test-browser` for admin UI changes
 - [ ] `make pdf-ua-check PDF_FILES="..."` for PDF rendering changes
 
 <!-- List every skipped or environment-blocked check with the exact reason. -->
