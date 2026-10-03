@@ -50,8 +50,10 @@ def test_rendering_only_signs_when_enabled(monkeypatch: pytest.MonkeyPatch, enab
         signing=signing,
     )
     signed_inputs: list[bytes] = []
+    snapshot_options: list[tuple[object, object]] = []
 
     async def build_snapshot(*_args: object, **_kwargs: object) -> object:
+        snapshot_options.append((_kwargs.get("max_articles"), _kwargs.get("article_limit_mode")))
         return snapshot
 
     async def render_pdf(*_args: object, **_kwargs: object) -> bytes:
@@ -77,6 +79,7 @@ def test_rendering_only_signs_when_enabled(monkeypatch: pytest.MonkeyPatch, enab
     )
 
     assert signed_inputs == ([b"unsigned-pdf"] if enabled else [])
+    assert snapshot_options == [(0, "render_all")]
     assert rendered.pdf_bytes == (b"signed-pdf" if enabled else b"unsigned-pdf")
     assert rendered.signing_cert_fingerprint == ("fingerprint" if enabled else None)
 

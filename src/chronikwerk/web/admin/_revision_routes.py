@@ -22,6 +22,9 @@ from chronikwerk.web.admin._route_support import (
 )
 from chronikwerk.web.admin.auth import csrf_token_matches, session_from_request
 
+page_router = APIRouter(prefix="/admin", include_in_schema=False)
+api_router = APIRouter(prefix="/admin", include_in_schema=False)
+
 
 class RestoreRequest(BaseModel):
     """Accept a revision identifier to restore as the managed configuration."""
@@ -30,6 +33,7 @@ class RestoreRequest(BaseModel):
     security_acknowledged: bool = False
 
 
+@page_router.get("/configuration/revisions")
 async def revisions_page(
     request: Request,
     restore_error: bool = False,
@@ -52,6 +56,7 @@ async def revisions_page(
     )
 
 
+@page_router.post("/configuration/revisions/{revision}/restore")
 async def restore_form(request: Request, revision: str) -> Response:
     """Restore a retained configuration revision after CSRF validation."""
     data = await _urlencoded(request)
@@ -79,6 +84,7 @@ async def restore_form(request: Request, revision: str) -> Response:
     return RedirectResponse("/admin/configuration", status_code=303)
 
 
+@api_router.get("/api/v1/config/revisions")
 async def revisions_api(request: Request) -> Response:
     """Return retained configuration revisions without exposing secrets."""
     session, error = _api_session(request)
@@ -88,6 +94,7 @@ async def revisions_api(request: Request) -> Response:
     return JSONResponse({"items": store.list_revisions(), "revision": store.current_revision()})
 
 
+@api_router.post("/api/v1/config/revisions/{revision}/restore")
 async def restore_api(
     request: Request,
     payload: RestoreRequest,
@@ -116,31 +123,3 @@ async def restore_api(
         return error
     assert metadata is not None
     return JSONResponse({**metadata, "restart_required": True})
-
-
-def register_revision_page_routes(router: APIRouter) -> None:
-    """Register this route group during application startup."""
-    router.add_api_route(
-        "/configuration/revisions",
-        revisions_page,
-        methods=["GET"],
-    )
-    router.add_api_route(
-        "/configuration/revisions/{revision}/restore",
-        restore_form,
-        methods=["POST"],
-    )
-
-
-def register_revision_api_routes(router: APIRouter) -> None:
-    """Register this route group during application startup."""
-    router.add_api_route(
-        "/api/v1/config/revisions",
-        revisions_api,
-        methods=["GET"],
-    )
-    router.add_api_route(
-        "/api/v1/config/revisions/{revision}/restore",
-        restore_api,
-        methods=["POST"],
-    )

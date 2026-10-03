@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Jobs · Chronikwerk Administration demonstration</title>
+  <link rel="icon" href="assets/chronikwerk-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/admin.css">
+  <link rel="stylesheet" href="assets/demo.css">
+  <script src="assets/demo.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="runhead">
+    <div class="runhead__inner">
+      <a class="wordmark" href="index.html">
+        <img src="assets/chronikwerk-mark.svg" alt="" width="28" height="28">
+        <span>
+          <span class="wordmark__name">Chronikwerk</span>
+          <span class="wordmark__kind">Administration</span>
+        </span>
+      </a>
+      <nav class="routes" aria-label="Primary navigation">
+        <a href="index.html">Overview</a>
+        <a href="jobs.html" aria-current="page">Jobs</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="tour.html">Tour</a>
+      </nav>
+      <div class="runhead__tools">
+        <p class="margin-note">Demonstration · synthetic data</p>
+      </div>
+    </div>
+  </header>
+  <main id="main-content" class="page" tabindex="-1">
+    <header class="page-head">
+      <div class="page-head__margin"></div>
+      <div class="page-head__body">
+        <div class="page-head__title">
+          <h1>Jobs</h1>
+          <p class="lede">Synthetic in-memory admission and outcome history. An accepted job may still fail or be interrupted later.</p>
+        </div>
+      </div>
+    </header>
+    <div class="annal annal--notice">
+      <div class="annal__margin"></div>
+      <div class="annal__body">
+      <aside class="demo-notice" role="note">
+        <p><strong>Interactive demonstration.</strong> No backend is connected.</p>
+        <p>Filtering changes this page only. No ticket, archive, or backend data is read or written.</p>
+      </aside>
+      </div>
+    </div>
+    <section class="annal" aria-labelledby="jobs-history-title">
+      <div class="annal__margin">
+        <h2 id="jobs-history-title">Activity record</h2>
+        <p class="margin-count" data-job-count>5 sample events</p>
+        <p class="margin-note">Job history is process-local and would clear when the demonstrated worker restarts.</p>
+        <form class="filters" data-jobs-filter>
+          <div class="filters__field">
+            <label for="ticket-id">Ticket ID</label>
+            <input id="ticket-id" name="ticket" type="number" min="1" inputmode="numeric" placeholder="For example, 4813">
+          </div>
+          <div class="filters__field">
+            <label for="job-status">Job status</label>
+            <select id="job-status" name="status">
+              <option value="">All statuses</option>
+              <option value="accepted">Accepted</option>
+              <option value="running">Running</option>
+              <option value="succeeded">Succeeded</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+          <div class="button-row">
+            <button class="button" type="submit">Filter</button>
+            <button class="button button--quiet" type="reset">Clear filters</button>
+          </div>
+        </form>
+      </div>
+      <div class="annal__body">
+        <div class="empty" data-jobs-empty hidden>
+          <p class="empty__title">No sample jobs match these filters.</p>
+        </div>
+        <div class="table-region" role="region" aria-labelledby="jobs-history-title" tabindex="0">
+          <table class="records">
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Ticket ID</th>
+                <th scope="col">Job status</th>
+                <th scope="col">Classification</th>
+                <th scope="col">Message</th>
+                <th scope="col">Request ID</th>
+              </tr>
+            </thead>
+            <tbody data-jobs-rows>
+              <tr data-ticket="4813" data-status="failed">
+                <td class="records__time" data-label="Time"><time>09:34:18</time></td>
+                <td class="records__ticket" data-label="Ticket ID"><a href="job.html">4813</a></td>
+                <td data-label="Job status"><span class="notation notation--fault">Failed</span></td>
+                <td data-label="Classification"><span class="notation notation--caution">Transient</span></td>
+                <td class="records__message" data-label="Message">Synthetic Zammad response timeout before document capture.</td>
+                <td data-label="Request ID"><code>req-demo-4813-f1</code></td>
+              </tr>
+              <tr data-ticket="4813" data-status="accepted">
+                <td class="records__time" data-label="Time"><time>09:33:59</time></td>
+                <td class="records__ticket" data-label="Ticket ID"><a href="job.html">4813</a></td>
+                <td data-label="Job status"><span class="notation notation--pending">Accepted</span></td>
+                <td data-label="Classification">–</td>
+                <td class="records__message" data-label="Message">Admitted to the process-local queue; not completed.</td>
+                <td data-label="Request ID"><code>req-demo-4813-a1</code></td>
+              </tr>
+              <tr data-ticket="4812" data-status="running">
+                <td class="records__time" data-label="Time"><time>09:29:11</time></td>
+                <td class="records__ticket" data-label="Ticket ID"><a href="job.html">4812</a></td>
+                <td data-label="Job status"><span class="notation notation--live">Running</span></td>
+                <td data-label="Classification">–</td>
+                <td class="records__message" data-label="Message">Synthetic PDF and sidecar publication in progress.</td>
+                <td data-label="Request ID"><code>req-demo-4812-r1</code></td>
+              </tr>
+              <tr data-ticket="4810" data-status="succeeded">
+                <td class="records__time" data-label="Time"><time>09:17:42</time></td>
+                <td class="records__ticket" data-label="Ticket ID"><a href="job.html">4810</a></td>
+                <td data-label="Job status"><span class="notation notation--ok">Succeeded</span></td>
+                <td data-label="Classification">–</td>
+                <td class="records__message" data-label="Message">Synthetic archive sidecar committed before terminal ticket tags.</td>
+                <td data-label="Request ID"><code>req-demo-4810-s1</code></td>
+              </tr>
+              <tr data-ticket="4807" data-status="failed">
+                <td class="records__time" data-label="Time"><time>08:55:02</time></td>
+                <td class="records__ticket" data-label="Ticket ID"><a href="job.html">4807</a></td>
+                <td data-label="Job status"><span class="notation notation--fault">Failed</span></td>
+                <td data-label="Classification"><span class="notation notation--fault">Permanent</span></td>
+                <td class="records__message" data-label="Message">Synthetic ticket payload did not meet archive policy.</td>
+                <td data-label="Request ID"><code>req-demo-4807-f1</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="colophon">
+    <p>Static demonstration with synthetic data. No backend is connected.</p>
+  </footer>
+</body>
+</html>

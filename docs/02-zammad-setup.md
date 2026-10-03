@@ -1,6 +1,6 @@
-# 02 - Zammad Setup
+# Zammad setup
 
-This guide covers Zammad-side setup for sending archive requests to the service.
+This guide covers the Zammad-side setup for sending archive requests to Chronikwerk.
 
 ## Prerequisites
 
@@ -9,7 +9,7 @@ This guide covers Zammad-side setup for sending archive requests to the service.
   `https://archiver.example.com/ingest`.
 - `ZAMMAD__WEBHOOK_HMAC_SECRET` configured in Chronikwerk.
 
-## Custom Fields
+## Custom fields
 
 Create ticket fields matching the configured Chronikwerk field names.
 
@@ -22,7 +22,7 @@ Create ticket fields matching the configured Chronikwerk field names.
 
 Admin path: `Admin -> Objects -> Ticket`.
 
-## Core Workflow Rules
+## Core workflow rules
 
 Recommended validation:
 
@@ -32,7 +32,7 @@ Recommended validation:
 
 Admin path: `Admin -> Core Workflows`.
 
-## Archive Macro
+## Archive macro
 
 Create a macro that:
 
@@ -56,7 +56,7 @@ Configure the same HMAC secret as `ZAMMAD__WEBHOOK_HMAC_SECRET`.
 Create a trigger that sends the webhook when the archive macro updates a
 ticket. Include enough payload data for the service to resolve `ticket.id`.
 
-## Smoke Test
+## Smoke test
 
 1. Fill `archive_path`; optionally choose a non-default `archive_user_mode`.
 2. Apply the archive macro.
@@ -68,7 +68,7 @@ ticket. Include enough payload data for the service to resolve `ticket.id`.
 `pdf:signed` is the retained workflow success tag and does not prove that optional PAdES
 signing ran. Verify signatures from the PDF and audit sidecar.
 
-## Common Issues
+## Common issues
 
 ### `403 forbidden`
 

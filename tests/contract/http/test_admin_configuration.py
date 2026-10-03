@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
+from chronikwerk.configuration.revisions import overlay_from_flat
 from chronikwerk.web.app import create_app
 from tests.support.settings_factory import make_settings
 
@@ -95,3 +97,50 @@ def test_admin_config_rejects_security_changes_without_acknowledgement(tmp_path)
 
     assert response.status_code == 422
     assert response.json()["code"] == "security_acknowledgement_required"
+
+
+@pytest.mark.parametrize(
+    ("path", "canonical", "legacy", "value"),
+    [
+        ("zammad.timeout_seconds", "ZAMMAD_TIMEOUT_SECONDS", "ZAMMAD__TIMEOUT_SECONDS", 20),
+        (
+            "hardening.transport.trust_env",
+            "ZAMMAD_TRUST_ENV",
+            "HARDENING__TRANSPORT__TRUST_ENV",
+            False,
+        ),
+        (
+            "hardening.transport.allow_private_networks",
+            "ZAMMAD_ALLOW_PRIVATE_ORIGIN",
+            "HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS",
+            False,
+        ),
+    ],
+)
+@pytest.mark.parametrize("use_canonical", [False, True])
+def test_alias_owned_fields_are_locked_for_display_validation_and_staging(
+    tmp_path, monkeypatch, path, canonical, legacy, value, use_canonical
+) -> None:
+    monkeypatch.delenv(canonical, raising=False)
+    monkeypatch.delenv(legacy, raising=False)
+    monkeypatch.setenv(canonical if use_canonical else legacy, str(value))
+    client = _client(tmp_path)
+    csrf = _login_and_csrf(client)
+    config = client.get("/admin/api/v1/config").json()
+    field = next(field for field in config["fields"] if field["path"] == path)
+    assert field["source"] == "environment"
+    assert field["editable"] is False
+    payload = {"values": {path: value}, "security_acknowledged": True}
+    validation = client.post(
+        "/admin/api/v1/config/validate", headers={"X-CSRF-Token": csrf}, json=payload
+    )
+    overlay = overlay_from_flat({path: value})
+    staging = client.put(
+        "/admin/api/v1/config/staged",
+        headers={"X-CSRF-Token": csrf, "If-Match": config["revision"]},
+        json={"overlay": overlay, "security_acknowledged": True},
+    )
+    for response in (validation, staging):
+        assert response.status_code == 422
+        assert response.json()["code"] == "environment_owned_field"
+    assert client.get("/admin/api/v1/config").json()["revision"] == config["revision"]

@@ -11,10 +11,11 @@ from starlette.responses import JSONResponse, Response
 
 from chronikwerk._version import __version__
 from chronikwerk.i18n import normalize_locale
-from chronikwerk.operations.history import read_history
 from chronikwerk.web.admin._route_support import (
+    _admission_status,
     _api_error,
     _api_session,
+    _history,
     _next_history_cursor,
     _request_id,
     _schedule_retry,
@@ -22,7 +23,9 @@ from chronikwerk.web.admin._route_support import (
     _settings,
 )
 from chronikwerk.web.admin.auth import SESSION_COOKIE, access_token_matches
-from chronikwerk.web.routes.healthz import _check_storage
+from chronikwerk.web.routes.healthz import check_storage
+
+router = APIRouter(prefix="/admin", include_in_schema=False)
 
 
 class SessionRequest(BaseModel):
@@ -40,6 +43,7 @@ class RetryRequest(BaseModel):
     acknowledge_overwrite: bool
 
 
+@router.post("/api/v1/session")
 async def create_session(request: Request, payload: SessionRequest) -> Response:
     """Create a short-lived admin session after credential verification."""
     settings = _settings(request)
@@ -60,6 +64,7 @@ async def create_session(request: Request, payload: SessionRequest) -> Response:
     return response
 
 
+@router.delete("/api/v1/session")
 async def delete_session(request: Request) -> Response:
     """Invalidate the current admin session and clear its browser cookie."""
     session, error = _api_session(request, csrf=True)
@@ -71,12 +76,12 @@ async def delete_session(request: Request) -> Response:
     return response
 
 
+@router.get("/api/v1/status")
 async def status_api(request: Request) -> Response:
     """Return the protected operational status view for the admin UI."""
     session, error = _api_session(request)
     if error is not None or session is None:
         return error or Response(status_code=401)
-    admission = request.app.state.admission
     store = request.app.state.managed_config_store
     current = store.current_revision()
     return JSONResponse(
@@ -85,13 +90,7 @@ async def status_api(request: Request) -> Response:
             "version": __version__,
             "process_started_at": request.app.state.process_started_at.isoformat(),
             "health": {"status": "ok"},
-            "admission": {
-                "pending": admission.pending,
-                "running": admission.running,
-                "max_pending": admission.max_pending,
-                "max_running": admission.max_running,
-                "closing": admission.closing,
-            },
+            "admission": _admission_status(request),
             "history": {"volatile": True, "limit": 5000},
             "config": {
                 "active_revision": request.app.state.active_config_revision,
@@ -103,15 +102,17 @@ async def status_api(request: Request) -> Response:
     )
 
 
+@router.post("/api/v1/status/storage-check")
 async def storage_check_api(request: Request) -> Response:
     """Check configured storage and return a safe diagnostics result."""
     session, error = _api_session(request, csrf=True)
     if error is not None or session is None:
         return error or Response(status_code=401)
-    result = await asyncio.to_thread(_check_storage, _settings(request))
+    result = await asyncio.to_thread(check_storage, _settings(request))
     return JSONResponse({"storage": result, "request_id": _request_id(request)})
 
 
+@router.get("/api/v1/jobs")
 async def jobs_api(
     request: Request,
     limit: int = Query(default=50, ge=1, le=100),
@@ -123,7 +124,7 @@ async def jobs_api(
     session, error = _api_session(request)
     if error is not None or session is None:
         return error or Response(status_code=401)
-    items = read_history(
+    items = _history(request).read(
         limit + 1,
         ticket_id,
         before_id=before_id,
@@ -140,6 +141,7 @@ async def jobs_api(
     )
 
 
+@router.post("/api/v1/jobs/{ticket_id}/retry")
 async def retry_api(
     request: Request,
     payload: RetryRequest,
@@ -157,7 +159,7 @@ async def retry_api(
             "admin.retry_warning",
             locale=session.locale,
         )
-    if not _schedule_retry(request, ticket_id=ticket_id, settings=_settings(request)):
+    if not _schedule_retry(request, ticket_id=ticket_id):
         response = _api_error(
             request,
             503,
@@ -174,22 +176,4 @@ async def retry_api(
             "ticket_id": ticket_id,
             "request_id": _request_id(request),
         },
-    )
-
-
-def register_status_routes(router: APIRouter) -> None:
-    """Register this route group during application startup."""
-    router.add_api_route("/api/v1/session", create_session, methods=["POST"])
-    router.add_api_route("/api/v1/session", delete_session, methods=["DELETE"])
-    router.add_api_route("/api/v1/status", status_api, methods=["GET"])
-    router.add_api_route(
-        "/api/v1/status/storage-check",
-        storage_check_api,
-        methods=["POST"],
-    )
-    router.add_api_route("/api/v1/jobs", jobs_api, methods=["GET"])
-    router.add_api_route(
-        "/api/v1/jobs/{ticket_id}/retry",
-        retry_api,
-        methods=["POST"],
     )

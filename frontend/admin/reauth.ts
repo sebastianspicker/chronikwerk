@@ -2,6 +2,7 @@
 
 import { qs } from './dom';
 import { preserveConfigDraft } from './config';
+import { setButtonPending } from './pending';
 import type { ConfigForm } from './types';
 
 const showReauthError = (error: HTMLElement | null, message: string): void => {
@@ -13,10 +14,11 @@ const showReauthError = (error: HTMLElement | null, message: string): void => {
 const submitReauthForm = async (form: ConfigForm, event: SubmitEvent): Promise<void> => {
   // Persist the safe draft only after a successful replacement session is established.
   event.preventDefault();
+  if (form.getAttribute('aria-busy') === 'true') return;
   const error = qs<HTMLElement>('[data-reauth-error]', form);
   const submit = qs<HTMLButtonElement>('button[type="submit"]', form);
   if (error) error.hidden = true;
-  if (submit) submit.disabled = true;
+  setButtonPending(submit, true);
   form.setAttribute('aria-busy', 'true');
   try {
     const response = await fetch('/admin/api/v1/session', {
@@ -34,7 +36,7 @@ const submitReauthForm = async (form: ConfigForm, event: SubmitEvent): Promise<v
     showReauthError(error, error?.dataset.networkError ?? '');
   } finally {
     form.removeAttribute('aria-busy');
-    if (submit) submit.disabled = false;
+    setButtonPending(submit, false);
   }
 };
 

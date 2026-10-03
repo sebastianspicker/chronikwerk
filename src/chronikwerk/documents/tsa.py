@@ -15,15 +15,13 @@ from chronikwerk.failures import PermanentError, TransientError
 from chronikwerk.outbound import (
     OutboundPolicyPermanentError,
     OutboundPolicyTransientError,
-    validate_url_policy_async,
-)
-from chronikwerk.zammad.http import (
     ResponseBodyTooLargeError,
     UnsupportedResponseEncodingError,
     buffered_response,
     pin_request_url,
     read_response_body_limited,
     timeouts_for,
+    validate_url_policy_async,
 )
 
 _MAX_TSA_RESPONSE_BODY_BYTES = 1024 * 1024

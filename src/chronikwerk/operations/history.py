@@ -1,4 +1,4 @@
-"""Maintain optional bounded in-memory job history for operator views."""
+"""Maintain bounded in-memory job history owned by one application instance."""
 
 from __future__ import annotations
 
@@ -7,11 +7,9 @@ from collections import deque
 from itertools import count
 from typing import Any
 
-from chronikwerk.configuration.redaction import scrub_secrets_in_text
+from chronikwerk.redaction import scrub_secrets_in_text
 
-_MAX_HISTORY = 5000
-_HISTORY: deque[dict[str, Any]] = deque(maxlen=_MAX_HISTORY)
-_HISTORY_IDS = count(1)
+_DEFAULT_MAX_ENTRIES = 5000
 
 
 def _matches_status(status: str, statuses: set[str] | None) -> bool:
@@ -35,53 +33,59 @@ def _matches_history_filters(
     return _matches_status(str(item["status"]), statuses)
 
 
-def record_history_event(
-    status: str,
-    ticket_id: int | None,
-    classification: str | None = None,
-    message: str | None = None,
-    delivery_id: str | None = None,
-    request_id: str | None = None,
-) -> None:
-    """Record one bounded, non-secret history event for operators."""
-    _HISTORY.append(
-        {
-            "id": str(next(_HISTORY_IDS)),
-            "status": status,
-            "ticket_id": ticket_id,
-            "classification": classification,
-            "message": scrub_secrets_in_text(message or ""),
-            "delivery_id": delivery_id,
-            "request_id": request_id,
-            "created_at": time.time(),
-        }
-    )
+class JobHistory:
+    """Bounded, volatile operator history; one instance per application process."""
 
+    def __init__(self, *, max_entries: int = _DEFAULT_MAX_ENTRIES) -> None:
+        self._max_entries = max_entries
+        self._entries: deque[dict[str, Any]] = deque(maxlen=max_entries)
+        self._ids = count(1)
 
-def read_history(
-    limit: int,
-    ticket_id: int | None = None,
-    *,
-    before_id: int | None = None,
-    statuses: set[str] | None = None,
-) -> list[dict[str, Any]]:
-    """Return a safe copy of the optional in-memory job history."""
-    bounded_limit = max(0, min(int(limit), _MAX_HISTORY))
-    items = [
-        item
-        for item in reversed(_HISTORY)
-        if _matches_history_filters(
-            item,
-            ticket_id=ticket_id,
-            before_id=before_id,
-            statuses=statuses,
+    def record(
+        self,
+        status: str,
+        ticket_id: int | None,
+        classification: str | None = None,
+        message: str | None = None,
+        delivery_id: str | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        """Record one bounded, non-secret history event for operators."""
+        self._entries.append(
+            {
+                "id": str(next(self._ids)),
+                "status": status,
+                "ticket_id": ticket_id,
+                "classification": classification,
+                "message": scrub_secrets_in_text(message or ""),
+                "delivery_id": delivery_id,
+                "request_id": request_id,
+                "created_at": time.time(),
+            }
         )
-    ]
-    return items[:bounded_limit]
 
+    def read(
+        self,
+        limit: int,
+        ticket_id: int | None = None,
+        *,
+        before_id: int | None = None,
+        statuses: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the newest matching entries, newest first."""
+        bounded_limit = max(0, min(int(limit), self._max_entries))
+        if bounded_limit == 0:
+            return []
 
-def reset_for_tests() -> None:
-    """Clear process-local diagnostic state between isolated tests."""
-    global _HISTORY_IDS
-    _HISTORY.clear()
-    _HISTORY_IDS = count(1)
+        items: list[dict[str, Any]] = []
+        for item in reversed(self._entries):
+            if _matches_history_filters(
+                item,
+                ticket_id=ticket_id,
+                before_id=before_id,
+                statuses=statuses,
+            ):
+                items.append(item)
+                if len(items) == bounded_limit:
+                    break
+        return items

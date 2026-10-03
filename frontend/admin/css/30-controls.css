@@ -1,222 +1,418 @@
-/* Buttons, forms, banners, dialog */
+/* Controls: buttons, fields, notations, banners, disclosures, dialog */
 .button {
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--ink-200);
-  border-radius: var(--radius);
-  color: var(--ink-900);
-  cursor: pointer;
   display: inline-flex;
-  font-size: 0.88rem;
-  font-weight: 650;
+  align-items: center;
   justify-content: center;
-  min-height: var(--control-height);
-  padding: 8px 14px;
+  gap: var(--s-2);
+  min-height: var(--control-h);
+  padding: 0 1.125rem;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink);
+  font-size: var(--step-0);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
   text-decoration: none;
-  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+  cursor: pointer;
+  transition:
+    background-color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
 }
 
 .button:hover {
-  background: var(--ink-50);
-  border-color: var(--ink-400);
-  color: var(--ink-900);
+  background: var(--paper-sunk);
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .button:active {
-  background: var(--ink-100);
-}
-
-.button:disabled {
-  background: var(--ink-100);
-  border-color: var(--ink-200);
-  color: var(--ink-500);
-  cursor: not-allowed;
-  opacity: 1;
+  background: var(--rule);
 }
 
 .button--primary {
-  background: var(--process);
-  border-color: var(--process);
-  color: var(--surface);
+  border-color: var(--copy-ink);
+  background: var(--copy-ink);
+  color: var(--on-copy-ink);
 }
 
 .button--primary:hover {
-  background: var(--process-deep);
-  border-color: var(--process-deep);
-  color: var(--surface);
+  border-color: var(--copy-ink-deep);
+  background: var(--copy-ink-deep);
+  color: var(--on-copy-ink);
+}
+
+.button--primary:active {
+  background: var(--copy-ink-deep);
 }
 
 .button--quiet {
-  background: transparent;
   border-color: transparent;
-  color: var(--ink-600);
+  background: transparent;
+  color: var(--copy-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
 }
 
 .button--quiet:hover {
-  background: var(--ink-50);
-  border-color: transparent;
-  color: var(--ink-900);
+  background: var(--copy-ink-wash);
+  color: var(--copy-ink-deep);
+  text-decoration: underline;
 }
 
 .button--danger {
-  background: var(--surface);
   border-color: var(--fault);
   color: var(--fault);
 }
 
 .button--danger:hover {
-  background: var(--fault-bg);
-  border-color: var(--fault);
+  background: var(--fault-wash);
   color: var(--fault);
 }
 
-.button--full {
-  width: 100%;
+.button:disabled,
+.button[aria-disabled="true"] {
+  border-color: var(--rule);
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+.button[aria-busy="true"] {
+  cursor: progress;
 }
 
 .button-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 20px;
+  gap: var(--s-3);
 }
 
-input,
+label {
+  font-weight: 500;
+}
+
+input:not([type="checkbox"]),
 select {
-  background: var(--surface);
-  border: 1px solid var(--ink-200);
+  display: block;
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--s-3);
+  border: 1px solid var(--field-edge);
   border-radius: var(--radius);
-  color: var(--ink-900);
-  min-height: var(--control-height);
-  padding: 8px 11px;
+  background: var(--sheet);
+  color: var(--ink);
+  font-size: var(--step-0);
+  transition: border-color var(--t-fast) var(--ease);
 }
 
-input:hover,
+input[type="number"],
+input[type="password"] {
+  font-family: var(--font-mono);
+}
+
+select {
+  appearance: none;
+  padding-right: 2.25rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-2) 50%),
+    linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
+  background-position:
+    calc(100% - 1.125rem) 50%,
+    calc(100% - 0.8125rem) 50%;
+  background-size: 0.3125rem 0.3125rem;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+input:not([type="checkbox"]):hover,
 select:hover {
-  border-color: var(--ink-400);
+  border-color: var(--ink-2);
 }
 
-input:focus,
-select:focus {
-  border-color: var(--process);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--process) 16%, transparent);
-  outline: 0;
+input:not([type="checkbox"]):focus-visible,
+select:focus-visible {
+  border-color: var(--copy-ink);
+  outline-offset: 0;
 }
 
 input:disabled,
 select:disabled {
-  background: var(--ink-50);
-  color: var(--ink-500);
+  border-style: dashed;
+  border-color: var(--field-edge);
+  background-color: var(--paper-sunk);
+  color: var(--ink-3);
   cursor: not-allowed;
-  opacity: 1;
 }
 
-input[aria-invalid="true"],
-select[aria-invalid="true"] {
-  border-color: var(--fault);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--fault) 14%, transparent);
-}
-
-label {
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
+[aria-invalid="true"] {
+  border-width: 2px;
+  border-color: var(--fault) !important;
 }
 
 .checkbox {
-  align-items: flex-start;
   display: flex;
-  gap: 9px;
-  line-height: 1.45;
+  align-items: flex-start;
+  gap: var(--s-3);
+  min-height: var(--control-h);
+  padding: var(--s-2) 0;
+  font-weight: 400;
+  line-height: 1.4;
+  cursor: pointer;
 }
 
 .checkbox input {
-  accent-color: var(--process);
-  flex: 0 0 auto;
-  min-height: 20px;
-  min-width: 20px;
-}
-
-.banner {
-  border: 1px solid var(--ink-100);
-  border-left-width: 4px;
-  border-radius: var(--radius);
-  margin: 18px 0 24px;
-  overflow-wrap: anywhere;
-  padding: 14px 16px;
-}
-
-.banner--warning {
-  background: var(--warn-bg);
-  border-color: var(--warn-edge);
-  color: var(--warn);
-}
-
-.banner--error {
-  background: var(--fault-bg);
-  border-color: var(--fault-edge);
-  color: var(--fault);
-}
-
-.banner--success {
-  background: var(--ok-bg);
-  border-color: var(--ok-edge);
-  color: var(--ok);
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0.05rem 0 0;
+  accent-color: var(--copy-ink);
+  cursor: pointer;
 }
 
 .field-error {
+  margin-top: var(--s-2);
   color: var(--fault);
-  font-size: 0.8rem;
-  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 500;
+}
+
+/* Notations: a clerk's underscored annotation. Glyph + text + tone; never colour alone. */
+.notation,
+.state-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 700;
+  letter-spacing: var(--track-label);
+  line-height: 1.3;
+  text-transform: uppercase;
+  text-decoration: underline 2px;
+  text-decoration-color: currentColor;
+  text-underline-offset: 0.35em;
+  white-space: nowrap;
+}
+
+.notation::before,
+.state-value::before {
+  content: "";
+  flex: none;
+  width: 0.55em;
+  height: 0.55em;
+  background: currentColor;
+}
+
+.notation--ok,
+.state-value--success {
+  color: var(--ok);
+}
+
+.notation--fault,
+.state-value--error {
+  color: var(--fault);
+}
+
+.notation--fault::before,
+.state-value--error::before {
+  transform: rotate(45deg) scale(0.9);
+}
+
+.notation--caution,
+.state-value--warning {
+  color: var(--caution);
+}
+
+.notation--caution::before,
+.state-value--warning::before {
+  width: 0.65em;
+  height: 0.6em;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.notation--live {
+  color: var(--copy-ink);
+}
+
+.notation--live::before {
+  border-radius: 50%;
+}
+
+.notation--pending::before {
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.notation--idle {
+  color: var(--ink-3);
+  text-decoration-style: dotted;
+}
+
+.notation--idle::before {
+  height: 2px;
+  width: 0.7em;
+}
+
+/* Banners: persistent feedback with a ruled edge, not a floating card. */
+.banner {
+  max-width: none;
+  margin-bottom: var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  border-left: 4px solid var(--ink-2);
+  background: var(--paper-sunk);
+  color: var(--ink);
+  font-size: var(--step-0);
+}
+
+.banner code {
+  display: inline-block;
+  margin-top: var(--s-1);
+  color: var(--ink-2);
+}
+
+.banner strong {
+  font-weight: 700;
+}
+
+.banner--success {
+  border-left-color: var(--ok);
+  background: var(--ok-wash);
+}
+
+.banner--warning {
+  border-left-color: var(--caution);
+  background: var(--caution-wash);
+}
+
+.banner--error {
+  border-left-color: var(--fault);
+  background: var(--fault-wash);
+}
+
+.banner:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .inline-result {
-  margin-top: 12px;
-  min-height: 24px;
+  font-size: var(--step-0);
+  font-weight: 500;
+}
+
+.inline-result:empty {
+  display: none;
 }
 
 .inline-result.banner--success,
 .inline-result.banner--error {
-  border: 1px solid;
-  border-left-width: 4px;
-  padding: 12px 14px;
+  margin: var(--s-3) 0 0;
+  padding: var(--s-3) var(--s-4);
+  border-left: 4px solid;
 }
 
-.empty-state {
-  background: var(--ink-50);
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius);
-  color: var(--ink-600);
-  margin: 18px 0;
-  padding: 24px;
+.inline-result.banner--success {
+  border-left-color: var(--ok);
 }
 
+.inline-result.banner--error {
+  border-left-color: var(--fault);
+}
+
+/* Consequential actions are disclosed, then acknowledged, then submitted. */
+.disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control-h);
+  color: var(--copy-ink);
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-block: 0.3em solid transparent;
+  border-left: 0.42em solid currentColor;
+  transition: transform var(--t-fast) var(--ease);
+}
+
+.disclosure[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.disclosure > summary:hover {
+  color: var(--copy-ink-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.disclosure--danger > summary {
+  color: var(--fault);
+}
+
+.disclosure--danger > summary:hover {
+  color: var(--fault);
+}
+
+.disclosure__panel {
+  display: grid;
+  gap: var(--s-3);
+  max-width: 34rem;
+  margin-top: var(--s-2);
+  padding: var(--s-4);
+  border: var(--hairline);
+  border-left: 4px solid var(--fault);
+  background: var(--sheet);
+}
+
+.disclosure__panel .button {
+  justify-self: start;
+}
+
+/* Native dialog for reauthentication */
 dialog {
-  background: var(--surface);
-  border: 1px solid var(--ink-200);
+  width: min(28rem, calc(100vw - 2rem));
+  padding: var(--s-6);
+  border: 1px solid var(--ink);
   border-radius: var(--radius);
-  border-top: 6px solid var(--process);
-  color: var(--ink-900);
-  max-width: 540px;
-  padding: 28px;
-  width: calc(100% - 32px);
+  background: var(--sheet);
+  color: var(--ink);
 }
 
 dialog::backdrop {
-  background: rgb(6 16 31 / 58%);
+  background: rgb(30 27 36 / 50%);
 }
 
 dialog h2 {
-  margin-bottom: 10px;
+  font-size: var(--step-2);
+}
+
+dialog p {
+  margin: var(--s-2) 0 var(--s-5);
+  color: var(--ink-2);
 }
 
 dialog form {
   display: grid;
-  gap: 9px;
-  margin-top: 20px;
+  gap: var(--s-3);
+}
+
+dialog .button-row {
+  margin-top: var(--s-2);
+}
+
+.banner:empty {
+  display: none;
 }

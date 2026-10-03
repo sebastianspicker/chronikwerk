@@ -11,7 +11,8 @@ from typing import Any
 import structlog
 from structlog.stdlib import ProcessorFormatter
 
-from chronikwerk.configuration.redaction import redact_settings_dict, scrub_secrets_in_text
+from chronikwerk.configuration.redaction import redact_settings_dict
+from chronikwerk.redaction import scrub_secrets_in_text
 
 
 def _scrub_event_dict(_: Any, __: str, event_dict: dict[str, Any]) -> dict[str, Any]:

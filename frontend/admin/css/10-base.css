@@ -1,39 +1,67 @@
-/* Base element resets and typography */
-* {
+/* Base elements */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
 html {
-  background: var(--canvas);
-  color: var(--ink-900);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-text);
+  font-size: 100%;
+  line-height: var(--leading);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
-  background: var(--canvas);
   margin: 0;
-  min-height: 100%;
-  min-width: 320px;
+  min-height: 100vh;
+  background: var(--paper);
+  font-size: var(--step-1);
+  font-variant-numeric: tabular-nums;
 }
 
-body,
-button,
-input,
-select {
-  font-family: var(--sans);
+h1,
+h2,
+h3,
+p,
+ol,
+ul,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 700;
+  line-height: var(--leading-tight);
+  text-wrap: balance;
+}
+
+p {
+  max-width: 68ch;
+  text-wrap: pretty;
 }
 
 a {
-  color: var(--process);
+  color: var(--copy-ink);
   text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
+  text-underline-offset: 0.2em;
+  transition: color var(--t-fast) var(--ease);
 }
 
 a:hover {
-  color: var(--process-deep);
+  color: var(--copy-ink-deep);
+  text-decoration-thickness: 2px;
 }
 
 :focus-visible {
-  outline: 3px solid var(--process);
+  outline: var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -42,74 +70,54 @@ a:hover {
 }
 
 code,
-.mono {
-  font-family: var(--mono);
-  font-size: 0.88em;
-  font-variant-numeric: tabular-nums;
+.mono,
+time {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  font-variant-ligatures: none;
   overflow-wrap: anywhere;
 }
 
-button {
-  cursor: pointer;
+time {
+  white-space: nowrap;
+}
+
+button,
+input,
+select,
+textarea {
   font: inherit;
-}
-
-h1,
-h2,
-h3,
-p,
-dl,
-dt,
-dd {
-  margin: 0;
-}
-
-/* Product UI scale, not marketing display */
-h1 {
-  color: var(--ink-950);
-  font-size: 1.75rem;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 1.15;
-  margin-bottom: 0.5rem;
-}
-
-h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
-}
-
-p {
-  line-height: 1.5;
-}
-
-table {
-  border-collapse: collapse;
-  width: 100%;
+  color: inherit;
 }
 
 .visually-hidden {
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
+  position: absolute !important;
+  width: 1px;
   height: 1px;
   overflow: hidden;
-  position: absolute;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
-  width: 1px;
 }
 
 .skip-link {
-  background: var(--ink-950);
-  color: var(--surface);
-  left: 16px;
-  padding: 12px 16px;
-  position: fixed;
-  top: -72px;
-  z-index: 100;
+  position: absolute;
+  top: var(--s-2);
+  left: var(--s-2);
+  z-index: 10;
+  padding: var(--s-2) var(--s-4);
+  background: var(--copy-ink);
+  color: var(--on-copy-ink);
+  font-weight: 700;
+  transform: translateY(-200%);
 }
 
 .skip-link:focus {
-  top: 12px;
+  transform: none;
+  color: var(--on-copy-ink);
+}
+
+::selection {
+  background: var(--copy-ink-wash);
+  color: var(--ink);
 }

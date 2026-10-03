@@ -1,0 +1,90 @@
+/* Annalen design tokens. Every later rule should trace back to one of these. */
+:root {
+  color-scheme: light dark;
+
+  /* Paper and ink. Copying ink (#4B3A8A) is the brand mark's colour: it marks what is
+     of record and what the operator can act on, never a decorative field. */
+  --paper: #f8f7f4;
+  --paper-sunk: #f0eef0;
+  --sheet: #ffffff;
+  --ink: #1e1b24;
+  --ink-2: #4f4957;
+  --ink-3: #6b6573;
+  --rule: #dad6de;
+  --rule-strong: #b9b3c0;
+  --field-edge: #857f8c; /* >= 3:1 against paper and sheet (WCAG 1.4.11) */
+  --copy-ink: #4b3a8a;
+  --copy-ink-deep: #382a6e;
+  --copy-ink-wash: #eeebf7;
+  --on-copy-ink: #ffffff;
+
+  /* Semantic states: always paired with a glyph and text. */
+  --ok: #1d6b45;
+  --ok-wash: #e7f2ec;
+  --caution: #7a5300;
+  --caution-wash: #faf1dc;
+  --fault: #a3222f;
+  --fault-wash: #f9e9ea;
+
+  /* Type */
+  --font-text: "Atkinson Hyperlegible Next", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  --step--1: 0.8125rem;  /* margin labels, notations, captions */
+  --step-0: 0.9375rem;   /* data, controls */
+  --step-1: 1rem;        /* reading text */
+  --step-2: 1.25rem;     /* section headings */
+  --step-3: 1.625rem;    /* figures */
+  --step-4: 2.125rem;    /* page title */
+  --leading: 1.5;
+  --leading-tight: 1.2;
+  --track-label: 0.06em;
+
+  /* Space: 4px base */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 3rem;
+  --s-8: 4rem;
+
+  /* Geometry: the annal grid is a margin track and a body track divided by one rule. */
+  --page-max: 80rem;
+  --gutter: clamp(1rem, 3vw, 2.5rem);
+  --margin-track: 13.5rem;
+  --margin-gap: var(--s-6);
+  --hairline: 1px solid var(--rule);
+  --control-h: 2.75rem;
+  --radius: 2px;
+  --focus-ring: 3px solid var(--copy-ink);
+
+  /* Motion: colour only, never position. */
+  --t-fast: 120ms;
+  --t-reveal: 160ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #16141a;
+    --paper-sunk: #1d1b22;
+    --sheet: #211e27;
+    --ink: #ece9f0;
+    --ink-2: #c3bdcb;
+    --ink-3: #a59fae;
+    --rule: #3a3542;
+    --rule-strong: #575060;
+    --field-edge: #7b7486;
+    --copy-ink: #b4a6f0;
+    --copy-ink-deep: #cdc3f6;
+    --copy-ink-wash: #2a2540;
+    --on-copy-ink: #16141a;
+    --ok: #7fcfa2;
+    --ok-wash: #16281f;
+    --caution: #e6bb5e;
+    --caution-wash: #2c2312;
+    --fault: #f19ba3;
+    --fault-wash: #34171b;
+  }
+}

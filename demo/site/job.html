@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket 4813 · Chronikwerk Administration demonstration</title>
+  <link rel="icon" href="assets/chronikwerk-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/admin.css">
+  <link rel="stylesheet" href="assets/demo.css">
+  <script src="assets/demo.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="runhead">
+    <div class="runhead__inner">
+      <a class="wordmark" href="index.html">
+        <img src="assets/chronikwerk-mark.svg" alt="" width="28" height="28">
+        <span>
+          <span class="wordmark__name">Chronikwerk</span>
+          <span class="wordmark__kind">Administration</span>
+        </span>
+      </a>
+      <nav class="routes" aria-label="Primary navigation">
+        <a href="index.html">Overview</a>
+        <a href="jobs.html" aria-current="page">Jobs</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="tour.html">Tour</a>
+      </nav>
+      <div class="runhead__tools">
+        <p class="margin-note">Demonstration · synthetic data</p>
+      </div>
+    </div>
+  </header>
+  <main id="main-content" class="page" tabindex="-1">
+    <header class="page-head">
+      <div class="page-head__margin">
+        <a class="back-link" href="jobs.html"><span aria-hidden="true">←</span> Back to jobs</a>
+      </div>
+      <div class="page-head__body">
+        <div class="page-head__title">
+          <h1>Ticket history <code>4813</code></h1>
+          <p class="lede">Synthetic, process-local history.</p>
+        </div>
+      </div>
+    </header>
+    <div class="annal annal--notice">
+      <div class="annal__margin"></div>
+      <div class="annal__body">
+      <aside class="demo-notice" role="note">
+        <p><strong>Interactive demonstration.</strong> No backend is connected.</p>
+        <p>This retry control changes only the visible sample timeline. It does not contact Zammad or create an archive.</p>
+      </aside>
+      </div>
+    </div>
+    <div class="annal annal--notice">
+      <div class="annal__margin"></div>
+      <div class="annal__body">
+        <div class="banner banner--error">Most recent sample attempt failed transiently. A retry may be admitted, but acceptance is not completion.</div>
+      </div>
+    </div>
+    <section class="annal" aria-labelledby="ticket-history-title">
+      <div class="annal__margin">
+        <h2 id="ticket-history-title">Activity record</h2>
+        <p class="margin-note">Volatile process record</p>
+      </div>
+      <div class="annal__body annal__body--flush"></div>
+      <ol class="chronicle" data-job-timeline>
+        <li class="chronicle__entry chronicle__entry--fault">
+          <div class="chronicle__when"><time datetime="2026-08-31T09:34:18+02:00">31 Aug 2026, 09:34:18</time></div>
+          <div class="chronicle__what">
+            <p class="chronicle__tags"><span class="notation notation--fault">Failed</span> <span class="notation notation--caution">Transient</span></p>
+            <p class="chronicle__message">Synthetic Zammad response timeout before document capture.</p>
+            <p class="chronicle__ref"><span class="visually-hidden">Request ID: </span><code>req-demo-4813-f1</code></p>
+          </div>
+        </li>
+        <li class="chronicle__entry chronicle__entry--pending">
+          <div class="chronicle__when"><time datetime="2026-08-31T09:33:59+02:00">31 Aug 2026, 09:33:59</time></div>
+          <div class="chronicle__what">
+            <p class="chronicle__tags"><span class="notation notation--pending">Accepted</span></p>
+            <p class="chronicle__message">Admitted to the process-local queue; no durable completion claim was made.</p>
+            <p class="chronicle__ref"><span class="visually-hidden">Request ID: </span><code>req-demo-4813-a1</code></p>
+          </div>
+        </li>
+      </ol>
+    </section>
+    <section class="annal" aria-labelledby="ticket-actions-title">
+      <div class="annal__margin">
+        <h2 id="ticket-actions-title">Actions</h2>
+      </div>
+      <div class="annal__body">
+        <p class="inline-result" data-retry-result aria-live="polite"></p>
+        <details class="disclosure disclosure--danger">
+          <summary>Retry archive job</summary>
+          <form class="disclosure__panel" data-demo-retry>
+            <p>Retrying can create a new archive attempt for this ticket. Confirm that this is a demonstration acknowledgement before simulating admission.</p>
+            <label class="checkbox" for="retry-ack">
+              <input id="retry-ack" type="checkbox" required> I acknowledge that this sample retry only simulates a new accepted event.
+            </label>
+            <button class="button button--danger" type="submit" disabled>Simulate retry admission</button>
+          </form>
+        </details>
+      </div>
+    </section>
+  </main>
+  <footer class="colophon">
+    <p>Static demonstration with synthetic data. No backend is connected.</p>
+  </footer>
+</body>
+</html>

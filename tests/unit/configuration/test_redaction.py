@@ -1,10 +1,7 @@
 """Verify configuration redaction preserves shape without leaking secrets."""
 
-from chronikwerk.configuration.redaction import (
-    REDACTED_VALUE,
-    redact_settings_dict,
-    scrub_secrets_in_text,
-)
+from chronikwerk.configuration.redaction import redact_settings_dict
+from chronikwerk.redaction import REDACTED_VALUE, scrub_secrets_in_text
 
 
 def test_redaction_preserves_shape_without_disclosing_tokens() -> None:

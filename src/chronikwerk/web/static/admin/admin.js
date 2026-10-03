@@ -2,6 +2,20 @@
 var qs = (selector, parent = document) => parent.querySelector(selector);
 var qsa = (selector, parent = document) => [...parent.querySelectorAll(selector)];
 
+// frontend/admin/pending.ts
+function setButtonPending(button, pending) {
+  if (!button) return;
+  if (pending) {
+    button.dataset.idleLabel ??= button.textContent ?? "";
+    if (button.dataset.pending) button.textContent = button.dataset.pending;
+    button.setAttribute("aria-busy", "true");
+  } else {
+    if (button.dataset.idleLabel !== void 0) button.textContent = button.dataset.idleLabel;
+    button.removeAttribute("aria-busy");
+  }
+  button.disabled = pending;
+}
+
 // frontend/admin/boot.ts
 function initAutoSubmit() {
   qsa("[data-auto-submit]").forEach((control) => {
@@ -15,6 +29,27 @@ function initAutoSubmit() {
 function initDialogClose() {
   qs("[data-dialog-close]")?.addEventListener("click", () => {
     qs("#reauth-dialog")?.close();
+  });
+}
+function initPendingForms() {
+  qsa("[data-pending-form]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      if (form.dataset.submitting === "true") {
+        event.preventDefault();
+        return;
+      }
+      if (event.defaultPrevented) return;
+      form.dataset.submitting = "true";
+      form.setAttribute("aria-busy", "true");
+      setButtonPending(qs('button[type="submit"]', form), true);
+    });
+  });
+  window.addEventListener("pageshow", () => {
+    qsa("[data-pending-form]").forEach((form) => {
+      delete form.dataset.submitting;
+      form.removeAttribute("aria-busy");
+      setButtonPending(qs('button[type="submit"]', form), false);
+    });
   });
 }
 
@@ -116,20 +151,28 @@ var configValues = (form) => {
   }
   return Object.fromEntries(entries);
 };
-var changedConfigFieldCount = (form) => qsa(".config-field", form).filter((row) => {
+var fieldChanged = (row) => {
   const control = configControl(row);
   if (!control || control.disabled) return false;
   const value = parsedConfigValue(row.dataset.kind, control.value);
-  const original = JSON.parse(row.dataset.original ?? "null");
-  return JSON.stringify(value) !== JSON.stringify(original);
-}).length;
+  return JSON.stringify(value) !== JSON.stringify(JSON.parse(row.dataset.original ?? "null"));
+};
 var updateConfigChangeCount = (form) => {
+  const rows = qsa(".config-field", form);
+  let count = 0;
+  rows.forEach((row) => {
+    const changed = fieldChanged(row);
+    row.dataset.changed = String(changed);
+    if (changed) count += 1;
+  });
   const output = qs("[data-change-count]", form);
-  if (!output) return;
-  const count = changedConfigFieldCount(form);
-  if (count === 0) output.textContent = output.dataset.zero ?? "";
-  else if (count === 1) output.textContent = output.dataset.one ?? "";
-  else output.textContent = (output.dataset.many ?? "").replace("{count}", String(count));
+  if (output) {
+    const label = count === 0 ? output.dataset.zero : count === 1 ? output.dataset.one : output.dataset.many;
+    output.textContent = (label ?? "").replace("{count}", String(count));
+  }
+  const acknowledgement = qs("[data-security-ack]", form);
+  if (acknowledgement) acknowledgement.hidden = !rows.some((row) => row.dataset.security === "true" && (fieldChanged(row) || row.dataset.managed === "true"));
+  return count;
 };
 var clearValidationFeedback = (form, errorSummary) => {
   qsa(".config-field", form).forEach((row) => {
@@ -143,7 +186,13 @@ var showConfigStageResult = (form, response, data) => {
   if (!result) return;
   result.textContent = response.ok ? `${result.dataset.success ?? ""} ${data.revision ?? ""}`.trim() : data.message ?? "";
   result.className = `inline-result ${response.ok ? "banner--success" : "banner--error"}`;
-  if (response.ok && data.revision) form.dataset.revision = data.revision;
+  if (response.ok && data.revision) {
+    form.dataset.revision = data.revision;
+    const banner = qs("[data-config-staged]");
+    const revision = qs("[data-staged-revision]");
+    if (banner) banner.hidden = false;
+    if (revision) revision.textContent = data.revision;
+  }
 };
 var showValidationError = (form, path, message) => {
   const row = qsa(".config-field", form).find((node) => node.dataset.path === path);
@@ -164,9 +213,13 @@ var showValidationErrors = (form, errorSummary, data) => {
 };
 var configReviewRow = (path, before, after) => {
   const row = document.createElement("tr");
-  [path, JSON.stringify(before), JSON.stringify(after)].forEach((value) => {
+  row.dataset.path = path;
+  const labels = qs("[data-config-review]")?.dataset;
+  const headings = [labels?.labelPath, labels?.labelBefore, labels?.labelAfter];
+  [path, JSON.stringify(before), JSON.stringify(after)].forEach((value, index) => {
     const cell = document.createElement("td");
     cell.textContent = value;
+    cell.dataset.label = headings[index] ?? "";
     row.append(cell);
   });
   return row;
@@ -191,9 +244,11 @@ var showConfigReview = (form, data) => {
   tbody.replaceChildren(...diff.map((item) => configReviewRow(item.path, item.before, item.after)));
   updateConfigReviewState(review, diff.length);
   review.hidden = false;
-  review.scrollIntoView({ block: "start" });
+  review.tabIndex = -1;
+  review.focus({ preventScroll: true });
+  review.scrollIntoView({ block: "nearest" });
 };
-var requestConfigValidation = async (form, errorSummary) => {
+var requestConfigValidation = async (form, errorSummary, isCurrent) => {
   try {
     const response = await adminFetch("/admin/api/v1/config/validate", {
       method: "POST",
@@ -205,19 +260,13 @@ var requestConfigValidation = async (form, errorSummary) => {
     return { response, data: await response.json() };
   } catch (error) {
     const sessionExpired = error instanceof Error && error.message === "session_expired";
-    if (!sessionExpired && errorSummary) {
+    if (!sessionExpired && errorSummary && isCurrent()) {
       errorSummary.textContent = errorSummary.dataset.networkError ?? "";
       errorSummary.hidden = false;
       errorSummary.focus();
     }
     return null;
   }
-};
-var setConfigValidationButtonState = (button, isValidating) => {
-  if (!button) return;
-  button.disabled = isValidating;
-  if (isValidating) button.setAttribute("aria-busy", "true");
-  else button.removeAttribute("aria-busy");
 };
 var handleConfigValidationResult = (form, errorSummary, result) => {
   if (!result) return null;
@@ -228,9 +277,7 @@ var handleConfigValidationResult = (form, errorSummary, result) => {
   showConfigReview(form, result.data);
   return result.data;
 };
-var stageValidatedConfig = async (form, overlay, button) => {
-  button.disabled = true;
-  button.setAttribute("aria-busy", "true");
+var stageValidatedConfig = async (form, overlay) => {
   try {
     const response = await adminFetch("/admin/api/v1/config/staged", {
       method: "PUT",
@@ -238,6 +285,7 @@ var stageValidatedConfig = async (form, overlay, button) => {
       body: JSON.stringify({ overlay, security_acknowledged: formSecurityAcknowledged(form) })
     });
     showConfigStageResult(form, response, await response.json());
+    return response.ok;
   } catch (error) {
     const sessionExpired = error instanceof Error && error.message === "session_expired";
     const result = qs("[data-config-result]");
@@ -245,46 +293,144 @@ var stageValidatedConfig = async (form, overlay, button) => {
       result.textContent = result.dataset.networkError ?? "";
       result.className = "inline-result banner--error";
     }
-  } finally {
-    button.removeAttribute("aria-busy");
-    button.disabled = false;
+    return false;
   }
+};
+var formSignature = (form) => JSON.stringify({
+  values: configDraftEntries(form),
+  acknowledged: formSecurityAcknowledged(form)
+});
+var configFeedback = (form, state) => {
+  const feedback = qs("[data-config-feedback]", form);
+  if (feedback) feedback.textContent = feedback.dataset[state] ?? "";
+};
+var resetConfigEdits = (form) => {
+  qsa(".config-field", form).forEach((row) => {
+    const control = configControl(row);
+    if (control && !control.disabled) control.value = String(JSON.parse(row.dataset.original ?? "null"));
+  });
+  form.elements.security_acknowledged.checked = false;
+  clearValidationFeedback(form, qs("[data-config-errors]", form));
+};
+var acceptStagedValues = (form) => {
+  qsa(".config-field", form).forEach((row) => {
+    const entry = configEntry(row);
+    if (!entry) return;
+    row.dataset.original = JSON.stringify(entry[1]);
+    row.dataset.managed = "true";
+    const provenance = qs(".provenance", row);
+    if (provenance) {
+      provenance.textContent = form.dataset.stagedLabel ?? provenance.textContent;
+      provenance.classList.add("provenance--staged");
+    }
+  });
+};
+var lockConfigControls = (form) => {
+  const controls = qsa("input, select", form);
+  const enabled = controls.filter((control) => !control.disabled);
+  enabled.forEach((control) => {
+    control.disabled = true;
+  });
+  return () => enabled.forEach((control) => {
+    control.disabled = false;
+  });
 };
 function initConfigForm() {
   restoreConfigDraft();
   const form = qs("[data-config-form]");
   if (!form) return;
-  let validatedOverlay = null;
-  const invalidateConfigReview = () => {
-    validatedOverlay = null;
-    const review = qs("[data-config-review]");
+  const state = { generation: 0, overlay: null, signature: null, busy: false };
+  const review = qs("[data-config-review]");
+  const stage = qs("[data-config-stage]");
+  const submit = qs('button[type="submit"]', form);
+  const reset = qs("[data-config-reset]", form);
+  const refresh = () => {
+    const count = updateConfigChangeCount(form);
+    if (submit) submit.disabled = state.busy || count === 0;
+    if (reset) reset.disabled = state.busy || count === 0;
+    if (stage) stage.disabled = state.busy || state.overlay === null;
+  };
+  const invalidate = () => {
+    const hadReview = state.signature !== null || state.busy;
+    state.generation += 1;
+    state.overlay = null;
+    state.signature = null;
     if (review) review.hidden = true;
-    updateConfigChangeCount(form);
+    configFeedback(form, hadReview ? "invalidated" : "");
+    refresh();
   };
-  const validateConfigForm = async (event) => {
-    event.preventDefault();
-    const submit = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
-    const errorSummary = qs("[data-config-errors]", form);
-    clearValidationFeedback(form, errorSummary);
-    setConfigValidationButtonState(submit, true);
-    const result = await requestConfigValidation(form, errorSummary);
-    setConfigValidationButtonState(submit, false);
-    const data = handleConfigValidationResult(form, errorSummary, result);
-    if (data) validatedOverlay = data.overlay ?? null;
-  };
-  form.addEventListener("input", invalidateConfigReview);
-  form.addEventListener("change", invalidateConfigReview);
+  form.addEventListener("input", invalidate);
+  form.addEventListener("change", invalidate);
+  reset?.addEventListener("click", () => {
+    if (state.busy) return;
+    resetConfigEdits(form);
+    invalidate();
+    configFeedback(form, "");
+  });
   form.addEventListener("submit", (event) => {
-    void validateConfigForm(event);
+    event.preventDefault();
+    if (!state.busy && changedFields(form)) void validateCurrentConfig(form, state, submit, refresh);
   });
-  qs("[data-config-stage]")?.addEventListener("click", (event) => {
-    const button = event.currentTarget;
-    if (button instanceof HTMLButtonElement && validatedOverlay) {
-      void stageValidatedConfig(form, validatedOverlay, button);
+  stage?.addEventListener("click", () => {
+    if (state.busy || state.overlay === null) return;
+    if (state.signature !== formSignature(form)) {
+      invalidate();
+      return;
     }
+    void stageCurrentConfig(form, state, stage, submit, refresh);
   });
-  updateConfigChangeCount(form);
+  refresh();
 }
+var changedFields = (form) => qsa(".config-field", form).some(fieldChanged);
+var validateCurrentConfig = async (form, state, submit, refresh) => {
+  const generation = state.generation;
+  const signature = formSignature(form);
+  const isCurrent = () => generation === state.generation && signature === formSignature(form);
+  const errorSummary = qs("[data-config-errors]", form);
+  clearValidationFeedback(form, errorSummary);
+  state.overlay = null;
+  state.signature = null;
+  const review = qs("[data-config-review]");
+  if (review) review.hidden = true;
+  state.busy = true;
+  refresh();
+  setButtonPending(submit, true);
+  configFeedback(form, "validating");
+  const result = await requestConfigValidation(form, errorSummary, isCurrent);
+  state.busy = false;
+  setButtonPending(submit, false);
+  if (isCurrent()) {
+    const data = handleConfigValidationResult(form, errorSummary, result);
+    if (data?.diff?.length) {
+      state.overlay = data.overlay ?? null;
+      state.signature = signature;
+    }
+    configFeedback(form, "");
+  } else configFeedback(form, "invalidated");
+  refresh();
+};
+var stageCurrentConfig = async (form, state, stage, submit, refresh) => {
+  state.busy = true;
+  refresh();
+  setButtonPending(stage, true);
+  const unlock = lockConfigControls(form);
+  configFeedback(form, "staging");
+  const succeeded = await stageValidatedConfig(form, state.overlay);
+  unlock();
+  state.busy = false;
+  setButtonPending(stage, false);
+  if (succeeded) {
+    acceptStagedValues(form);
+    state.overlay = null;
+    state.signature = null;
+    const result = qs("[data-config-result]");
+    result?.setAttribute("tabindex", "-1");
+    result?.focus();
+  }
+  if (submit) submit.disabled = false;
+  configFeedback(form, "");
+  refresh();
+};
 
 // frontend/admin/overview.ts
 var overviewElements = () => {
@@ -302,6 +448,11 @@ var setCapacityBar = (selector, current, max) => {
   if (max === void 0 || max <= 0) return;
   const root = qs(selector);
   if (!root) return;
+  if (root instanceof HTMLProgressElement) {
+    root.max = max;
+    root.value = current;
+    return;
+  }
   const fill = qs("i", root) ?? root;
   const pct = Math.min(100, Math.max(0, current / max * 100));
   fill.style.width = `${pct}%`;
@@ -313,6 +464,10 @@ var showOverviewStatus = (elements, data) => {
   elements.pending.textContent = String(data.admission.pending);
   setCapacityBar("[data-capacity-running-bar]", running, data.admission.max_running);
   setCapacityBar("[data-capacity-pending-bar]", pending, data.admission.max_pending);
+  const maxRunning = qs("[data-admission-max-running]");
+  const maxPending = qs("[data-admission-max-pending]");
+  if (maxRunning && data.admission.max_running !== void 0) maxRunning.textContent = String(data.admission.max_running);
+  if (maxPending && data.admission.max_pending !== void 0) maxPending.textContent = String(data.admission.max_pending);
   const now = /* @__PURE__ */ new Date();
   elements.refreshed.dateTime = now.toISOString();
   elements.refreshed.textContent = `${new Intl.DateTimeFormat(document.documentElement.lang, {
@@ -337,9 +492,22 @@ var refreshOverview = async () => {
 };
 function initOverview() {
   if (!qs("[data-overview]")) return;
+  let refreshing = false;
+  const refresh = async () => {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      await refreshOverview();
+    } finally {
+      refreshing = false;
+    }
+  };
   window.setInterval(() => {
-    void refreshOverview();
+    void refresh();
   }, 3e4);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void refresh();
+  });
 }
 var storageMessage = (element, writable) => {
   if (writable) return element.dataset.success ?? "";
@@ -367,8 +535,8 @@ var runStorageCheck = async (button) => {
   const state = qs("[data-storage-state]");
   const checkedAt = qs("[data-storage-time]");
   if (!result) return;
-  button.disabled = true;
-  button.setAttribute("aria-busy", "true");
+  if (button.disabled) return;
+  setButtonPending(button, true);
   try {
     const response = await adminFetch("/admin/api/v1/status/storage-check", { method: "POST" });
     if (!response.ok) throw new Error("storage_check_failed");
@@ -379,8 +547,7 @@ var runStorageCheck = async (button) => {
     const sessionExpired = error instanceof Error && error.message === "session_expired";
     if (!sessionExpired) showStorageResult(state, result, false);
   } finally {
-    button.removeAttribute("aria-busy");
-    button.disabled = false;
+    setButtonPending(button, false);
   }
 };
 function initStorageCheck() {
@@ -398,10 +565,11 @@ var showReauthError = (error, message) => {
 };
 var submitReauthForm = async (form, event) => {
   event.preventDefault();
+  if (form.getAttribute("aria-busy") === "true") return;
   const error = qs("[data-reauth-error]", form);
   const submit = qs('button[type="submit"]', form);
   if (error) error.hidden = true;
-  if (submit) submit.disabled = true;
+  setButtonPending(submit, true);
   form.setAttribute("aria-busy", "true");
   try {
     const response = await fetch("/admin/api/v1/session", {
@@ -419,7 +587,7 @@ var submitReauthForm = async (form, event) => {
     showReauthError(error, error?.dataset.networkError ?? "");
   } finally {
     form.removeAttribute("aria-busy");
-    if (submit) submit.disabled = false;
+    setButtonPending(submit, false);
   }
 };
 function initReauthForm() {
@@ -432,6 +600,7 @@ function initReauthForm() {
 // frontend/admin.ts
 initAutoSubmit();
 initDialogClose();
+initPendingForms();
 initReauthForm();
 initStorageCheck();
 initOverview();

@@ -1,0 +1,366 @@
+/* Configuration: margin index, ruled field groups, changes column */
+.annal__body--flush {
+  padding-bottom: 0;
+}
+
+.config {
+  margin: 0;
+}
+
+.config__margin {
+  align-self: start;
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+.config-index ul {
+  display: grid;
+  margin: var(--s-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.config-index a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-height: 2.25rem;
+  border-bottom: var(--hairline);
+  color: var(--ink);
+  font-size: var(--step-0);
+  text-decoration: none;
+}
+
+.config-index a:hover {
+  color: var(--copy-ink);
+  text-decoration: underline;
+}
+
+.config-index__jump a {
+  color: var(--copy-ink);
+  font-weight: 700;
+}
+
+.config-index__count {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+
+.config__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 19rem;
+  grid-template-areas:
+    "notices notices"
+    "fields changes";
+  column-gap: var(--s-6);
+  align-items: start;
+}
+
+.config__notices {
+  grid-area: notices;
+}
+
+.config__fields {
+  grid-area: fields;
+  display: grid;
+  gap: var(--s-6);
+  min-width: 0;
+}
+
+.config-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  scroll-margin-top: var(--s-5);
+}
+
+.config-group legend {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+  width: 100%;
+  padding: var(--s-3) 0 var(--s-2);
+  border-top: 2px solid var(--ink);
+  font-size: var(--step-2);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.config-group__count {
+  color: var(--ink-3);
+  font-size: var(--step--1);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.config-field {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 17rem);
+  gap: var(--s-2) var(--s-5);
+  align-items: start;
+  padding: var(--s-4) 0;
+  border-bottom: var(--hairline);
+}
+
+/* An edited value earns an ink mark on the margin rule, like an annotated line. */
+.config-field[data-changed="true"]::before {
+  content: "";
+  position: absolute;
+  top: var(--s-4);
+  bottom: var(--s-4);
+  left: calc(-1 * var(--margin-gap) - 2px);
+  width: 3px;
+  background: var(--copy-ink);
+}
+
+.config-field[data-changed="true"] .config-field__head label::after {
+  content: " •";
+  color: var(--copy-ink);
+}
+
+.config-field__head {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.config-field__head label {
+  font-size: var(--step-1);
+  font-weight: 700;
+}
+
+.config-field__path {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.provenance {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  justify-self: start;
+  color: var(--ink-3);
+  font-size: var(--step--1);
+}
+
+.provenance--environment::before {
+  content: "";
+  width: 0.6em;
+  height: 0.6em;
+  border: 1.5px dashed currentColor;
+}
+
+.provenance--staged {
+  color: var(--caution);
+  font-weight: 700;
+}
+
+.provenance--staged::before {
+  content: "";
+  width: 0.65em;
+  height: 0.6em;
+  border: 0;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.config__changes {
+  grid-area: changes;
+  position: sticky;
+  top: var(--s-4);
+  display: grid;
+  gap: var(--s-4);
+  min-width: 0;
+  max-height: calc(100vh - var(--s-6));
+  overflow-y: auto;
+  container-type: inline-size;
+}
+
+.changes,
+.review {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--ink);
+  background: var(--sheet);
+}
+
+.review {
+  border-color: var(--copy-ink);
+  border-top-width: 4px;
+}
+
+.changes__title {
+  font-size: var(--step-1);
+}
+
+.changes__count {
+  color: var(--copy-ink);
+  font-weight: 700;
+}
+
+.changes__help,
+.changes__feedback {
+  color: var(--ink-2);
+  font-size: var(--step-0);
+}
+
+.changes__feedback:empty {
+  display: none;
+}
+
+.changes__ack {
+  padding: var(--s-3);
+  border-left: 4px solid var(--caution);
+  background: var(--caution-wash);
+  font-size: var(--step-0);
+}
+
+.changes__actions {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.review > .button {
+  width: 100%;
+}
+
+.diff {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+
+.diff th {
+  padding: 0 var(--s-2) var(--s-1) 0;
+  border-bottom: 1px solid var(--ink);
+  color: var(--ink-2);
+  font-weight: 700;
+  letter-spacing: var(--track-label);
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.diff td {
+  padding: var(--s-2) var(--s-2) var(--s-2) 0;
+  border-bottom: var(--hairline);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  vertical-align: baseline;
+}
+
+.diff td:nth-child(2) {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.diff td:nth-child(3) {
+  color: var(--copy-ink);
+  font-weight: 700;
+}
+
+/* In a narrow column the diff becomes labelled entries. */
+@container (max-width: 30rem) {
+  .diff thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .diff,
+  .diff tbody,
+  .diff tr {
+    display: block;
+  }
+
+  .diff tr {
+    padding: var(--s-2) 0;
+    border-bottom: var(--hairline);
+  }
+
+  .diff td {
+    display: block;
+    padding: var(--s-1) 0;
+    border: 0;
+  }
+
+  .diff td:nth-child(2) {
+    text-decoration: none;
+  }
+
+  .diff td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.6875rem;
+    color: var(--ink-3);
+    font-family: var(--font-text);
+    font-weight: 700;
+    text-decoration: none;
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+  }
+
+  .diff td:first-child {
+    color: var(--ink);
+  }
+}
+
+@media (max-width: 75rem) {
+  .config__body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "notices"
+      "fields"
+      "changes";
+  }
+
+  .config__changes {
+    position: static;
+    max-height: none;
+    margin-top: var(--s-6);
+    overflow: visible;
+  }
+}
+
+@media (max-width: 52rem) {
+  .config__margin {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .config-index {
+    flex-basis: 100%;
+  }
+
+  .config-index ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1) var(--s-2);
+  }
+
+  .config-index a {
+    min-height: 2.25rem;
+    padding: 0 var(--s-3);
+    border: var(--hairline);
+    border-radius: var(--radius);
+  }
+
+  .config-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-field[data-changed="true"]::before {
+    left: calc(-1 * var(--s-4) - 2px);
+  }
+}

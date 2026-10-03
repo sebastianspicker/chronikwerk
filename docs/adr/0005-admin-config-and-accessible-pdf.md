@@ -17,7 +17,7 @@ Add a server-rendered FastAPI and Jinja administration application for service s
 process-local job history, safe retries, and staged non-secret configuration. It is
 disabled by default and uses one externally managed high-entropy access token,
 process-local sessions, per-session CSRF protection, strict response headers, and secure
-cookies. Sessions and job history remain explicitly volatile.
+cookies. Sessions and job history remain volatile.
 
 Managed configuration is an allowlisted non-secret overlay. Environment values retain
 highest precedence and remain read-only in the UI. Changes are validated, revisioned,

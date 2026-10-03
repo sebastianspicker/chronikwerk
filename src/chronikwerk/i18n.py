@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-SUPPORTED_LOCALES = ("de-DE", "en-GB")
 DEFAULT_LOCALE = "de-DE"
 
 _CATALOGS: dict[str, dict[str, str]] = {
@@ -65,11 +64,7 @@ _CATALOGS: dict[str, dict[str, str]] = {
         ),
         "admin.scope": "Geltungsbereich",
         "admin.status_record": "Instanznachweis",
-        "admin.overview_intro": (
-            "Aktuelle Nachweise für diesen Prozess: Zulassungskapazität, "
-            "Speichererreichbarkeit, Konfigurationsrevisionen und kürzliche "
-            "Archivierungsfehler."
-        ),
+        "admin.overview_intro": ("Prozesszustand, Archivaktivität und Konfiguration."),
         "admin.status": "Dienststatus",
         "admin.process": "Prozess",
         "admin.healthy": "Prozess läuft",
@@ -145,8 +140,8 @@ _CATALOGS: dict[str, dict[str, str]] = {
             "Die Anfrage wurde angenommen; die Archivierung ist noch nicht abgeschlossen."
         ),
         "admin.config_intro": (
-            "Nur freigegebene, nicht geheime Werte können bereitgestellt werden. "
-            "Umgebungswerte sind schreibgeschützt."
+            "Nicht geheime Werte vor dem Bereitstellen einer Revision prüfen. "
+            "Die Aktivierung erfordert einen externen Neustart."
         ),
         "admin.controlled_values": "Kontrollierte Werte",
         "admin.view_revisions": "Revisionen anzeigen",
@@ -199,10 +194,79 @@ _CATALOGS: dict[str, dict[str, str]] = {
             "Die Statusaktualisierung ist fehlgeschlagen; die angezeigten Daten "
             "können veraltet sein."
         ),
-        "admin.staged_success": "Revision bereitgestellt. Ein externer Neustart ist erforderlich.",
+        "admin.staged_success": (
+            "Revision bereitgestellt. Ein externer Neustart ist erforderlich."
+        ),
         "admin.path": "Pfad",
         "admin.before": "Vorher",
         "admin.after": "Nachher",
+        "admin.changes": "Änderungen",
+        "admin.review": "Prüfung",
+        "admin.reset_edits": "Eingaben zurücksetzen",
+        "admin.config_unchanged": "Die laufende Konfiguration bleibt unverändert.",
+        "admin.config_read_only": "Umgebungswerte sind schreibgeschützt.",
+        "admin.config_groups": "Konfigurationsbereiche",
+        "admin.review_invalidated": (
+            "Werte geändert. Prüfen Sie die Änderungen vor dem Bereitstellen erneut."
+        ),
+        "admin.validating": "Änderungen werden geprüft…",
+        "admin.staging": "Revision wird bereitgestellt…",
+        "admin.checking_storage": "Speicher wird geprüft…",
+        "admin.signing_in": "Anmeldung läuft…",
+        "admin.requesting": "Anfrage wird übermittelt…",
+        "admin.restoring": "Wiederherstellung wird bereitgestellt…",
+        "admin.review_help": "Diese Änderungen werden als neue Revision bereitgestellt.",
+        "admin.storage_help": "Prüfen, ob das Archivverzeichnis beschreibbar ist.",
+        "admin.capacity_slots": "von {count} Plätzen",
+        "admin.config_archive": "Konfiguration und Archiv",
+        "admin.open_configuration": "Konfiguration öffnen",
+        "admin.view_all_jobs": "Alle Aufträge anzeigen",
+        "admin.failures_help": "Fehler dieses Prozesses werden hier angezeigt.",
+        "admin.back_jobs": "Zurück zu Aufträgen",
+        "admin.filter_empty": "Keine Ereignisse entsprechen diesen Filtern.",
+        "admin.filter_empty_help": (
+            "Setzen Sie die Filter zurück, um alle Ereignisse dieses Prozesses zu sehen."
+        ),
+        "admin.history_empty": "Noch keine Auftragsereignisse",
+        "admin.history_empty_help": (
+            "Ereignisse erscheinen, sobald dieser Prozess Arbeit annimmt. Ein "
+            "Neustart löscht den Verlauf."
+        ),
+        "admin.full_revision": "Vollständige Revisionskennung",
+        "admin.edited": "Geändert",
+        "admin.enabled": "Aktiviert",
+        "admin.disabled": "Deaktiviert",
+        "admin.group.workflow": "Archivierungsablauf",
+        "admin.group.pdf": "PDF",
+        "admin.group.storage": "Speicher",
+        "admin.group.zammad": "Zammad",
+        "admin.group.observability": "Protokollierung",
+        "admin.group.admission": "Auftragsannahme",
+        "admin.group.signing": "Signatur",
+        "admin.group.security": "Sicherheit",
+        "admin.field.workflow.trigger_tag": "Auslösendes Tag",
+        "admin.field.workflow.require_tag": "Auslösendes Tag erforderlich",
+        "admin.field.workflow.acknowledge_on_success": "Erfolg bestätigen",
+        "admin.field.workflow.delivery_id_ttl_seconds": "Deduplizierungszeitraum (Sekunden)",
+        "admin.field.pdf.locale": "Dokumentsprache",
+        "admin.field.pdf.timezone": "Dokumentzeitzone",
+        "admin.field.pdf.max_articles": "Maximale Artikelanzahl",
+        "admin.field.pdf.article_limit_mode": "Verhalten am Artikellimit",
+        "admin.field.storage.fsync": "Archivdateien auf Datenträger synchronisieren",
+        "admin.field.storage.filename_pattern": "Muster für Archivdateinamen",
+        "admin.field.zammad.timeout_seconds": "Anfragezeitlimit (Sekunden)",
+        "admin.field.observability.log_level": "Protokollierungsstufe",
+        "admin.field.observability.healthz_omit_version": ("Version in Zustandsantwort ausblenden"),
+        "admin.field.admission.max_pending": "Wartende Aufträge",
+        "admin.field.admission.max_running": "Laufende Aufträge",
+        "admin.field.admission.shutdown_timeout_seconds": "Zeitlimit beim Beenden (Sekunden)",
+        "admin.field.signing.pades.reason": "Signaturgrund",
+        "admin.field.signing.pades.location": "Signaturort",
+        "admin.field.hardening.transport.trust_env": ("Proxy-Einstellungen der Umgebung verwenden"),
+        "admin.field.hardening.transport.allow_insecure_http": ("Unverschlüsseltes HTTP erlauben"),
+        "admin.field.hardening.transport.allow_private_networks": (
+            "Ziele in privaten Netzwerken erlauben"
+        ),
     },
     "en-GB": {
         "pdf.ticket": "Ticket",
@@ -249,7 +313,7 @@ _CATALOGS: dict[str, dict[str, str]] = {
         "admin.access_token": "Admin access token",
         "admin.login_help": "Use the externally managed admin access token.",
         "admin.invalid_credentials": "The credentials are invalid.",
-        "admin.session_volatile": "Sessions are process-local and end when the service restarts.",
+        "admin.session_volatile": ("Sessions are process-local and end when the service restarts."),
         "admin.login_scope": (
             "Check service status, inspect jobs, and stage non-secret configuration values."
         ),
@@ -259,10 +323,7 @@ _CATALOGS: dict[str, dict[str, str]] = {
         ),
         "admin.scope": "Scope",
         "admin.status_record": "Instance record",
-        "admin.overview_intro": (
-            "Current evidence for this process: admission capacity, storage reachability, "
-            "configuration revisions, and recent archival failures."
-        ),
+        "admin.overview_intro": ("Process health, archive activity, and configuration."),
         "admin.status": "Service status",
         "admin.process": "Process",
         "admin.healthy": "Process running",
@@ -328,8 +389,8 @@ _CATALOGS: dict[str, dict[str, str]] = {
         ),
         "admin.accepted": "The request was accepted; archiving has not completed yet.",
         "admin.config_intro": (
-            "Only allowlisted non-secret values can be staged. Environment-owned values "
-            "are read-only."
+            "Review non-secret values before staging a revision. "
+            "Activation requires an external restart."
         ),
         "admin.controlled_values": "Controlled values",
         "admin.view_revisions": "View revisions",
@@ -353,7 +414,7 @@ _CATALOGS: dict[str, dict[str, str]] = {
         "admin.base_or_default": "Base or default",
         "admin.validate_review": "Review changes",
         "admin.stage": "Stage revision",
-        "admin.security_ack": "I acknowledge the effect of security-sensitive transport changes.",
+        "admin.security_ack": ("I acknowledge the effect of security-sensitive transport changes."),
         "admin.restore": "Stage as a new revision",
         "admin.restore_error": (
             "The revision could not be staged. Refresh the page and check the current revision."
@@ -379,6 +440,68 @@ _CATALOGS: dict[str, dict[str, str]] = {
         "admin.path": "Path",
         "admin.before": "Before",
         "admin.after": "After",
+        "admin.changes": "Changes",
+        "admin.review": "Review",
+        "admin.reset_edits": "Reset edits",
+        "admin.config_unchanged": "Your running configuration is unchanged.",
+        "admin.config_read_only": "Environment-owned values are read-only.",
+        "admin.config_groups": "Configuration sections",
+        "admin.review_invalidated": ("Values changed. Review the current changes before staging."),
+        "admin.validating": "Checking changes…",
+        "admin.staging": "Staging revision…",
+        "admin.checking_storage": "Checking storage…",
+        "admin.signing_in": "Signing in…",
+        "admin.requesting": "Submitting request…",
+        "admin.restoring": "Staging restore…",
+        "admin.review_help": "These changes will be staged as a new revision.",
+        "admin.storage_help": "Check that the archive location is writable.",
+        "admin.capacity_slots": "of {count} slots",
+        "admin.config_archive": "Configuration & archive",
+        "admin.open_configuration": "Open configuration",
+        "admin.view_all_jobs": "View all jobs",
+        "admin.failures_help": "Failures from this process will appear here.",
+        "admin.back_jobs": "Back to jobs",
+        "admin.filter_empty": "No events match these filters.",
+        "admin.filter_empty_help": "Clear the filters to see all events in this process.",
+        "admin.history_empty": "No job events yet",
+        "admin.history_empty_help": (
+            "Events appear when this process accepts work. History clears on restart."
+        ),
+        "admin.full_revision": "Full revision identifier",
+        "admin.edited": "Edited",
+        "admin.enabled": "Enabled",
+        "admin.disabled": "Disabled",
+        "admin.group.workflow": "Archive workflow",
+        "admin.group.pdf": "PDF",
+        "admin.group.storage": "Storage",
+        "admin.group.zammad": "Zammad",
+        "admin.group.observability": "Logging",
+        "admin.group.admission": "Admission",
+        "admin.group.signing": "Signing",
+        "admin.group.security": "Security",
+        "admin.field.workflow.trigger_tag": "Trigger tag",
+        "admin.field.workflow.require_tag": "Require trigger tag",
+        "admin.field.workflow.acknowledge_on_success": "Acknowledge on success",
+        "admin.field.workflow.delivery_id_ttl_seconds": ("Delivery deduplication window (seconds)"),
+        "admin.field.pdf.locale": "Document language",
+        "admin.field.pdf.timezone": "Document timezone",
+        "admin.field.pdf.max_articles": "Maximum articles",
+        "admin.field.pdf.article_limit_mode": "Article limit behavior",
+        "admin.field.storage.fsync": "Sync archive writes to disk",
+        "admin.field.storage.filename_pattern": "Archive filename pattern",
+        "admin.field.zammad.timeout_seconds": "Request timeout (seconds)",
+        "admin.field.observability.log_level": "Log level",
+        "admin.field.observability.healthz_omit_version": "Hide version in health response",
+        "admin.field.admission.max_pending": "Waiting jobs",
+        "admin.field.admission.max_running": "Running jobs",
+        "admin.field.admission.shutdown_timeout_seconds": "Shutdown timeout (seconds)",
+        "admin.field.signing.pades.reason": "Signing reason",
+        "admin.field.signing.pades.location": "Signing location",
+        "admin.field.hardening.transport.trust_env": "Use environment proxy settings",
+        "admin.field.hardening.transport.allow_insecure_http": "Allow unencrypted HTTP",
+        "admin.field.hardening.transport.allow_private_networks": (
+            "Allow private network destinations"
+        ),
     },
 }
 

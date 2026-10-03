@@ -35,6 +35,9 @@ from chronikwerk.web.admin.auth import AdminSession
 
 _ConfigChangeResult = tuple[dict[str, Any], None] | tuple[None, JSONResponse]
 
+page_router = APIRouter(prefix="/admin", include_in_schema=False)
+api_router = APIRouter(prefix="/admin", include_in_schema=False)
+
 
 class ConfigValidateRequest(BaseModel):
     """Accept a candidate configuration payload without persisting it."""
@@ -188,6 +191,7 @@ def _apply_config_change(
         )
 
 
+@page_router.get("/configuration")
 async def configuration_page(request: Request) -> Response:
     """Render the administrative configuration page from the safe read model."""
     session, redirect = _html_session(request)
@@ -213,6 +217,7 @@ async def configuration_page(request: Request) -> Response:
     )
 
 
+@api_router.get("/api/v1/config")
 async def config_api(request: Request) -> Response:
     """Return the safe managed-configuration read model for the admin UI."""
     session, error = _api_session(request)
@@ -234,6 +239,7 @@ async def config_api(request: Request) -> Response:
     )
 
 
+@api_router.post("/api/v1/config/validate")
 async def validate_config_api(request: Request, payload: ConfigValidateRequest) -> Response:
     """Validate a draft configuration without changing the active revision."""
     session, error = _api_session(request, csrf=True)
@@ -264,6 +270,7 @@ async def validate_config_api(request: Request, payload: ConfigValidateRequest) 
     )
 
 
+@api_router.put("/api/v1/config/staged")
 async def stage_config_api(request: Request, payload: StageRequest) -> Response:
     """Stage a revision-checked configuration change for later activation."""
     session, error = _api_session(request, csrf=True)
@@ -292,23 +299,3 @@ async def stage_config_api(request: Request, payload: StageRequest) -> Response:
         return error
     assert metadata is not None
     return JSONResponse({**metadata, "restart_required": True})
-
-
-def register_config_page_routes(router: APIRouter) -> None:
-    """Register the HTML configuration page separately from its JSON API routes."""
-    router.add_api_route("/configuration", configuration_page, methods=["GET"])
-
-
-def register_config_api_routes(router: APIRouter) -> None:
-    """Register this route group during application startup."""
-    router.add_api_route("/api/v1/config", config_api, methods=["GET"])
-    router.add_api_route(
-        "/api/v1/config/validate",
-        validate_config_api,
-        methods=["POST"],
-    )
-    router.add_api_route(
-        "/api/v1/config/staged",
-        stage_config_api,
-        methods=["PUT"],
-    )

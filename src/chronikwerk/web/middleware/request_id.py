@@ -11,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-_REQUEST_ID_HEADER = "X-Request-Id"
+REQUEST_ID_HEADER = "X-Request-Id"
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 CallNext = Callable[[Request], Awaitable[Response]]
@@ -22,7 +22,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: CallNext) -> Response:
         """Bind a validated or generated request ID to logs and the response."""
-        request_id = (request.headers.get(_REQUEST_ID_HEADER) or "").strip()
+        request_id = (request.headers.get(REQUEST_ID_HEADER) or "").strip()
         if not _REQUEST_ID_RE.fullmatch(request_id):
             request_id = str(uuid.uuid4())
 
@@ -34,5 +34,5 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         finally:
             structlog.contextvars.unbind_contextvars("request_id")
 
-        response.headers[_REQUEST_ID_HEADER] = request_id
+        response.headers[REQUEST_ID_HEADER] = request_id
         return response

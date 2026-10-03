@@ -1,0 +1,18 @@
+# Gitleaks configuration for Chronikwerk.
+#
+# The default ruleset is kept in full; this file only adds a reviewed allowlist so
+# local scans and CI agree. Run it with:
+#
+#   gitleaks detect --source . --redact
+
+[extend]
+useDefault = true
+
+# Historical revisions of this manifest embedded a provenance map of source paths
+# to their SHA-256 digests. The "path.py": "<64 hex>" pairs trip the generic
+# API-key entropy heuristic but contain no credential material. Only the
+# manifest's own digest values are allowed, and only in this file.
+[allowlist]
+description = "Screenshot manifest provenance digests are not credentials"
+paths = ['''docs/screenshots/manifest\.json''']
+regexes = ['''^[a-f0-9]{64}$''']

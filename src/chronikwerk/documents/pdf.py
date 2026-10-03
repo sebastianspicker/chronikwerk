@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
 
+from chronikwerk.concurrency import run_sync_cancellation_safe
 from chronikwerk.documents.models import Snapshot
 from chronikwerk.documents.templates import (
     DEFAULT_TEMPLATE_NAME,
@@ -18,7 +19,6 @@ from chronikwerk.documents.templates import (
 )
 from chronikwerk.documents.url_fetcher import _safe_url_fetcher
 from chronikwerk.failures import PermanentError
-from chronikwerk.operations.async_work import run_sync_cancellation_safe
 
 _TEMPLATE_STYLES_MAIN = "styles.css"
 _WEASYPRINT_RENDER_LOCK = threading.Lock()

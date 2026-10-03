@@ -7,10 +7,14 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from chronikwerk.configuration.models import Settings, canonicalize_zammad_origin
+from chronikwerk.configuration.models import Settings
+from chronikwerk.configuration.zammad import canonicalize_zammad_origin
 from chronikwerk.outbound import OutboundPolicyError, validate_url_policy
 
 _MIN_AUTH_SECRET_LENGTH = 32
+# Workflow state tags owned by archiving/tags.py (configuration may not import archiving);
+# a trigger tag equal to one of them would break the tag state machine.
+RESERVED_STATE_TAGS = frozenset({"pdf:processing", "pdf:signed", "pdf:error"})
 _PLACEHOLDER_PREFIXES = (
     "changeme",
     "example",
@@ -205,6 +209,18 @@ def _validate_log_level(settings: Settings, issues: list[ConfigValidationIssue])
         )
 
 
+def _validate_trigger_tag(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
+    """Reject trigger tags that collide with the reserved workflow state tags."""
+    if str(settings.workflow.trigger_tag).strip() in RESERVED_STATE_TAGS:
+        issues.append(
+            ConfigValidationIssue(
+                path="workflow.trigger_tag",
+                message="workflow.trigger_tag must not be a reserved state tag "
+                f"({', '.join(sorted(RESERVED_STATE_TAGS))}).",
+            )
+        )
+
+
 def _validate_admin(settings: Settings, issues: list[ConfigValidationIssue]) -> None:
     if not settings.admin.enabled:
         return
@@ -227,6 +243,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_observability(settings, issues)
     _validate_retry_auth(settings, issues)
     _validate_log_level(settings, issues)
+    _validate_trigger_tag(settings, issues)
     _validate_admin(settings, issues)
     if issues:
         raise ConfigValidationError(issues)

@@ -12,6 +12,12 @@ import httpx
 from chronikwerk.outbound import (
     OutboundPolicyPermanentError,
     OutboundPolicyTransientError,
+    ResponseBodyTooLargeError,
+    UnsupportedResponseEncodingError,
+    buffered_response,
+    pin_request_url,
+    read_response_body_limited,
+    timeouts_for,
     validate_url_policy,
     validate_url_policy_async,
 )
@@ -22,20 +28,14 @@ from chronikwerk.zammad.errors import (
     RateLimitError,
     ServerError,
 )
-from chronikwerk.zammad.http import (
-    ResponseBodyTooLargeError,
-    UnsupportedResponseEncodingError,
-    buffered_response,
-    pin_request_url,
-    read_response_body_limited,
-    timeouts_for,
-)
 
-_MAX_RESPONSE_BODY_BYTES = 32 * 1024 * 1024
+MAX_RESPONSE_BODY_BYTES = 32 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
-class _RetryPolicy:
+class RetryPolicy:
+    """Bound retry attempts and exponential backoff for retryable Zammad failures."""
+
     # "retry up to 3 times" => 1 initial attempt + 3 retries = 4 total attempts.
     max_retries: int = 3
     backoff_base_seconds: float = 0.2
@@ -46,15 +46,19 @@ class _RetryPolicy:
 
 
 @dataclass(frozen=True, slots=True)
-class _ZammadRuntimeOptions:
-    retry_policy: _RetryPolicy | None = None
+class ZammadRuntimeOptions:
+    """Inject retry policy, sleep, HTTP client, and network allowance into the transport."""
+
+    retry_policy: RetryPolicy | None = None
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     http_client: httpx.AsyncClient | None = None
     allow_private_networks: bool = False
 
 
 @dataclass(frozen=True, slots=True)
-class _ZammadTransportOptions:
+class ZammadTransportOptions:
+    """Describe the validated origin, credentials, and limits of one transport."""
+
     base_url: httpx.URL
     policy_url: str
     api_token: str
@@ -63,7 +67,7 @@ class _ZammadTransportOptions:
     trust_env: bool
     allow_insecure_http: bool
     allow_private_networks: bool
-    max_response_body_bytes: int = _MAX_RESPONSE_BODY_BYTES
+    max_response_body_bytes: int = MAX_RESPONSE_BODY_BYTES
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +78,9 @@ class _RequestAttempt:
 
 
 @dataclass(frozen=True, slots=True)
-class _ZammadRequest:
+class ZammadRequest:
+    """One JSON request delegated to the Zammad transport."""
+
     method: Literal["GET", "POST"]
     path: str
     params: dict[str, str] | None = None
@@ -89,15 +95,17 @@ class _RetryFailure:
     timeout_path: str | None = None
 
 
-class _ZammadTransport:
+class ZammadTransport:
+    """Execute bounded, policy-checked JSON requests against one Zammad origin."""
+
     def __init__(
         self,
-        options: _ZammadTransportOptions,
-        runtime: _ZammadRuntimeOptions,
+        options: ZammadTransportOptions,
+        runtime: ZammadRuntimeOptions,
     ) -> None:
         self._base_url = options.base_url
         self._sleep = runtime.sleep
-        self._retry = runtime.retry_policy or _RetryPolicy()
+        self._retry = runtime.retry_policy or RetryPolicy()
         self._dns_timeout_seconds = min(5.0, float(options.timeout_seconds))
         self._allow_insecure_http = options.allow_insecure_http
         # An injected runtime may explicitly opt into private test fixtures;
@@ -133,23 +141,8 @@ class _ZammadTransport:
             follow_redirects=False,
         )
 
-    @property
-    def dns_timeout_seconds(self) -> float:
-        return self._dns_timeout_seconds
-
-    @property
-    def allow_insecure_http(self) -> bool:
-        return self._allow_insecure_http
-
-    @property
-    def allow_private_networks(self) -> bool:
-        return self._allow_private_networks
-
-    @property
-    def http_client(self) -> httpx.AsyncClient:
-        return self._http
-
     async def aclose(self) -> None:
+        """Close the underlying HTTP client when this transport created it."""
         if self._owns_http_client:
             await self._http.aclose()
 
@@ -162,8 +155,9 @@ class _ZammadTransport:
         json: Any | None = None,
         max_retries: int | None = None,
     ) -> Any:
+        """Send one request, retrying transient failures, and return the decoded JSON body."""
         response = await self._request(
-            _ZammadRequest(
+            ZammadRequest(
                 method=method,
                 path=path,
                 params=params,
@@ -181,7 +175,7 @@ class _ZammadTransport:
 
     async def _request(
         self,
-        request: _ZammadRequest,
+        request: ZammadRequest,
     ) -> httpx.Response:
         requested_retries = request.max_retries
         retries = (
@@ -230,7 +224,7 @@ class _ZammadTransport:
 
     async def _request_once(
         self,
-        request: _ZammadRequest,
+        request: ZammadRequest,
         *,
         attempt: _RequestAttempt,
     ) -> tuple[httpx.Response | None, float | None]:
@@ -328,6 +322,7 @@ class _ZammadTransport:
 
     @staticmethod
     def raise_for_status(response: httpx.Response) -> NoReturn:
+        """Map an unsuccessful HTTP response to the typed Zammad failure."""
         status = response.status_code
         url = str(response.request.url)
 

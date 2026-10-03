@@ -2,6 +2,7 @@
 
 import { qs, qsa } from './dom';
 import { adminFetch } from './http';
+import { setButtonPending } from './pending';
 import type {
   ConfigControl,
   ConfigDraft,
@@ -108,22 +109,30 @@ const configValues = (form: ConfigForm): ConfigValues => {
   return Object.fromEntries(entries);
 };
 
-const changedConfigFieldCount = (form: ConfigForm): number =>
-  qsa<HTMLElement>('.config-field', form).filter((row) => {
-    const control = configControl(row);
-    if (!control || control.disabled) return false;
-    const value = parsedConfigValue(row.dataset.kind, control.value);
-    const original = JSON.parse(row.dataset.original ?? 'null') as ConfigValue;
-    return JSON.stringify(value) !== JSON.stringify(original);
-  }).length;
+const fieldChanged = (row: HTMLElement): boolean => {
+  const control = configControl(row);
+  if (!control || control.disabled) return false;
+  const value = parsedConfigValue(row.dataset.kind, control.value);
+  return JSON.stringify(value) !== JSON.stringify(JSON.parse(row.dataset.original ?? 'null'));
+};
 
-const updateConfigChangeCount = (form: ConfigForm): void => {
+const updateConfigChangeCount = (form: ConfigForm): number => {
+  const rows = qsa<HTMLElement>('.config-field', form);
+  let count = 0;
+  rows.forEach((row) => {
+    const changed = fieldChanged(row);
+    row.dataset.changed = String(changed);
+    if (changed) count += 1;
+  });
   const output = qs<HTMLElement>('[data-change-count]', form);
-  if (!output) return;
-  const count = changedConfigFieldCount(form);
-  if (count === 0) output.textContent = output.dataset.zero ?? '';
-  else if (count === 1) output.textContent = output.dataset.one ?? '';
-  else output.textContent = (output.dataset.many ?? '').replace('{count}', String(count));
+  if (output) {
+    const label = count === 0 ? output.dataset.zero : count === 1 ? output.dataset.one : output.dataset.many;
+    output.textContent = (label ?? '').replace('{count}', String(count));
+  }
+  const acknowledgement = qs<HTMLElement>('[data-security-ack]', form);
+  if (acknowledgement) acknowledgement.hidden = !rows.some((row) =>
+    row.dataset.security === 'true' && (fieldChanged(row) || row.dataset.managed === 'true'));
+  return count;
 };
 
 const clearValidationFeedback = (form: ConfigForm, errorSummary: HTMLElement | null): void => {
@@ -146,7 +155,13 @@ const showConfigStageResult = (
     ? `${result.dataset.success ?? ''} ${data.revision ?? ''}`.trim()
     : data.message ?? '';
   result.className = `inline-result ${response.ok ? 'banner--success' : 'banner--error'}`;
-  if (response.ok && data.revision) form.dataset.revision = data.revision;
+  if (response.ok && data.revision) {
+    form.dataset.revision = data.revision;
+    const banner = qs<HTMLElement>('[data-config-staged]');
+    const revision = qs<HTMLElement>('[data-staged-revision]');
+    if (banner) banner.hidden = false;
+    if (revision) revision.textContent = data.revision;
+  }
 };
 
 const showValidationError = (form: ConfigForm, path: string, message: string): void => {
@@ -174,9 +189,13 @@ const showValidationErrors = (
 
 const configReviewRow = (path: string, before: unknown, after: unknown): HTMLTableRowElement => {
   const row = document.createElement('tr');
-  [path, JSON.stringify(before), JSON.stringify(after)].forEach((value) => {
+  row.dataset.path = path;
+  const labels = qs<HTMLElement>('[data-config-review]')?.dataset;
+  const headings = [labels?.labelPath, labels?.labelBefore, labels?.labelAfter];
+  [path, JSON.stringify(before), JSON.stringify(after)].forEach((value, index) => {
     const cell = document.createElement('td');
     cell.textContent = value;
+    cell.dataset.label = headings[index] ?? '';
     row.append(cell);
   });
   return row;
@@ -203,12 +222,15 @@ const showConfigReview = (form: ConfigForm, data: ConfigValidationResponse): voi
   tbody.replaceChildren(...diff.map((item) => configReviewRow(item.path, item.before, item.after)));
   updateConfigReviewState(review, diff.length);
   review.hidden = false;
-  review.scrollIntoView({block: 'start'});
+  review.tabIndex = -1;
+  review.focus({preventScroll: true});
+  review.scrollIntoView({block: 'nearest'});
 };
 
 const requestConfigValidation = async (
   form: ConfigForm,
   errorSummary: HTMLElement | null,
+  isCurrent: () => boolean,
 ): Promise<{response: Response; data: ConfigValidationResponse} | null> => {
   try {
     const response = await adminFetch('/admin/api/v1/config/validate', {
@@ -221,23 +243,13 @@ const requestConfigValidation = async (
     return {response, data: await response.json() as ConfigValidationResponse};
   } catch (error: unknown) {
     const sessionExpired = error instanceof Error && error.message === 'session_expired';
-    if (!sessionExpired && errorSummary) {
+    if (!sessionExpired && errorSummary && isCurrent()) {
       errorSummary.textContent = errorSummary.dataset.networkError ?? '';
       errorSummary.hidden = false;
       errorSummary.focus();
     }
     return null;
   }
-};
-
-const setConfigValidationButtonState = (
-  button: HTMLButtonElement | null,
-  isValidating: boolean,
-): void => {
-  if (!button) return;
-  button.disabled = isValidating;
-  if (isValidating) button.setAttribute('aria-busy', 'true');
-  else button.removeAttribute('aria-busy');
 };
 
 const handleConfigValidationResult = (
@@ -257,11 +269,7 @@ const handleConfigValidationResult = (
 const stageValidatedConfig = async (
   form: ConfigForm,
   overlay: unknown,
-  button: HTMLButtonElement,
-): Promise<void> => {
-  // Stage only the server-validated overlay; a new edit must be validated again.
-  button.disabled = true;
-  button.setAttribute('aria-busy', 'true');
+): Promise<boolean> => {
   try {
     const response = await adminFetch('/admin/api/v1/config/staged', {
       method: 'PUT',
@@ -269,6 +277,7 @@ const stageValidatedConfig = async (
       body: JSON.stringify({overlay, security_acknowledged: formSecurityAcknowledged(form)}),
     });
     showConfigStageResult(form, response, await response.json() as ConfigStageResponse);
+    return response.ok;
   } catch (error: unknown) {
     const sessionExpired = error instanceof Error && error.message === 'session_expired';
     const result = qs<HTMLElement>('[data-config-result]');
@@ -276,45 +285,155 @@ const stageValidatedConfig = async (
       result.textContent = result.dataset.networkError ?? '';
       result.className = 'inline-result banner--error';
     }
-  } finally {
-    button.removeAttribute('aria-busy');
-    button.disabled = false;
+    return false;
   }
+};
+
+interface ReviewState {
+  generation: number;
+  overlay: unknown;
+  signature: string | null;
+  busy: boolean;
+}
+
+const formSignature = (form: ConfigForm): string => JSON.stringify({
+  values: configDraftEntries(form), acknowledged: formSecurityAcknowledged(form),
+});
+
+const configFeedback = (form: ConfigForm, state: string): void => {
+  const feedback = qs<HTMLElement>('[data-config-feedback]', form);
+  if (feedback) feedback.textContent = feedback.dataset[state] ?? '';
+};
+
+const resetConfigEdits = (form: ConfigForm): void => {
+  qsa<HTMLElement>('.config-field', form).forEach((row) => {
+    const control = configControl(row);
+    if (control && !control.disabled) control.value = String(JSON.parse(row.dataset.original ?? 'null'));
+  });
+  form.elements.security_acknowledged.checked = false;
+  clearValidationFeedback(form, qs<HTMLElement>('[data-config-errors]', form));
+};
+
+const acceptStagedValues = (form: ConfigForm): void => {
+  qsa<HTMLElement>('.config-field', form).forEach((row) => {
+    const entry = configEntry(row);
+    if (!entry) return;
+    row.dataset.original = JSON.stringify(entry[1]);
+    row.dataset.managed = 'true';
+    const provenance = qs<HTMLElement>('.provenance', row);
+    if (provenance) {
+      provenance.textContent = form.dataset.stagedLabel ?? provenance.textContent;
+      provenance.classList.add('provenance--staged');
+    }
+  });
+};
+
+const lockConfigControls = (form: ConfigForm): (() => void) => {
+  const controls = qsa<HTMLInputElement | HTMLSelectElement>('input, select', form);
+  const enabled = controls.filter((control) => !control.disabled);
+  enabled.forEach((control) => { control.disabled = true; });
+  return () => enabled.forEach((control) => { control.disabled = false; });
 };
 
 export function initConfigForm(): void {
   restoreConfigDraft();
   const form = qs<ConfigForm>('[data-config-form]');
   if (!form) return;
-  let validatedOverlay: unknown = null;
-  const invalidateConfigReview = (): void => {
-    validatedOverlay = null;
-    const review = qs<HTMLElement>('[data-config-review]');
+  const state: ReviewState = {generation: 0, overlay: null, signature: null, busy: false};
+  const review = qs<HTMLElement>('[data-config-review]');
+  const stage = qs<HTMLButtonElement>('[data-config-stage]');
+  const submit = qs<HTMLButtonElement>('button[type="submit"]', form);
+  const reset = qs<HTMLButtonElement>('[data-config-reset]', form);
+  const refresh = (): void => {
+    const count = updateConfigChangeCount(form);
+    if (submit) submit.disabled = state.busy || count === 0;
+    if (reset) reset.disabled = state.busy || count === 0;
+    if (stage) stage.disabled = state.busy || state.overlay === null;
+  };
+  const invalidate = (): void => {
+    const hadReview = state.signature !== null || state.busy;
+    state.generation += 1;
+    state.overlay = null;
+    state.signature = null;
     if (review) review.hidden = true;
-    updateConfigChangeCount(form);
+    configFeedback(form, hadReview ? 'invalidated' : '');
+    refresh();
   };
-  const validateConfigForm = async (event: SubmitEvent): Promise<void> => {
-    event.preventDefault();
-    const submit = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
-    const errorSummary = qs<HTMLElement>('[data-config-errors]', form);
-    clearValidationFeedback(form, errorSummary);
-    setConfigValidationButtonState(submit, true);
-    const result = await requestConfigValidation(form, errorSummary);
-    setConfigValidationButtonState(submit, false);
-    const data = handleConfigValidationResult(form, errorSummary, result);
-    if (data) validatedOverlay = data.overlay ?? null;
-  };
-
-  form.addEventListener('input', invalidateConfigReview);
-  form.addEventListener('change', invalidateConfigReview);
+  form.addEventListener('input', invalidate);
+  form.addEventListener('change', invalidate);
+  reset?.addEventListener('click', () => {
+    if (state.busy) return;
+    resetConfigEdits(form);
+    invalidate();
+    configFeedback(form, '');
+  });
   form.addEventListener('submit', (event) => {
-    void validateConfigForm(event);
+    event.preventDefault();
+    if (!state.busy && changedFields(form)) void validateCurrentConfig(form, state, submit, refresh);
   });
-  qs<HTMLButtonElement>('[data-config-stage]')?.addEventListener('click', (event) => {
-    const button = event.currentTarget;
-    if (button instanceof HTMLButtonElement && validatedOverlay) {
-      void stageValidatedConfig(form, validatedOverlay, button);
-    }
+  stage?.addEventListener('click', () => {
+    if (state.busy || state.overlay === null) return;
+    if (state.signature !== formSignature(form)) { invalidate(); return; }
+    void stageCurrentConfig(form, state, stage, submit, refresh);
   });
-  updateConfigChangeCount(form);
+  refresh();
 }
+
+const changedFields = (form: ConfigForm): boolean =>
+  qsa<HTMLElement>('.config-field', form).some(fieldChanged);
+
+const validateCurrentConfig = async (
+  form: ConfigForm, state: ReviewState, submit: HTMLButtonElement | null, refresh: () => void,
+): Promise<void> => {
+  const generation = state.generation;
+  const signature = formSignature(form);
+  const isCurrent = (): boolean => generation === state.generation && signature === formSignature(form);
+  const errorSummary = qs<HTMLElement>('[data-config-errors]', form);
+  clearValidationFeedback(form, errorSummary);
+  state.overlay = null;
+  state.signature = null;
+  const review = qs<HTMLElement>('[data-config-review]');
+  if (review) review.hidden = true;
+  state.busy = true;
+  refresh();
+  setButtonPending(submit, true);
+  configFeedback(form, 'validating');
+  const result = await requestConfigValidation(form, errorSummary, isCurrent);
+  state.busy = false;
+  setButtonPending(submit, false);
+  if (isCurrent()) {
+    const data = handleConfigValidationResult(form, errorSummary, result);
+    if (data?.diff?.length) {
+      state.overlay = data.overlay ?? null;
+      state.signature = signature;
+    }
+    configFeedback(form, '');
+  } else configFeedback(form, 'invalidated');
+  refresh();
+};
+
+const stageCurrentConfig = async (
+  form: ConfigForm, state: ReviewState, stage: HTMLButtonElement,
+  submit: HTMLButtonElement | null, refresh: () => void,
+): Promise<void> => {
+  state.busy = true;
+  refresh();
+  setButtonPending(stage, true);
+  const unlock = lockConfigControls(form);
+  configFeedback(form, 'staging');
+  const succeeded = await stageValidatedConfig(form, state.overlay);
+  unlock();
+  state.busy = false;
+  setButtonPending(stage, false);
+  if (succeeded) {
+    acceptStagedValues(form);
+    state.overlay = null;
+    state.signature = null;
+    const result = qs<HTMLElement>('[data-config-result]');
+    result?.setAttribute('tabindex', '-1');
+    result?.focus();
+  }
+  if (submit) submit.disabled = false;
+  configFeedback(form, '');
+  refresh();
+};

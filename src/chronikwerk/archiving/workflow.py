@@ -19,8 +19,14 @@ from chronikwerk.archiving.path import (
 )
 from chronikwerk.archiving.rendering import build_and_render_pdf
 from chronikwerk.archiving.retry import async_retry
-from chronikwerk.operations.async_work import run_sync_cancellation_safe
-from chronikwerk.operations.history import record_history_event
+from chronikwerk.archiving.tags import (
+    apply_done,
+    apply_error,
+    apply_processing,
+    should_process,
+)
+from chronikwerk.concurrency import run_sync_cancellation_safe
+from chronikwerk.operations.history import JobHistory
 from chronikwerk.operations.metrics import processed_total, skipped_total
 from chronikwerk.storage.layout import (
     build_filename_from_pattern,
@@ -35,7 +41,6 @@ from chronikwerk.storage.repository import (
 from chronikwerk.timestamps import format_timestamp_utc, now_utc
 from chronikwerk.zammad.dto import TagList, Ticket
 from chronikwerk.zammad.gateway import AsyncZammadClient
-from chronikwerk.zammad.workflow import apply_done, apply_error, apply_processing, should_process
 
 log = structlog.get_logger(__name__)
 
@@ -54,6 +59,7 @@ class ArchiveAttempt:
     ticket_id: int
     delivery_id: str | None
     request_id: str | None
+    history: JobHistory
 
 
 @dataclass(frozen=True)
@@ -133,7 +139,7 @@ def record_history(
 ) -> None:
     """Record a bounded operator-visible event for this ticket execution."""
     try:
-        record_history_event(
+        attempt.history.record(
             status=status,
             ticket_id=attempt.ticket_id,
             classification=classification,

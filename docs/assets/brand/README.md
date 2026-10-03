@@ -1,4 +1,4 @@
-# Chronikwerk Brand Assets
+# Chronikwerk brand assets
 
 These repository-owned SVGs are the canonical public exports of the Chronikwerk
 folio-and-timeline identity.

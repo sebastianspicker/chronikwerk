@@ -1,5 +1,5 @@
 # Provide the full editable toolchain used by the source-mounted development service.
-FROM python:3.14.6-slim
+FROM python:3.14.6-slim@sha256:7bec7ddcddeff7975d6ba9b4be7dd6f6b2f55e7491539145e2978f7f97ce9144
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -21,8 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
+COPY requirements/ /app/requirements/
 
-RUN python -m pip install --no-cache-dir ".[dev]"
+RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements/tools.lock \
+  && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements/dev.lock \
+  && python -m pip install --no-cache-dir --no-deps --no-build-isolation -e .
 
 RUN addgroup --system --gid 10001 app \
   && adduser --system --uid 10001 --ingroup app --home /nonexistent --shell /usr/sbin/nologin app \

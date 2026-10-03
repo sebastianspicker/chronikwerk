@@ -1,208 +1,142 @@
 {# Packaged with the web control plane. #}
 {% extends "base.html" %}
+{% import "_notation.html" as note %}
 {% block title %}{{ _("admin.overview") }} · {{ _("admin.service_name") }}{% endblock %}
 {% block content %}
-<div class="overview-page" data-overview>
-  <header class="masthead">
-    <div>
-      <p class="page-kicker masthead-label">{{ _("admin.status_record") }}</p>
-      <h1>{{ _("admin.overview") }}</h1>
-      <p class="page-intro masthead-intro">{{ _("admin.overview_intro") }}</p>
+<div data-overview>
+  <header class="page-head">
+    <div class="page-head__margin page-head__margin--after">
+      <p class="margin-label">{{ _("admin.refreshed") }}</p>
+      <p class="margin-stamp"><time datetime="{{ now_iso }}" data-last-refresh>{{ now_display }}</time></p>
     </div>
-    <div class="masthead-meta">
-      <span class="meta-chip">
-        <span class="dot" aria-hidden="true"></span>
-        {{ _("admin.process_alive") }}
-      </span>
-      <span class="meta-chip">
-        {{ _("admin.refreshed") }}
-        <time datetime="{{ now_iso }}" data-last-refresh>{{ now_display }}</time>
-      </span>
+    <div class="page-head__body">
+      <div class="page-head__title">
+        <h1>{{ _("admin.overview") }}</h1>
+        <p class="lede">{{ _("admin.overview_intro") }}</p>
+      </div>
+      <ul class="record-line" aria-label="{{ _("admin.status") }}">
+        <li><span class="notation notation--ok">{{ _("admin.process_alive") }}</span></li>
+        {% if staged_revision %}
+        <li><a class="notation notation--caution" href="/admin/configuration">{{ _("admin.restart_short") }}</a></li>
+        {% endif %}
+      </ul>
     </div>
   </header>
 
-  <div class="scope-note scope" role="note">
-    <span class="scope-note__icon scope-mark" aria-hidden="true">i</span>
-    <p>{{ _("admin.process_local") }}</p>
-  </div>
-
-  <div class="workspace">
-    <section class="instrument" aria-labelledby="live-process-title">
-      <div class="instrument-head">
-        <p class="instrument-kicker" id="live-process-title">{{ _("admin.live_process") }}</p>
-        <span class="live-badge">{{ _("admin.in_memory") }}</span>
-      </div>
-
-      <div class="state-pair">
-        <div class="state-cell">
-          <h2>{{ _("admin.process") }}</h2>
-          <p class="state-value">
-            <span class="status-signal status-signal--success" aria-hidden="true"></span>
-            {{ _("admin.healthy") }}
-          </p>
-          <p class="state-note">{{ _("admin.current_process") }}</p>
-        </div>
-        <div class="state-cell storage-state">
-          <h2>{{ _("admin.storage") }}</h2>
-          <p
-            class="state-value state-value--warning"
-            data-storage-state
-            data-success="{{ _("admin.storage_passed") }}"
-            data-error="{{ _("admin.storage_failed") }}"
-          ><span class="status-signal status-signal--warning" aria-hidden="true"></span>{{ _("admin.storage_not_checked") }}</p>
-          <p class="state-note" data-storage-time hidden></p>
-          <button class="button btn-on-field operations-field__button" type="button" data-storage-check>
-            {{ _("admin.storage_check") }}
-            <span aria-hidden="true">→</span>
-          </button>
-          <p
-            class="visually-hidden"
-            data-storage-result
-            data-success="{{ _("admin.storage_ok") }}"
-            data-error="{{ _("admin.storage_unavailable") }}"
-            aria-live="polite"
-          ></p>
-        </div>
-      </div>
-
-      <div class="capacity">
-        <div class="capacity-head">
-          <h2 id="capacity-title">{{ _("admin.capacity") }}</h2>
-          <p class="capacity-hint">{{ _("admin.accepted_not_completed") }}</p>
-        </div>
-        <dl class="capacity-grid capacity-strip">
-          <div class="cap-item">
-            <dt>{{ _("admin.running") }}</dt>
-            <dd data-admission-running>{{ admission.running }}</dd>
-            <div class="cap-bar" data-capacity-running-bar aria-hidden="true">
-              <i style="width: {% if admission.max_running %}{{ (100 * admission.running / admission.max_running)|round(1) }}{% else %}0{% endif %}%"></i>
-            </div>
-          </div>
-          <div class="cap-item">
-            <dt>{{ _("admin.pending") }}</dt>
-            <dd data-admission-pending>{{ admission.pending }}</dd>
-            <div class="cap-bar" data-capacity-pending-bar aria-hidden="true">
-              <i style="width: {% if admission.max_pending %}{{ (100 * admission.pending / admission.max_pending)|round(1) }}{% else %}0{% endif %}%"></i>
-            </div>
-          </div>
-          <div class="cap-item">
-            <dt>{{ _("admin.limit") }}</dt>
-            <dd>{{ admission.max_running }}<small>+{{ admission.max_pending }}</small></dd>
-            <div class="cap-bar" aria-hidden="true">
-              <i style="width: 100%; opacity: 0.35"></i>
-            </div>
-          </div>
-        </dl>
-      </div>
-    </section>
-
-    <aside class="dossier" aria-labelledby="archive-evidence-title">
-      <div class="dossier-head">
-        <h2 id="archive-evidence-title">{{ _("admin.archive_evidence") }}</h2>
-        <span class="dossier-tag">{{ _("admin.read_only") }}</span>
-      </div>
-
-      <dl class="revision-block">
-        <div class="rev-row">
-          <dt>{{ _("admin.active_revision") }}</dt>
-          <dd>
-            <span class="state-pill state-pill--active">{{ _("admin.active_state") }}</span>
-            <code title="{{ active_revision }}">{{ active_revision[:16] }}…{{ active_revision[-6:] }}</code>
-          </dd>
-        </div>
-        <div class="rev-row">
-          <dt>{{ _("admin.staged_revision") }}</dt>
-          <dd>
-            {% if staged_revision %}
-            <span class="state-pill state-pill--staged">{{ _("admin.restart_short") }}</span>
-            <code title="{{ staged_revision }}">{{ staged_revision[:16] }}…{{ staged_revision[-6:] }}</code>
-            {% else %}
-            <span class="state-pill state-pill--idle">{{ _("admin.no_staged_short") }}</span>
-            {% endif %}
-          </dd>
-        </div>
-      </dl>
-
-      <dl class="evidence-list">
-        <div>
-          <dt>{{ _("admin.version") }}</dt>
-          <dd><code>{{ version }}</code></dd>
-        </div>
-        <div>
-          <dt>{{ _("admin.started") }}</dt>
-          <dd><time datetime="{{ process_started_iso }}">{{ process_started_display }}</time></dd>
-        </div>
-        <div>
-          <dt>{{ _("admin.signing") }}</dt>
-          <dd>{{ _("admin.optional_disabled") }}</dd>
-        </div>
-        <div>
-          <dt>{{ _("admin.timestamp") }}</dt>
-          <dd>{{ _("admin.optional_disabled") }}</dd>
-        </div>
-      </dl>
-    </aside>
-  </div>
-
-  <section class="ledger" aria-labelledby="failures-title">
-    <div class="ledger-head">
-      <h2 id="failures-title">{{ _("admin.recent_failures") }}</h2>
-      <div class="ledger-head-right">
-        {% if failures %}
-        <span class="count-badge">{{ _("admin.failures_in_history", count=failures|length) }}</span>
-        {% endif %}
-        <p class="refresh-meta">
-          {{ _("admin.last_refresh") }}
-          <time datetime="{{ now_iso }}">{{ now_display }}</time>
-        </p>
-      </div>
+  <section class="annal" aria-labelledby="live-title">
+    <div class="annal__margin">
+      <h2 id="live-title">{{ _("admin.live_process") }}</h2>
+      <p class="margin-note">{{ _("admin.process_local") }}</p>
     </div>
-
-    {% if failures %}
-    <div class="table-region" role="region" aria-labelledby="failures-title" tabindex="0">
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">{{ _("admin.time") }}</th>
-            <th scope="col">{{ _("admin.ticket_id") }}</th>
-            <th scope="col">{{ _("admin.classification") }}</th>
-            <th scope="col">{{ _("admin.message") }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in failures %}
-          <tr>
-            <td class="time">{{ item.created_display }}</td>
-            <td class="ticket"><a href="/admin/jobs/{{ item.ticket_id }}">{{ item.ticket_id }}</a></td>
-            <td>
-              {% if item.classification %}
-              <span class="class-tag class-tag--{{ item.classification|lower }}">{{ item.classification }}</span>
-              {% else %}–{% endif %}
-            </td>
-            <td class="message">{{ item.message or "–" }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="empty-state">{{ _("admin.no_failures") }}</p>
-    {% endif %}
-
-    <div class="ledger-foot">
-      <a class="panel-link" href="/admin/jobs">
-        {{ _("admin.view_history") }}
-        <span aria-hidden="true">→</span>
-      </a>
-      <p class="footnote">{{ _("admin.history_clears_on_restart") }}</p>
+    <div class="annal__body">
+      <p class="banner banner--error" data-refresh-status data-error="{{ _("admin.refresh_failed") }}" aria-live="polite"></p>
+      <div class="gauges">
+        <div class="gauge gauge--storage">
+          <h3 class="gauge__label">{{ _("admin.storage") }}</h3>
+          <p class="state-value state-value--warning" data-storage-state
+            data-success="{{ _("admin.storage_passed") }}" data-error="{{ _("admin.storage_failed") }}">{{ _("admin.storage_not_checked") }}</p>
+          <p class="gauge__note">{{ _("admin.storage_help") }} <time data-storage-time hidden></time></p>
+          <button class="button" type="button" data-storage-check data-pending="{{ _("admin.checking_storage") }}">{{ _("admin.storage_check") }}</button>
+          <p class="inline-result" data-storage-result data-success="{{ _("admin.storage_ok") }}" data-error="{{ _("admin.storage_unavailable") }}" aria-live="polite"></p>
+        </div>
+        <div class="gauge">
+          <h3 class="gauge__label">{{ _("admin.running") }}</h3>
+          <p class="gauge__figure"><span data-admission-running>{{ admission.running }}</span><span class="gauge__limit"><span class="visually-hidden">{{ _("admin.limit") }}:</span> / <span data-admission-max-running>{{ admission.max_running }}</span></span></p>
+          <progress class="meter" data-capacity-running-bar max="{{ admission.max_running or 1 }}" value="{{ admission.running }}" aria-hidden="true"></progress>
+        </div>
+        <div class="gauge">
+          <h3 class="gauge__label">{{ _("admin.pending") }}</h3>
+          <p class="gauge__figure"><span data-admission-pending>{{ admission.pending }}</span><span class="gauge__limit"><span class="visually-hidden">{{ _("admin.limit") }}:</span> / <span data-admission-max-pending>{{ admission.max_pending }}</span></span></p>
+          <progress class="meter" data-capacity-pending-bar max="{{ admission.max_pending or 1 }}" value="{{ admission.pending }}" aria-hidden="true"></progress>
+          <p class="gauge__note">{{ _("admin.accepted_not_completed") }}</p>
+        </div>
+      </div>
     </div>
   </section>
 
-  <div
-    class="inline-result"
-    data-refresh-status
-    data-error="{{ _("admin.refresh_failed") }}"
-    aria-live="polite"
-  ></div>
+  <section class="annal" aria-labelledby="failures-title">
+    <div class="annal__margin">
+      <h2 id="failures-title">{{ _("admin.recent_failures") }}</h2>
+      {% if failures %}<p class="margin-count">{{ _("admin.failures_in_history", count=failures|length) }}</p>{% endif %}
+      <p class="margin-note">{{ _("admin.history_clears_on_restart") }}</p>
+      <p><a href="/admin/jobs">{{ _("admin.view_all_jobs") }}<span aria-hidden="true"> →</span></a></p>
+    </div>
+    <div class="annal__body">
+      {% if failures %}
+      <div class="table-region" role="region" aria-labelledby="failures-title" tabindex="0">
+        <table class="records">
+          <thead>
+            <tr>
+              <th scope="col">{{ _("admin.time") }}</th>
+              <th scope="col">{{ _("admin.ticket_id") }}</th>
+              <th scope="col">{{ _("admin.classification") }}</th>
+              <th scope="col">{{ _("admin.message") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in failures %}
+            <tr>
+              <td class="records__time" data-label="{{ _("admin.time") }}"><time>{{ item.created_display }}</time></td>
+              <td class="records__ticket" data-label="{{ _("admin.ticket_id") }}"><a href="/admin/jobs/{{ item.ticket_id }}">{{ item.ticket_id }}</a></td>
+              <td data-label="{{ _("admin.classification") }}">{{ note.classification(item.classification) }}</td>
+              <td class="records__message" data-label="{{ _("admin.message") }}">{{ item.message or "–" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">
+        <p class="empty__title">{{ _("admin.no_failures") }}</p>
+        <p>{{ _("admin.failures_help") }}</p>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="annal" aria-labelledby="archive-evidence-title">
+    <div class="annal__margin">
+      <h2 id="archive-evidence-title">{{ _("admin.config_archive") }}</h2>
+      <p><a href="/admin/configuration">{{ _("admin.open_configuration") }}<span aria-hidden="true"> →</span></a></p>
+    </div>
+    <div class="annal__body">
+      <dl class="facts">
+        <div class="facts__row facts__row--wide">
+          <dt>{{ _("admin.active_revision") }}</dt>
+          <dd>
+            <span class="notation notation--ok">{{ _("admin.active_state") }}</span>
+            <code class="digest" title="{{ active_revision }}" aria-label="{{ active_revision }}">{{ active_revision[:16] }}…{{ active_revision[-6:] }}</code>
+          </dd>
+        </div>
+        <div class="facts__row facts__row--wide">
+          <dt>{{ _("admin.staged_revision") }}</dt>
+          <dd>
+            {% if staged_revision %}
+            <span class="notation notation--caution">{{ _("admin.restart_short") }}</span>
+            <code class="digest" title="{{ staged_revision }}" aria-label="{{ staged_revision }}">{{ staged_revision[:16] }}…{{ staged_revision[-6:] }}</code>
+            {% else %}
+            <span class="notation notation--idle">{{ _("admin.no_staged_short") }}</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div class="facts__row">
+          <dt>{{ _("admin.version") }}</dt>
+          <dd><code>{{ version }}</code></dd>
+        </div>
+        <div class="facts__row">
+          <dt>{{ _("admin.started") }}</dt>
+          <dd><time datetime="{{ process_started_iso }}">{{ process_started_display }}</time></dd>
+        </div>
+        <div class="facts__row">
+          <dt>{{ _("admin.signing") }}</dt>
+          <dd data-signing-state>{{ _("admin.enabled") if signing_enabled else _("admin.disabled") }}</dd>
+        </div>
+        <div class="facts__row">
+          <dt>{{ _("admin.timestamp") }}</dt>
+          <dd data-timestamp-state>{{ _("admin.enabled") if timestamp_enabled else _("admin.disabled") }}</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
 </div>
 {% endblock %}

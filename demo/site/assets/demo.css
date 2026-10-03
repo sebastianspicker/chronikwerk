@@ -1,0 +1,17 @@
+/* Demonstration-specific notices; packaged administration styles lead the layout. */
+.demo-notice { background: var(--copy-ink-wash); border-left: 4px solid var(--copy-ink); border-radius: 0; color: var(--ink-2); font-size: var(--step-0); padding: var(--s-3) var(--s-4); }
+.demo-notice strong { color: var(--ink); }
+.demo-notice p + p { margin-top: var(--s-1); }
+.annal--notice .annal__body > .banner { margin: 0; }
+.chronicle__entry.demo-new-event { animation: demo-new-event 250ms ease-out both; }
+@keyframes demo-new-event { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chronicle__entry.demo-new-event { animation: none; } }
+
+/* Static screenshot tour; each figure links to the full-size capture. */
+.tour-grid { display: grid; gap: var(--s-5); grid-template-columns: 1fr; }
+.tour-shot { background: var(--sheet); border: var(--hairline); border-radius: 0; box-shadow: none; margin: 0; padding: var(--s-4); }
+.tour-shot figcaption { color: var(--ink-2); font-size: var(--step-0); margin: 0 0 var(--s-3); }
+.tour-shot figcaption strong { color: var(--ink); }
+.tour-shot img { border: var(--hairline); border-radius: 0; display: block; height: auto; width: 100%; }
+.tour-shot--wide { grid-column: 1 / -1; }
+@media (min-width: 1100px) { .tour-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

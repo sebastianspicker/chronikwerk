@@ -9,7 +9,8 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from chronikwerk.configuration.models import Settings, canonicalize_zammad_origin
+from chronikwerk.configuration.environment import CANONICAL_ENV_ALIASES
+from chronikwerk.configuration.models import Settings
 from chronikwerk.configuration.revisions import ManagedConfigError, ManagedConfigStore, deep_merge
 from chronikwerk.configuration.validation import (
     ConfigValidationError,
@@ -17,6 +18,7 @@ from chronikwerk.configuration.validation import (
     issues_from_pydantic_error,
     validate_settings,
 )
+from chronikwerk.configuration.zammad import canonicalize_zammad_origin
 
 
 def _default_config_path_if_present() -> Path | None:
@@ -132,27 +134,10 @@ def _apply_managed_overlay(
     )
 
 
-_CANONICAL_ENV_ALIASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("ZAMMAD_ORIGIN", "ZAMMAD__BASE_URL", ("zammad", "base_url")),
-    ("ZAMMAD_API_TOKEN", "ZAMMAD__API_TOKEN", ("zammad", "api_token")),
-    ("ZAMMAD_TIMEOUT_SECONDS", "ZAMMAD__TIMEOUT_SECONDS", ("zammad", "timeout_seconds")),
-    (
-        "ZAMMAD_ALLOW_PRIVATE_ORIGIN",
-        "HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS",
-        ("hardening", "transport", "allow_private_networks"),
-    ),
-    (
-        "ZAMMAD_TRUST_ENV",
-        "HARDENING__TRANSPORT__TRUST_ENV",
-        ("hardening", "transport", "trust_env"),
-    ),
-)
-
-
 def _canonical_process_env_overrides() -> dict[str, Any]:
     """Map canonical process aliases while rejecting ambiguous legacy values safely."""
     overrides: dict[str, Any] = {}
-    for canonical_key, legacy_key, path in _CANONICAL_ENV_ALIASES:
+    for canonical_key, legacy_key, path in CANONICAL_ENV_ALIASES:
         canonical_value = os.environ.get(canonical_key)
         if canonical_value is None:
             continue

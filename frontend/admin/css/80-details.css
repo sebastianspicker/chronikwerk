@@ -1,0 +1,57 @@
+/* Identifiers and lists inside records */
+.digest-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.digest-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.digest-disclosure > summary code {
+  white-space: nowrap;
+  border-bottom: 1px dotted var(--ink-3);
+  color: var(--ink);
+}
+
+.digest-disclosure[open] > summary code {
+  border-bottom-style: solid;
+}
+
+.digest-disclosure > code {
+  display: block;
+  max-width: 22rem;
+  margin-top: var(--s-1);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.path-list {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.path-list code {
+  color: var(--ink);
+}
+
+.records--revisions td:last-child {
+  min-width: 12rem;
+}
+
+.records--revisions .disclosure__panel {
+  min-width: 18rem;
+}
+
+@media (max-width: 40rem) {
+  .records--revisions td:last-child,
+  .records--revisions .disclosure__panel {
+    min-width: 0;
+  }
+}

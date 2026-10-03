@@ -1,0 +1,30 @@
+/* Motion: colour transitions only; the review panel fades in once. */
+.review:not([hidden]) {
+  animation: reveal var(--t-reveal) var(--ease);
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  .runhead,
+  .colophon,
+  .config__changes,
+  .button,
+  .disclosure {
+    display: none !important;
+  }
+}

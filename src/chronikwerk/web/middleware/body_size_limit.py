@@ -110,17 +110,8 @@ class BodySizeLimitMiddleware:
     needed.
     """
 
-    def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
+    def __init__(self, app: ASGIApp, *, settings: Settings) -> None:
         self.app = app
-
-        if settings is None:
-            self._enabled = False
-            self._max_bytes = 0
-            self._timeout_seconds = 10.0
-            self._admin_enabled = False
-            return
-
-        self._enabled = True
         configured_max_bytes = int(settings.hardening.body_size_limit.max_bytes)
         self._max_bytes = (
             min(configured_max_bytes, _ABSOLUTE_INGEST_MAX_BYTES)
@@ -136,8 +127,7 @@ class BodySizeLimitMiddleware:
             self._max_bytes,
             admin_enabled=self._admin_enabled,
         )
-        limited_path = self._enabled and max_bytes > 0
-        if not limited_path:
+        if max_bytes <= 0:
             await self.app(scope, receive, send)
             return
 

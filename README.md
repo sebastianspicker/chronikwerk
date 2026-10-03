@@ -1,4 +1,6 @@
-# Chronikwerk
+# Chronikwerk — Zammad Ticket Archiver
+
+Auditable Zammad ticket archives in PDF and JSON.
 
 <p>
   <img src="docs/assets/brand/chronikwerk-lockup.svg" alt="Chronikwerk" width="360">
@@ -7,130 +9,107 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![Release stage: alpha candidate](https://img.shields.io/badge/release-alpha%20candidate-orange.svg)](RELEASE_STATUS.md)
+[![CI](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/ci.yml)
+[![Pages demo](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/pages-demo.yml/badge.svg)](https://github.com/sebastianspicker/zammad-ticket-archiver/actions/workflows/pages-demo.yml)
 
-Chronikwerk archives Zammad tickets as PDFs with adjacent JSON audit records. It accepts
-authenticated webhook requests, fetches the current ticket from Zammad, renders a stable
-snapshot, writes the archive files, and records the outcome in Zammad.
+Chronikwerk turns authenticated Zammad ticket events into a PDF plus a JSON audit sidecar, then
+reports the result back in Zammad. It gives teams a verifiable copy of a ticket at the moment it
+is archived, with optional PDF signing and RFC 3161 timestamping.
 
-Chronikwerk is an independent open-source project. It is not affiliated with or endorsed by
+It runs as a single container beside your Zammad instance: a webhook arrives, Chronikwerk fetches
+the current ticket, renders a stable PDF, writes the PDF and sidecar pair atomically to your
+archive storage, and updates the ticket's tags.
+
+Chronikwerk is an independent open-source project. It is not affiliated with, or endorsed by,
 Zammad GmbH.
 
 > [!IMPORTANT]
-> Version `0.3.0a1` is an unfrozen public-alpha candidate. It has not been tagged or
-> published. Interfaces, configuration, and storage behavior may change. Evaluate it with
-> non-production data and review the [candidate status](RELEASE_STATUS.md) before deployment.
+> Version `0.3.0a1` is an unfrozen, unpublished alpha candidate. Evaluate it with non-production
+> data and read [RELEASE_STATUS.md](RELEASE_STATUS.md) before deploying anything real.
 
-## Purpose and scope
+## Screenshot tour
 
-The service implements this processing path:
+The administration application is optional and disabled by default. Every image below is a real
+render of the running service with synthetic local data, and you can click through the same
+interface in the [static demo](https://sebastianspicker.github.io/zammad-ticket-archiver/) on GitHub Pages.
 
-```text
-authenticated webhook
-  -> fetch ticket, articles, and tags
-  -> build an immutable snapshot
-  -> render PDF
-  -> optionally apply a PAdES signature and RFC3161 timestamp
-  -> write PDF and JSON sidecar
-  -> update Zammad tags and add an internal note
-```
+| Overview | Jobs |
+| --- | --- |
+| [![Overview: process health, capacity, recent failures, and configuration state](docs/screenshots/admin-overview.png)](docs/screenshots/admin-overview.png) | [![Jobs: a filterable view of volatile process history](docs/screenshots/admin-jobs.png)](docs/screenshots/admin-jobs.png) |
+| **Ticket history** | **Configuration revisions** |
+| [![Ticket history: a timeline of processing events for one ticket](docs/screenshots/admin-ticket.png)](docs/screenshots/admin-ticket.png) | [![Configuration revisions: active and staged revisions with restore review](docs/screenshots/admin-revisions.png)](docs/screenshots/admin-revisions.png) |
 
-The archive is filesystem-based. A successful run creates a PDF and a sidecar with the PDF
-checksum, archive path, article coverage, and signing status.
+![Configuration: grouped, non-secret values with inline provenance and a review panel (German)](docs/screenshots/admin-configuration.png)
 
-## Current capabilities
+The interface ships in German and English. These are deterministic documentation renders, not
+browser, accessibility, storage, signing, or release evidence. See
+[docs/screenshots](docs/screenshots/README.md) for what they do and don't prove.
 
-- Single-ticket ingestion at `POST /ingest`.
-- Atomic batch admission for up to 100 items at `POST /ingest/batch`.
-- Zammad ticket, article, and tag retrieval through the REST API.
-- HTML sanitization and PDF rendering with Jinja2 and WeasyPrint.
-- Optional PAdES signing and RFC3161 timestamping.
-- Root-confined filesystem storage with symlink rejection and atomic replacement.
-- Optional process-local job history and Prometheus metrics.
-- Optional administration application for status, retries, and allowlisted non-secret
-  configuration.
-- JSON logging, request IDs, rate limiting, request-size limits, and shallow or deep health
-  checks.
+## What it does
 
-`202 Accepted` means that work entered the process-local admission queue. It does not mean
-that the ticket was archived successfully.
+- Accepts authenticated single-ticket and all-or-nothing batch webhooks.
+- Reads tickets, articles, tags, and users through the Zammad REST API.
+- Renders a sanitized, localized PDF with Jinja2 and WeasyPrint.
+- Optionally applies a PAdES signature and an RFC 3161 timestamp.
+- Writes under a confined archive root with symlink rejection and transactional PDF/sidecar
+  publication.
+- Projects the outcome back to Zammad with processing tags and a best-effort internal note.
+- Offers optional process-local history, Prometheus metrics, and a small administration
+  application for status, retries, and allowlisted non-secret configuration.
 
-## Limitations
+## What `202 Accepted` means
 
-- The supported alpha topology is one process and one service instance.
-- Accepted background work, job history, replay detection, and administration sessions are
-  not durable across process restarts.
-- Abrupt termination can lose accepted work. A graceful stop uses the configured interval
-  before async cancellation, then waits for cancellation-safe rendering, signing, and
-  filesystem work to finish.
-- Attachment metadata is recorded, but attachment binaries are not downloaded or archived.
-- There is no durable queue, dead-letter queue, archive search, PDF preview, full-text index,
-  retention engine, WORM policy engine, or encryption-at-rest manager.
-- The administration application has no RBAC, SSO, secret editor, live reload, or restart
-  control. It is disabled by default.
-- Filesystem ACLs, backups, retention, encryption, and CIFS/SMB behavior remain operator
+`POST /ingest` returns `202 Accepted` as soon as the request enters the in-process scheduler.
+That is admission, not completion: a crash can still lose accepted work.
+
+The sidecar file is the completion marker. Chronikwerk writes the PDF and sidecar before it
+applies the terminal Zammad tags, so a finished archive always has a matching pair on disk even
+if the final tag update fails. The success note is best effort after that.
+
+Default tag transitions:
+
+- Start: remove `pdf:error` and the trigger tag, then add `pdf:processing`.
+- Success: remove processing/error/trigger tags, then add `pdf:signed`.
+- Failure: remove `pdf:processing` and `pdf:signed`, then add `pdf:error`.
+
+`pdf:signed` means the workflow succeeded — not that optional cryptographic signing ran. Check
+the PDF and sidecar for signing status.
+
+## Current limits
+
+Chronikwerk is deliberately small. The alpha supports **one process and one instance**; durable
+queues, leases, and multi-instance coordination are out of scope.
+
+- Accepted work, job history, replay detection, ticket exclusion, and admin sessions are
+  process-local and are lost on restart.
+- Attachment metadata is rendered into the PDF, but attachment binaries are not archived.
+- No archive search, retention engine, WORM policy engine, encryption manager, admin RBAC, SSO,
+  secret editor, live reload, or UI-controlled restart.
+- Archive ACLs, backups, retention, encryption, and network-filesystem behavior are operator
   responsibilities.
-- The checked-in browser previews and tagged-PDF renderer are not accessibility or PDF/UA
-  conformance evidence.
+- Tagged-PDF output and automated browser checks do not by themselves prove PDF/UA or WCAG
+  conformance.
+
+See the [architecture](docs/01-architecture.md), [security model](docs/09-security.md), and
+[alpha evaluation guide](docs/alpha-release.md) for the full boundaries.
 
 ## Requirements
 
-For Docker Compose operation:
+**Production:** Linux, Docker Engine, Docker Compose 2.24+, a reachable Zammad instance, and
+archive storage writable by container UID/GID `10001`.
 
-- Linux host
-- Docker Engine
-- Docker Compose 2.24.0 or newer
-- Zammad URL, API token, and webhook HMAC secret
-- Archive directory writable by container user `10001`
+**Local development:** Python 3.14+, Node.js 24–26, and the system libraries WeasyPrint needs.
+Docker is required for container validation. PDF/UA validation uses veraPDF 1.30.1.
 
-For local development:
-
-- Python 3.14 or newer
-- Node.js 24 through 26
-- System libraries required by WeasyPrint
-- Docker for container checks
-
-PDF/UA validation requires veraPDF 1.30.1.
-
-## Installation
+## Quick start
 
 ### Docker Compose
-
-Create the local environment file from the checked-in template:
 
 ```bash
 cp .env.example .env
 ```
 
-Set the required values described in [Configuration](#configuration), then start the service:
-
-```bash
-docker compose up -d --build
-docker compose ps
-```
-
-The default Compose mapping publishes the service on `127.0.0.1:8080`.
-
-### Local development checkout
-
-```bash
-python3.14 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e ".[dev]"
-npm ci --ignore-scripts
-```
-
-Run the service with:
-
-```bash
-chronikwerk
-```
-
-The project does not currently publish an installation artifact. Install from a reviewed
-source checkout or build a wheel with `make build`.
-
-## Configuration
-
-The minimum environment configuration is:
+Replace every placeholder and set at least:
 
 ```bash
 ZAMMAD__BASE_URL=https://zammad.example.com
@@ -139,293 +118,159 @@ ZAMMAD__WEBHOOK_HMAC_SECRET=replace-with-at-least-32-random-characters
 STORAGE__ROOT=/mnt/archive
 ```
 
-The Zammad URL must be an HTTPS origin by default and cannot contain credentials, a path,
-query parameters, or a fragment. Set
-`HARDENING__TRANSPORT__ALLOW_INSECURE_HTTP=true` only to permit an HTTP Zammad origin in
-a reviewed, isolated internal or test deployment. TLS certificate verification remains
-mandatory whenever HTTPS is used. Private or loopback Zammad origins require the separate
-transport-policy override documented in the [configuration reference](docs/config-reference.md).
-
-Configuration is loaded in this order, from highest to lowest precedence:
-
-1. Process environment.
-2. Managed non-secret overlay in `admin.state_dir`.
-3. YAML values.
-4. `.env`.
-5. File secrets.
-6. Model defaults.
-
-Nested environment keys use `__`. `ZAMMAD_ORIGIN` and `ZAMMAD_API_TOKEN` are supported
-aliases for the corresponding nested keys. If both forms are present, their values must
-agree.
-
-YAML selection uses an explicit `--config` argument where the command supports one, then
-`CONFIG_PATH`, then `config/config.yaml` if that file exists. Selecting a missing file is an
-error. The complete example is [config/config.example.yaml](config/config.example.yaml).
-
-Validate the effective configuration before startup:
+Then start the service:
 
 ```bash
-chronikwerk-admin validate-config
-chronikwerk-admin dump-config
-```
-
-`dump-config` redacts secret fields. See [docs/config-reference.md](docs/config-reference.md)
-for all settings, defaults, aliases, feature dependencies, and validation rules.
-
-## Usage
-
-### Verify service health
-
-The shallow check confirms that the application is serving requests:
-
-```bash
+docker compose up -d --build
+docker compose ps
 curl --fail --silent --show-error http://127.0.0.1:8080/healthz
 ```
 
-The deep check creates and removes a temporary file under `storage.root`:
+The default Compose mapping publishes only on `127.0.0.1:8080`. The deep health check at
+`/healthz?deep=true` creates and removes a file under `storage.root`; expose it only on a trusted
+operator network.
+
+### Development checkout
 
 ```bash
-curl --fail --silent --show-error 'http://127.0.0.1:8080/healthz?deep=true'
+python3.14 -m venv .venv
+. .venv/bin/activate
+python -m pip install --only-binary=:all: --require-hashes -r requirements/tools.lock
+python -m pip install --only-binary=:all: --require-hashes -r requirements/dev.lock
+python -m pip install --no-deps --no-build-isolation -e .
+npm ci --ignore-scripts
+chronikwerk
 ```
 
-The deep endpoint is unauthenticated. Expose it only on a trusted operator network.
+The project does not publish an installation artifact yet. Install from a reviewed source
+checkout or build a wheel with `make build`.
 
-### Configure Zammad
+## Configuration
 
-The default trigger tag is `pdf:sign`. The integration uses these ticket fields:
+Configuration precedence, highest to lowest: process environment, managed non-secret overlay,
+YAML, `.env`, file secrets, then model defaults. Nested environment keys use `__`. Validate the
+effective configuration before startup:
 
-| Field | Purpose |
+```bash
+chronikwerk-admin validate-config
+chronikwerk-admin dump-config   # secrets are redacted
+```
+
+Use [config/config.example.yaml](config/config.example.yaml) as a YAML starting point. The full
+schema, aliases, defaults, validation rules, and reviewed transport overrides live in the
+[configuration reference](docs/config-reference.md).
+
+## Zammad setup
+
+The default trigger tag is `pdf:sign`. Chronikwerk reads the custom fields `archive_path`,
+`archive_user_mode`, and `archive_user`. Follow the [Zammad setup guide](docs/02-zammad-setup.md)
+to create the fields, configure the webhook HMAC, add workflow rules, and run a smoke test.
+
+## Interfaces
+
+| Interface | Authentication | Purpose |
+| --- | --- | --- |
+| `POST /ingest` | HMAC | Admit one Zammad webhook payload. |
+| `POST /ingest/batch` | HMAC | Atomically admit up to 100 payloads. |
+| `POST /retry/{ticket_id}` | Bearer token | Force one reprocessing attempt. |
+| `GET /jobs/history` | Bearer token | Read optional process-local history. |
+| `GET /healthz` | None | Shallow or deep storage check. |
+| `GET /metrics` | Bearer token | Read optional Prometheus metrics. |
+| `/admin/*` | Session and CSRF | Use the optional administration application. |
+| `/docs`, `/redoc`, `/openapi.json` | None | FastAPI-generated API schema. |
+
+Optional routes are registered only when enabled. Full request, response, HMAC, and admin
+contracts are in the [API reference](docs/api.md).
+
+Installed commands: `chronikwerk`, `chronikwerk-admin validate-config`,
+`chronikwerk-admin dump-config`, `chronikwerk-admin list-config-revisions`, and
+`chronikwerk-admin stage-config-rollback`. External ASGI servers can import
+`chronikwerk.asgi:app`.
+
+## Repository map
+
+| Path | Purpose |
 | --- | --- |
-| `archive_path` | Relative directory segments under `storage.root`. |
-| `archive_user_mode` | Placement mode: `owner`, `current_agent`, or `fixed`. |
-| `archive_user` | Required when `archive_user_mode=fixed`. |
+| `src/chronikwerk/` | Python service, templates, and packaged admin assets. |
+| `frontend/` | TypeScript and modular CSS sources for the admin application. |
+| `config/` | Complete example YAML configuration. |
+| `tests/` | Unit, HTTP/Zammad contract, integration, static, and browser checks. |
+| `scripts/ci/` | Deterministic validation, packaging, and image-smoke scripts. |
+| `infra/systemd/` | Optional systemd wrapper around Docker Compose. |
+| `demo/site/` | Mock-only source for the static administration demo. |
+| `docs/` | Architecture, integration, operator, security, and release references. |
 
-The webhook request must carry `X-Hub-Signature: sha256=<hex>`. The signature covers the raw
-request body in compatibility mode. Strict delivery-ID mode also binds
-`X-Zammad-Delivery`.
+The browser-served files under `src/chronikwerk/web/static/admin/` are generated from `frontend/`
+and intentionally committed as package data. `build/`, `dist/`, caches, virtual environments,
+local configuration, credentials, admin state, and archive output are not source.
 
-Follow [docs/02-zammad-setup.md](docs/02-zammad-setup.md) for the Zammad rule, webhook, and
-smoke-test procedure. Request and response contracts are in [docs/api.md](docs/api.md).
+## Development and verification
 
-### Interpret ticket state
-
-The default tag transitions are:
-
-- Start: remove `pdf:error` and the trigger tag, then add `pdf:processing`.
-- Success: remove `pdf:processing`, `pdf:error`, and the trigger tag, then add `pdf:signed`.
-- Failure: remove `pdf:processing` and `pdf:signed`, then add `pdf:error`.
-
-Transient failures keep or restore the trigger tag. Permanent failures remove it.
-`pdf:signed` records workflow success even when optional cryptographic signing is disabled.
-Check the PDF and sidecar to determine whether a PAdES signature was applied.
-
-## HTTP and command surface
-
-| Method | Path | Authentication | Purpose |
-| --- | --- | --- | --- |
-| `POST` | `/ingest` | HMAC | Admit one webhook payload. |
-| `POST` | `/ingest/batch` | HMAC | Admit a batch of up to 100 payloads. |
-| `POST` | `/retry/{ticket_id}` | Bearer token | Force one reprocessing attempt. |
-| `GET` | `/jobs/history` | History bearer token | Read optional process-local history. |
-| `GET` | `/healthz` | None | Run a shallow or deep health check. |
-| `GET` | `/metrics` | Metrics bearer token | Read optional Prometheus metrics. |
-| Mixed | `/admin/*` | Session and CSRF token | Use the optional administration application. |
-| `GET` | `/docs`, `/redoc`, `/openapi.json` | None | Read the FastAPI schema and interactive reference. |
-
-Optional routes are registered only when their feature is enabled. FastAPI documentation
-routes remain enabled in this candidate and load browser assets from external content
-delivery networks.
-
-Installed commands:
+Use the Makefile from the repository root:
 
 | Command | Purpose |
 | --- | --- |
-| `chronikwerk` | Validate configuration and run Uvicorn. |
-| `chronikwerk-admin validate-config [--config PATH]` | Validate startup configuration. |
-| `chronikwerk-admin dump-config` | Print redacted effective configuration. |
-| `chronikwerk-admin list-config-revisions [--config PATH]` | List managed configuration revisions. |
-| `chronikwerk-admin stage-config-rollback REVISION [--config PATH]` | Stage a prior non-secret revision for the next restart. |
-| `uvicorn chronikwerk.asgi:app` | Import the ASGI application into an external server. |
-
-## Repository structure
-
-```text
-config/              Example YAML configuration
-docs/                Architecture, API, configuration, operation, and security references
-examples/            Example webhook and ticket snapshot data
-frontend/            Administration TypeScript and CSS sources
-infra/systemd/       Optional Docker Compose systemd wrapper
-scripts/ci/          Repository validation and image-smoke scripts
-src/chronikwerk/     Python package, templates, and compiled administration assets
-tests/               Focused unit and integration tests
-```
-
-The administration source files are under `frontend/`. The browser-served CSS and
-JavaScript under `src/chronikwerk/web/static/admin/` are compiled project artifacts and are
-checked against their sources by `make frontend-check`.
-
-## Development workflow
-
-Use the Makefile as the command contract:
-
-```bash
-make PYTHON=.venv/bin/python lint
-make PYTHON=.venv/bin/python test-fast
-make PYTHON=.venv/bin/python verify-core
-```
-
-Useful targets:
-
-| Target | Purpose |
-| --- | --- |
-| `make lint` | Run Ruff checks. |
-| `make format` | Rewrite Python files with Ruff format. |
-| `make typecheck` | Run mypy over `src` and `tests`. |
-| `make complexity` | Enforce the configured lizard limits. |
-| `make duplication` | Run source and full-tree duplication checks. |
-| `make source-length-check` | Enforce the 600-line limit on authored source files. |
-| `make frontend-check` | Type-check frontend sources and compare compiled assets. |
+| `make PYTHON=.venv/bin/python lint` | Run Ruff lint. |
+| `make PYTHON=.venv/bin/python format` | Rewrite Python formatting. |
+| `make PYTHON=.venv/bin/python typecheck` | Run mypy over the repository. |
+| `make PYTHON=.venv/bin/python test-fast` | Run unit tests. |
+| `make PYTHON=.venv/bin/python test` | Run all Python tests with coverage. |
+| `make frontend-check` | Type-check and rebuild frontend assets, then compare packaged output. |
 | `make docs-check` | Validate required Markdown, local links, and screenshot metadata. |
-| `make code-docs-check` | Validate maintained-code purpose text and public docstrings. |
-| `make build` | Build the Python source distribution and wheel. |
+| `make PYTHON=.venv/bin/python verify-core` | Run the complete non-container gate. |
+| `make PYTHON=.venv/bin/python verify` | Add the production-image smoke test. |
 
-`make format` changes files. Review its diff before including formatting changes in a pull
-request.
-
-## Testing
-
-The Python test suites are divided by scope:
-
-- `tests/unit`: isolated policy, configuration, document, operation, and storage behavior.
-- `tests/contract`: HTTP and Zammad boundary contracts.
-- `tests/integration`: composed archive and artifact behavior.
-
-Run the narrow suite while editing:
-
-```bash
-make PYTHON=.venv/bin/python test-fast
-```
-
-Run the complete non-container gate:
-
-```bash
-make PYTHON=.venv/bin/python verify-core
-```
-
-Run container validation:
-
-```bash
-make PYTHON=.venv/bin/python verify
-```
-
-`make verify` adds the production-image smoke test. It does not include the separate
-PDF/UA, dependency-security workflow, or manual release gates.
-Those checks use:
+`make format`, `make frontend-update`, `make build`, and some check targets write files — review
+their diffs. The separate PDF gate is:
 
 ```bash
 make pdf-ua-check PDF_FILES="unsigned.pdf signed.pdf"
 ```
 
-## Local demonstration and GitHub Pages
+Contribution workflow and surface-specific checks are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Release-only external and manual gates are in the
+[release checklist](docs/release-checklist.md).
 
-`make dev` starts the real FastAPI service in a hot-reload container. It still
-requires reviewed local configuration, an archive path, and any Zammad or
-signing integrations that the selected workflow enables; it is not a fixture
-server.
+## Static administration demo
 
-For a non-operational visual preview, the maintained administration screenshots
-are rendered from the real templates and CSS with synthetic local configuration:
+`make dev` starts the real FastAPI service and needs real local configuration. For a
+non-operational, mock-data-only visual reference, build the GitHub Pages artifact:
 
 ```bash
-make PYTHON=.venv/bin/python docs-check
+make PYTHON=.venv/bin/python pages-demo-check
+python -m http.server 8000 --directory build/pages-demo
 ```
 
-Those images do not exercise authentication, JavaScript interaction, Zammad,
-storage, signing, or PDF generation. GitHub Pages is not a product deployment
-target because Chronikwerk requires a Python server, authenticated routes,
-filesystem state, and external service integrations. The repository has no
-Pages workflow or browser-only operational artifact.
+Open `http://localhost:8000/`. The demo uses synthetic tickets, jobs, configuration revisions,
+and browser-local state. It makes no backend or external network requests and cannot archive a
+ticket, write configuration, or contact Zammad. The Pages workflow deploys only this static
+artifact from `main` or a manual run; it is not a Chronikwerk deployment.
 
 ## Deployment and operation
 
-The maintained deployment path is [docker-compose.yml](docker-compose.yml). It:
+The maintained production path is [docker-compose.yml](docker-compose.yml), optionally wrapped by
+[infra/systemd/chronikwerk.service](infra/systemd/chronikwerk.service). Put a trusted TLS proxy or
+private ingress in front of the loopback bind. Do not expose the admin application, metrics, deep
+health, or FastAPI documentation to untrusted networks.
 
-- binds the service to loopback by default;
-- mounts `./config` read-only;
-- mounts archive storage read-write;
-- persists administration state in the `admin-state` volume;
-- uses a read-only container root filesystem and a `/tmp` tmpfs;
-- drops Linux capabilities and enables `no-new-privileges`.
-
-Place an authenticated reverse proxy or private ingress in front of the loopback binding.
-Do not expose administration, deep health, FastAPI documentation, or metrics routes to
-untrusted networks.
-
-An optional systemd unit at
-[infra/systemd/chronikwerk.service](infra/systemd/chronikwerk.service) wraps Docker Compose.
-It expects the checkout at `/opt/chronikwerk` and an environment file at
-`/etc/chronikwerk/chronikwerk.env`. It is not a native Uvicorn service.
-
-See [docs/deploy.md](docs/deploy.md) for installation layout, signing mounts, start, update,
-and rollback procedures. See [docs/08-operations.md](docs/08-operations.md) for monitoring,
-shutdown behavior, retry handling, and on-call checks.
-
-## Troubleshooting
-
-| Symptom | Check |
-| --- | --- |
-| `403 forbidden` on ingestion | Recompute HMAC over the exact raw body and verify the configured secret. |
-| `503 webhook_auth_not_configured` | Configure a non-placeholder HMAC secret of at least 32 characters and restart. |
-| `400 missing_delivery_id` | Supply `X-Zammad-Delivery` or disable strict delivery-ID mode. |
-| Ticket remains `pdf:processing` | Inspect logs by request ID, then verify Zammad access and archive writes. A restart may have interrupted process-local work. |
-| Ticket has `pdf:error` | Inspect the internal note and logs, correct the permanent cause, then retrigger or use the authenticated retry endpoint. |
-| Deep health fails | Verify the mounted storage path, container UID `10001`, free space, and filesystem behavior. |
-| CIFS/SMB writes fail | Test atomic replacement, flush behavior, ownership, and permissions on the actual mount. |
-| Optional route returns `404` | Enable the corresponding history, metrics, or administration feature and restart. |
-
-More cases are documented in [docs/faq.md](docs/faq.md) and
-[docs/08-operations.md](docs/08-operations.md).
-
-## Security considerations
-
-- Keep Zammad, bearer, signing, and timestamp credentials outside tracked files.
-- Use HTTPS for Zammad and keep TLS verification enabled.
-- Keep the default loopback bind unless a trusted ingress requires a different address.
-- Restrict archive and administration-state filesystem permissions.
-- Treat PDFs, sidecars, logs, configuration revisions, and screenshots as potentially
-  sensitive operational data.
-- Back up the PDF and its adjacent sidecar together.
-- Verify signatures and timestamps independently before relying on them for legal or
-  compliance workflows.
-- Do not depend on in-memory replay detection or history as an audit ledger.
-
-The threat model, trust boundaries, controls, and residual risks are documented in
-[docs/09-security.md](docs/09-security.md). Report vulnerabilities according to
-[SECURITY.md](SECURITY.md).
-
-## Contributing
-
-Install the development dependencies, add focused tests for behavior changes, and run the
-narrowest relevant check followed by `make verify-core`. Deployment changes also require
-`make verify`. Browser, PDF, and release changes have additional gates listed in
-[CONTRIBUTING.md](CONTRIBUTING.md) and
-[docs/release-checklist.md](docs/release-checklist.md).
-
-Do not commit credentials, real ticket content, archive output, signing material,
-administration revision state, local reports, or tool caches. Participation is governed by
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Use the [deployment guide](docs/deploy.md) for host layout, signing mounts, and startup, and the
+[operations runbook](docs/08-operations.md) for shutdown, update, rollback, monitoring,
+reconciliation, retry, and troubleshooting.
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
+The [documentation index](docs/README.md) links every maintained reference. Popular entry points:
+
 - [Architecture](docs/01-architecture.md)
-- [Zammad setup](docs/02-zammad-setup.md)
-- [API reference](docs/api.md)
-- [Configuration reference](docs/config-reference.md)
+- [Configuration](docs/config-reference.md)
+- [API](docs/api.md)
 - [Deployment](docs/deploy.md)
 - [Operations](docs/08-operations.md)
-- [Security](docs/09-security.md)
-- [Administration application](docs/admin-frontend.md)
+- [Security model](docs/09-security.md)
+- [Administration frontend](docs/admin-frontend.md)
 - [Release status](RELEASE_STATUS.md)
-- [Release checklist](docs/release-checklist.md)
+- [Security policy](SECURITY.md)
+
+## License
+
+Chronikwerk is licensed under the [MIT License](LICENSE).

@@ -11,6 +11,8 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 
 from chronikwerk.configuration.models import Settings
 from chronikwerk.i18n import normalize_locale, translate
+from chronikwerk.operations.history import JobHistory
+from chronikwerk.operations.scheduling import TicketScheduler
 from chronikwerk.web.admin.auth import (
     SESSION_COOKIE,
     AdminSession,
@@ -22,6 +24,11 @@ from chronikwerk.web.admin.templates import render_admin_template
 
 def _settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def _history(request: Request) -> JobHistory:
+    """Return the application-owned job history."""
+    return request.app.state.history
 
 
 def _request_id(request: Request) -> str:
@@ -174,10 +181,31 @@ def _render(
     return HTMLResponse(html)
 
 
-def _schedule_retry(request: Request, *, ticket_id: int, settings: Settings) -> bool:
+def _schedule_retry(request: Request, *, ticket_id: int) -> bool:
     """Schedule through the application-owned scheduling service."""
-    _ = settings
-    scheduler = getattr(request.app.state, "scheduler", None)
+    scheduler: TicketScheduler | None = request.app.state.scheduler
     return bool(
         scheduler and scheduler.schedule_retry(ticket_id=ticket_id, request_id=_request_id(request))
     )
+
+
+def _admission_status(request: Request) -> dict[str, int | bool]:
+    """Report scheduler admission counters, or configured limits for a read-only app."""
+    scheduler: TicketScheduler | None = request.app.state.scheduler
+    if scheduler is None:
+        limits = _settings(request).admission
+        return {
+            "pending": 0,
+            "running": 0,
+            "max_pending": limits.max_pending,
+            "max_running": limits.max_running,
+            "closing": False,
+        }
+    admission = scheduler.admission
+    return {
+        "pending": admission.pending,
+        "running": admission.running,
+        "max_pending": admission.max_pending,
+        "max_running": admission.max_running,
+        "closing": admission.closing,
+    }

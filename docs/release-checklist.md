@@ -1,9 +1,9 @@
-# Release Checklist
+# Release checklist
 
 This project uses PEP 440 for Python package versions, SemVer-like prerelease Git tags,
 and a Keep-a-Changelog style `CHANGELOG.md`.
 
-## Release Modes
+## Release modes
 
 | Mode | Package version | Git tag |
 | --- | --- | --- |
@@ -37,14 +37,14 @@ and a Keep-a-Changelog style `CHANGELOG.md`.
   publish it through a separately reviewed workflow after the image gates pass.
 - Target version and tag format are decided.
 
-## Version and Changelog
+## Version and changelog
 
 1. Update `project.version` in `pyproject.toml` and `__version__` in
    `src/chronikwerk/_version.py`; the contract suite enforces equality.
 2. Move `CHANGELOG.md` entries from `[Unreleased]` into the release section.
 3. Leave an empty `[Unreleased]` section for future work.
 
-## Local Validation
+## Local validation
 
 Run the repository-owned aggregate gates first:
 
@@ -72,13 +72,13 @@ The source-length gate scans maintained code and tests. The shipped administrati
 and JavaScript bundles under `src/chronikwerk/web/static/admin/` are generated artifacts and
 are the only exemptions from the 600-physical-line authored-source limit.
 
-## Wheel Smoke Test
+## Wheel smoke test
 
 ```bash
 python -m venv /tmp/chronikwerk-release-venv
 . /tmp/chronikwerk-release-venv/bin/activate
-python -m pip install -U pip
-python -m pip install dist/*.whl
+python -m pip install --only-binary=:all: --require-hashes -r requirements/base.lock
+python -m pip install --no-deps dist/*.whl
 python - <<'PY'
 from chronikwerk.web.app import create_app
 from chronikwerk.configuration.models import Settings
@@ -93,7 +93,7 @@ print("wheel-import-ok", app.version)
 PY
 ```
 
-## Docker Smoke Test
+## Docker smoke test
 
 Release evidence uses the production `Dockerfile`, not the development image.
 The production-image smoke imports the packaged rendering/signing dependencies,
@@ -107,7 +107,7 @@ make production-image-smoke
 Live Zammad workflow, tag/note projection, storage, and signed-document evidence
 remain separate integration lanes and must not be inferred from this image smoke.
 
-## Production Safety Checks
+## Production safety checks
 
 - Verify `/metrics` is protected when enabled.
 - Verify `STORAGE__ROOT` is writable by the service identity.
@@ -145,7 +145,7 @@ git tag vX.Y.Z-alpha.N  # or beta.N / rc.N
 git push origin vX.Y.Z-alpha.N
 ```
 
-## GitHub Release
+## GitHub release
 
 1. Verify CI artifacts and checksums for the tag.
 2. Verify the draft GitHub prerelease and its release notes.
@@ -153,7 +153,7 @@ git push origin vX.Y.Z-alpha.N
    exact tagged artifact.
 4. Publish the draft prerelease.
 
-## Post-Release
+## Post-release
 
 - Add a fresh `[Unreleased]` section if needed.
 - Update deployment manifests or image tags maintained outside this repo.

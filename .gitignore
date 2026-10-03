@@ -1,4 +1,6 @@
-# Python build and cache output
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.pyd
@@ -6,16 +8,28 @@ __pycache__/
 .Python
 build/
 dist/
+*.egg
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+.venv/
+venv/
+/.venv*/
+.ipynb_checkpoints/
 
-# Frontend dependencies and generated output
+# ---------------------------------------------------------------------------
+# Node and frontend build output
+# ---------------------------------------------------------------------------
 node_modules/
 *.tsbuildinfo
 npm-debug.log*
+.npm/
+.pnpm-store/
+yarn-error.log*
 
+# ---------------------------------------------------------------------------
 # Tests, coverage, and static analysis output
+# ---------------------------------------------------------------------------
 .pytest_cache/
 .hypothesis/
 .coverage
@@ -35,24 +49,40 @@ blob-report/
 .nox/
 .jscpd/
 *.sarif
-/*.local.json
-/*.local.sarif
 codacy.json
 codacy-*.json
 pip-audit-*.json
 
-# Virtual environments and local tool state
-.venv/
-/.venv*/
-venv/
+# ---------------------------------------------------------------------------
+# Local tool, editor, and OS state
+# ---------------------------------------------------------------------------
 .direnv/
-.repowise/
 .codegraph/
 .serena/
 .codacy/
-/.mcp.json
+.vscode/
+.idea/
+.cursor/
+.kilo/
+.impeccable/
+.python-version
+.node-version
+.nvmrc
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.AppleDouble
+._*
+.Spotlight-V100/
+$RECYCLE.BIN/
+*.swp
+*.swo
+*~
 
-# Environment, credentials, and machine-local configuration
+# ---------------------------------------------------------------------------
+# Secrets, credentials, and signing material
+# ---------------------------------------------------------------------------
 .env
 .env.*
 !.env.example
@@ -60,29 +90,15 @@ venv/
 !.env.sample
 !.env.template
 .envrc
-.python-version
 .netrc
 .npmrc
-.pypirc
 .npmrc.local
+.pypirc
 secrets/
 credentials/
 secrets.local.*
 credentials.local.*
-
-# Local service configuration and signing material
-/docker-compose.override.yml
-/docker-compose.override.yaml
-config/config.yaml
-config/*.yaml
-!config/config.example.yaml
-config/*.yml
-!config/config.example.yml
-config/*.local.yaml
-config/*.local.yml
-config/*.override.yaml
-config/*.override.yml
-/infra/systemd/*.env
+/.mcp.json
 *.pfx
 *.p12
 *.pem
@@ -95,7 +111,25 @@ config/*.override.yml
 *.local.pem
 *.local.key
 
-# Runtime data and local exports
+# ---------------------------------------------------------------------------
+# Machine-local configuration overrides
+# ---------------------------------------------------------------------------
+/docker-compose.override.yml
+/docker-compose.override.yaml
+config/config.yaml
+config/*.yaml
+!config/config.example.yaml
+config/*.yml
+!config/config.example.yml
+config/*.local.yaml
+config/*.local.yml
+config/*.override.yaml
+config/*.override.yml
+/infra/systemd/*.env
+
+# ---------------------------------------------------------------------------
+# Runtime data and archive output
+# ---------------------------------------------------------------------------
 /archive/
 /data/
 /exports/
@@ -123,22 +157,12 @@ config/*.override.yml
 *.p7s
 *.tsr
 
-# Editors and operating-system metadata
-.idea/
-.vscode/
-.cursor/
-.kilo/
-.impeccable/
-.DS_Store
-Thumbs.db
-.AppleDouble
-._*
-.Spotlight-V100/
-*.swp
-*.swo
-*~
-
-# Coding-agent and assistant state
+# ---------------------------------------------------------------------------
+# Local working files that are never part of the published project
+#
+# Agent scratch state, planning notes, and local reports. Keep additions generic;
+# anything the project actually needs belongs in Git instead.
+# ---------------------------------------------------------------------------
 AGENT.md
 AGENTS.md
 agent.md
@@ -157,21 +181,12 @@ GEMINI.md
 /.github/codex/
 /.github/workflows/codex.yml
 /.github/copilot-instructions.md
-/agent-notes*
-/agent-output*
-/agent-report*
-/agent-context*
-/agent-memory*
-/AI_NOTES*
-/AI_REPORT*
-/AI_AUDIT*
-/AI_SUMMARY*
-
-# Local planning, audits, and reports
+/agent-*
+/AI_*
 /audit/
+/design-preview/
 /docs/audit/
 /docs/archive/
-/docs/agent/
 /docs/source-audit/
 /plans/
 /prompts/
@@ -183,7 +198,12 @@ GEMINI.md
 /task-reports/
 /remediation/
 /reports/
-/progress.md
+/AUDIT*.md
+/*_LEDGER.md
+/RELEASE_EVIDENCE_*.md
+/CODEBASE_AUDIT_REPORT_*.md
+/REMEDIATION_PLAN_*.md
+/PROGRESS.md
 /PLAN.md
 /PROMPT.md
 /SCRATCH.md
@@ -191,15 +211,4 @@ GEMINI.md
 /scratchpad*
 /worklog*
 /devlog*
-/AUDIT.md
-/AUDIT_LEDGER.md
-/remediation-ledger.md
-/TASK_LEDGER.md
-/IMPLEMENTATION_LEDGER.md
-/PROGRESS_LEDGER.md
-/RELEASE_EVIDENCE_*.md
-/CODEBASE_AUDIT_REPORT_*.md
-/REMEDIATION_PLAN_*.md
-/HARNESS_PRINCIPLES.md
 /code_review.md
-/scripts/topology_inventory.sh

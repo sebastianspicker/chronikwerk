@@ -79,6 +79,20 @@ def _candidate_files() -> list[Path]:
     return sorted(candidates - ALLOWLIST)
 
 
+def _without_public_repository_identity(line: str) -> str:
+    """Allow the approved repository slug and qualified product heading only."""
+    line = re.sub(
+        r"(?:github\.com/|sebastianspicker\.github\.io/|sebastianspicker/)"
+        r"(?:sebastianspicker/)?zammad-ticket-"
+        r"archiver(?=[/`#\s\"\)]|$)",
+        "repository",
+        line,
+    )
+    if line == "# Chronikwerk — " + " ".join(("Zammad", "Ticket", "Archiver")):
+        return "# Chronikwerk"
+    return line
+
+
 def _errors() -> list[str]:
     """List every stale identity with exact repository path and line number."""
     errors: list[str] = []
@@ -87,7 +101,8 @@ def _errors() -> list[str]:
         errors.extend(
             f"{relative}:{line_number}: stale identity: {match.group(0)}"
             for line_number, line in enumerate(text.splitlines(), start=1)
-            if (match := STALE_IDENTITY.search(line)) is not None
+            if (match := STALE_IDENTITY.search(_without_public_repository_identity(line)))
+            is not None
         )
     return errors
 

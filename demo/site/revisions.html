@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Revisions · Chronikwerk Administration demonstration</title>
+  <link rel="icon" href="assets/chronikwerk-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/admin.css">
+  <link rel="stylesheet" href="assets/demo.css">
+  <script src="assets/demo.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="runhead">
+    <div class="runhead__inner">
+      <a class="wordmark" href="index.html">
+        <img src="assets/chronikwerk-mark.svg" alt="" width="28" height="28">
+        <span>
+          <span class="wordmark__name">Chronikwerk</span>
+          <span class="wordmark__kind">Administration</span>
+        </span>
+      </a>
+      <nav class="routes" aria-label="Primary navigation">
+        <a href="index.html">Overview</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="configuration.html" aria-current="page">Configuration</a>
+        <a href="tour.html">Tour</a>
+      </nav>
+      <div class="runhead__tools">
+        <p class="margin-note">Demonstration · synthetic data</p>
+      </div>
+    </div>
+  </header>
+  <main id="main-content" class="page" tabindex="-1">
+    <header class="page-head">
+      <div class="page-head__margin">
+        <a class="back-link" href="configuration.html"><span aria-hidden="true">←</span> Configuration</a>
+      </div>
+      <div class="page-head__body">
+        <div class="page-head__title">
+          <h1>Revisions</h1>
+          <p class="lede">Synthetic managed-configuration revision history. Restoring a revision is reviewed before it is staged.</p>
+        </div>
+        <a class="button" href="configuration.html">Edit configuration</a>
+      </div>
+    </header>
+    <div class="annal annal--notice">
+      <div class="annal__margin"></div>
+      <div class="annal__body">
+      <aside class="demo-notice" role="note">
+        <p><strong>Interactive demonstration.</strong> No backend is connected.</p>
+        <p>Restore review is non-destructive and local to this browser tab. No revision is restored, staged, or activated outside this page.</p>
+      </aside>
+      </div>
+    </div>
+    <section class="annal" aria-labelledby="revision-record-title">
+      <div class="annal__margin">
+        <h2 id="revision-record-title">Change record</h2>
+        <p class="margin-note">A real restore creates a new staged revision and requires an external restart; it does not overwrite the active process configuration immediately.</p>
+      </div>
+      <div class="annal__body">
+        <p class="inline-result" data-restore-result aria-live="polite"></p>
+        <div class="table-region" role="region" aria-labelledby="revision-record-title" tabindex="0">
+          <table class="records records--revisions">
+            <thead>
+              <tr>
+                <th scope="col">Created at</th>
+                <th scope="col">Revision</th>
+                <th scope="col">Previous revision</th>
+                <th scope="col">Changed paths</th>
+                <th scope="col"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+            <tr>
+              <td class="records__time" data-label="Created at"><time>31 Aug 2026, 09:08</time></td>
+              <td data-label="Revision"><code>2cb31eabf2d4…a9c0d1</code></td>
+              <td data-label="Previous revision"><code>9fd7c6130a0f…f98d2e</code></td>
+              <td data-label="Changed paths"><ul class="path-list"><li><code>archive.max_pending</code></li><li><code>zammad.success_tag</code></li></ul></td>
+              <td data-label="Actions"><button class="button button--danger" type="button" data-demo-restore data-revision="2cb31eabf2d4…a9c0d1">Review restore</button></td>
+            </tr>
+            <tr>
+              <td class="records__time" data-label="Created at"><time>30 Aug 2026, 16:21</time></td>
+              <td data-label="Revision"><code>9fd7c6130a0f…f98d2e</code></td>
+              <td data-label="Previous revision"><code>6a8f118014c2…54ae31</code></td>
+              <td data-label="Changed paths"><ul class="path-list"><li><code>archive.output_root</code></li></ul></td>
+              <td data-label="Actions"><button class="button button--danger" type="button" data-demo-restore data-revision="9fd7c6130a0f…f98d2e">Review restore</button></td>
+            </tr>
+            <tr>
+              <td class="records__time" data-label="Created at"><time>28 Aug 2026, 11:04</time></td>
+              <td data-label="Revision"><code>6a8f118014c2…54ae31</code></td>
+              <td data-label="Previous revision"><code>initial-demo-revision</code></td>
+              <td data-label="Changed paths"><ul class="path-list"><li><code>archive.include_attachments</code></li></ul></td>
+              <td data-label="Actions"><button class="button button--danger" type="button" data-demo-restore data-revision="6a8f118014c2…54ae31">Review restore</button></td>
+            </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    <dialog data-restore-dialog aria-labelledby="restore-title">
+      <h2 id="restore-title">Review simulated restore</h2>
+      <p>Revision <code data-restore-revision></code> would become a new staged revision in the real control plane. The active process would continue until an external restart.</p>
+      <form data-restore-form>
+        <label class="checkbox" for="restore-ack">
+          <input id="restore-ack" type="checkbox" required> I acknowledge this is a non-destructive demonstration.
+        </label>
+        <div class="button-row">
+          <button class="button button--danger" type="submit" disabled>Simulate stage restore</button>
+          <button class="button" type="button" data-dialog-close>Cancel</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+  <footer class="colophon">
+    <p>Static demonstration with synthetic data. No backend is connected.</p>
+  </footer>
+</body>
+</html>

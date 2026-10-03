@@ -2,6 +2,7 @@
 
 import { qs } from './dom';
 import { adminFetch } from './http';
+import { setButtonPending } from './pending';
 import type { OverviewElements, StatusResponse, StorageCheckResponse } from './types';
 
 const overviewElements = (): OverviewElements | null => {
@@ -22,6 +23,11 @@ const setCapacityBar = (selector: string, current: number, max: number | undefin
   if (max === undefined || max <= 0) return;
   const root = qs<HTMLElement>(selector);
   if (!root) return;
+  if (root instanceof HTMLProgressElement) {
+    root.max = max;
+    root.value = current;
+    return;
+  }
   const fill = qs<HTMLElement>('i', root) ?? root;
   const pct = Math.min(100, Math.max(0, (current / max) * 100));
   fill.style.width = `${pct}%`;
@@ -35,6 +41,10 @@ const showOverviewStatus = (elements: OverviewElements, data: StatusResponse): v
   elements.pending.textContent = String(data.admission.pending);
   setCapacityBar('[data-capacity-running-bar]', running, data.admission.max_running);
   setCapacityBar('[data-capacity-pending-bar]', pending, data.admission.max_pending);
+  const maxRunning = qs<HTMLElement>('[data-admission-max-running]');
+  const maxPending = qs<HTMLElement>('[data-admission-max-pending]');
+  if (maxRunning && data.admission.max_running !== undefined) maxRunning.textContent = String(data.admission.max_running);
+  if (maxPending && data.admission.max_pending !== undefined) maxPending.textContent = String(data.admission.max_pending);
   const now = new Date();
   elements.refreshed.dateTime = now.toISOString();
   elements.refreshed.textContent = `${new Intl.DateTimeFormat(document.documentElement.lang, {
@@ -62,9 +72,20 @@ const refreshOverview = async (): Promise<void> => {
 
 export function initOverview(): void {
   if (!qs('[data-overview]')) return;
-  window.setInterval(() => {
-    void refreshOverview();
-  }, 30_000);
+  let refreshing = false;
+  const refresh = async (): Promise<void> => {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      await refreshOverview();
+    } finally {
+      refreshing = false;
+    }
+  };
+  window.setInterval(() => { void refresh(); }, 30_000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void refresh();
+  });
 }
 
 const storageMessage = (element: HTMLElement, writable: boolean): string => {
@@ -97,8 +118,8 @@ const runStorageCheck = async (button: HTMLButtonElement): Promise<void> => {
   const state = qs<HTMLElement>('[data-storage-state]');
   const checkedAt = qs<HTMLElement>('[data-storage-time]');
   if (!result) return;
-  button.disabled = true;
-  button.setAttribute('aria-busy', 'true');
+  if (button.disabled) return;
+  setButtonPending(button, true);
   try {
     const response = await adminFetch('/admin/api/v1/status/storage-check', {method: 'POST'});
     if (!response.ok) throw new Error('storage_check_failed');
@@ -109,8 +130,7 @@ const runStorageCheck = async (button: HTMLButtonElement): Promise<void> => {
     const sessionExpired = error instanceof Error && error.message === 'session_expired';
     if (!sessionExpired) showStorageResult(state, result, false);
   } finally {
-    button.removeAttribute('aria-busy');
-    button.disabled = false;
+    setButtonPending(button, false);
   }
 };
 

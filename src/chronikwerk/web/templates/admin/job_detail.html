@@ -1,63 +1,74 @@
 {# Packaged with the web control plane. #}
 {% extends "base.html" %}
+{% import "_notation.html" as note %}
 {% block title %}{{ _("admin.ticket_history") }} {{ ticket_id }} · {{ _("admin.service_name") }}{% endblock %}
 {% block content %}
-<div class="route-page route-page--detail">
-  <p class="breadcrumb">
-    <a href="/admin">{{ _("admin.overview") }}</a><span aria-hidden="true">/</span>
-    <a href="/admin/jobs">{{ _("admin.jobs") }}</a><span aria-hidden="true">/</span>
-    {{ ticket_id }}
-  </p>
-  <div class="page-heading">
-    <div>
-      <p class="page-kicker">{{ _("admin.activity_record") }}</p>
-      <h1>{{ _("admin.ticket_history") }}</h1>
-      <p class="page-intro">{{ _("admin.ticket_id") }} <code>{{ ticket_id }}</code></p>
+<header class="page-head">
+  <div class="page-head__margin">
+    <a class="back-link" href="/admin/jobs"><span aria-hidden="true">←</span> {{ _("admin.back_jobs") }}</a>
+  </div>
+  <div class="page-head__body">
+    <div class="page-head__title">
+      <h1>{{ _("admin.ticket_history") }} <code>{{ ticket_id }}</code></h1>
+      <p class="lede">{{ _("admin.process_local") }}</p>
     </div>
   </div>
-  {% if accepted %}
-  <div class="banner banner--success" role="status">
-    {{ _("admin.accepted") }}{% if request_id %}<br>{{ _("admin.request_id") }}: <code>{{ request_id }}</code>{% endif %}
-  </div>
-  {% endif %}
-  {% if retry_unavailable %}
-  <div class="banner banner--error" role="alert">{{ _("admin.retry_unavailable") }}</div>
-  {% endif %}
-  <section class="event-workspace" aria-label="{{ _("admin.ticket_history") }}">
-    {% if items %}
-    <ol class="timeline">
-      {% for item in items %}
-      <li>
-        <div class="timeline-heading">
-          <time>{{ item.created_display }}</time>
-          <span class="status-badge">{{ item.status }}</span>
-        </div>
-        <p>
-          {% if item.classification %}
-          <span class="class-tag class-tag--{{ item.classification|lower }}">{{ item.classification }}</span>
-          ·
-          {% else %}– · {% endif %}
-          {{ item.message or "–" }}
-        </p>
-        {% if item.request_id %}<code>{{ item.request_id }}</code>{% endif %}
-      </li>
-      {% endfor %}
-    </ol>
-    {% else %}
-    <p class="empty-state">{{ _("admin.no_jobs") }}</p>
+</header>
+{% if accepted or retry_unavailable %}
+<div class="annal annal--notice">
+  <div class="annal__margin"></div>
+  <div class="annal__body">
+    {% if accepted %}
+    <div class="banner banner--success" role="status">
+      {{ _("admin.accepted") }}{% if request_id %}<br>{{ _("admin.request_id") }}: <code>{{ request_id }}</code>{% endif %}
+    </div>
     {% endif %}
-  </section>
-  <details class="action-disclosure">
-    <summary>{{ _("admin.retry") }}</summary>
-    <p>{{ _("admin.retry_warning") }}</p>
-    <form method="post" action="/admin/jobs/{{ ticket_id }}/retry">
-      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-      <label class="checkbox">
-        <input type="checkbox" name="acknowledge_overwrite" value="true" required>
-        {{ _("admin.retry_ack") }}
-      </label>
-      <button class="button button--danger" type="submit">{{ _("admin.retry_submit") }}</button>
-    </form>
-  </details>
+    {% if retry_unavailable %}
+    <div class="banner banner--error" role="alert">{{ _("admin.retry_unavailable") }}</div>
+    {% endif %}
+  </div>
 </div>
+{% endif %}
+<section class="annal" aria-labelledby="ticket-history-title">
+  <div class="annal__margin">
+    <h2 id="ticket-history-title">{{ _("admin.activity_record") }}</h2>
+  </div>
+  <div class="annal__body annal__body--flush"></div>
+  {% if items %}
+  <ol class="chronicle">
+    {% for item in items %}
+    <li class="chronicle__entry chronicle__entry--{{ note.status_tones.get(item.status, 'idle') }}">
+      <div class="chronicle__when"><time>{{ item.created_display }}</time></div>
+      <div class="chronicle__what">
+        <p class="chronicle__tags">{{ note.status(item.status) }}{% if item.classification %} {{ note.classification(item.classification) }}{% endif %}</p>
+        <p class="chronicle__message">{{ item.message or "–" }}</p>
+        {% if item.request_id %}<p class="chronicle__ref"><span class="visually-hidden">{{ _("admin.request_id") }}: </span><code>{{ item.request_id }}</code></p>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <div class="annal__margin"></div>
+  <div class="annal__body"><div class="empty"><p class="empty__title">{{ _("admin.no_jobs") }}</p></div></div>
+  {% endif %}
+</section>
+<section class="annal" aria-labelledby="ticket-actions-title">
+  <div class="annal__margin">
+    <h2 id="ticket-actions-title">{{ _("admin.actions") }}</h2>
+  </div>
+  <div class="annal__body">
+    <details class="disclosure disclosure--danger">
+      <summary>{{ _("admin.retry") }}</summary>
+      <form class="disclosure__panel" data-pending-form method="post" action="/admin/jobs/{{ ticket_id }}/retry">
+        <p>{{ _("admin.retry_warning") }}</p>
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <label class="checkbox">
+          <input type="checkbox" name="acknowledge_overwrite" value="true" required>
+          {{ _("admin.retry_ack") }}
+        </label>
+        <button class="button button--danger" type="submit" data-pending="{{ _("admin.requesting") }}">{{ _("admin.retry_submit") }}</button>
+      </form>
+    </details>
+  </div>
+</section>
 {% endblock %}

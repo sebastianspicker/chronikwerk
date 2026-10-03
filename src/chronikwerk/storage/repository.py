@@ -26,8 +26,6 @@ from chronikwerk.storage.filesystem import (
 )
 from chronikwerk.storage.options import ArchiveStorageOptions, SigningProvenance
 
-_UNSIGNED_PROVENANCE = SigningProvenance(False, False)
-
 if TYPE_CHECKING:
     from chronikwerk.documents.models import Snapshot
 
@@ -54,7 +52,6 @@ class StoreTicketFilesRequest:
     now: datetime
     storage: ArchiveStorageOptions
     signing_provenance: SigningProvenance
-    signing_cert_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,8 +87,8 @@ class _StorageTransaction:
     fsync: bool
     pdf_backup: Path | None = None
     sidecar_backup: Path | None = None
-    pdf_committed: bool = False
-    sidecar_committed: bool = False
+    pdf_publication_started: bool = False
+    sidecar_publication_started: bool = False
 
     @property
     def backup_paths(self) -> tuple[Path | None, Path | None]:
@@ -162,19 +159,16 @@ def _build_and_write_audit(
     )
 
 
-def _backup_if_exists(
+def _backup_path_if_exists(
     path: Path,
     *,
     transaction_id: str,
     storage_root: Path,
-    fsync: bool,
 ) -> Path | None:
-    """Move an existing canonical file to a collision-proof transaction backup."""
-    backup_path = path.with_name(f"{path.name}.bak.{transaction_id}")
-    try:
-        move_file_within_root(path, backup_path, storage_root=storage_root, fsync=fsync)
-    except FileNotFoundError:
+    """Return the collision-proof backup path for an existing canonical file."""
+    if not path_entry_exists(path, storage_root=storage_root):
         return None
+    backup_path = path.with_name(f"{path.name}.bak.{transaction_id}")
     return backup_path
 
 
@@ -216,6 +210,10 @@ def _restore_backup(
     if backup_path is None:
         return None
     try:
+        if not path_entry_exists(backup_path, storage_root=storage_root):
+            if path_entry_exists(canonical_path, storage_root=storage_root):
+                return None
+            raise FileNotFoundError(f"archive backup is missing: {backup_path}")
         move_file_within_root(
             backup_path,
             canonical_path,
@@ -250,20 +248,42 @@ def _append_rollback_failure(
         failures.append(failure)
 
 
+def _restore_prior_pdf(transaction: _StorageTransaction) -> RollbackFailure | None:
+    """Restore the prior PDF and verify it can support a restored completion marker."""
+    failure = _restore_backup(
+        transaction.pdf_backup,
+        transaction.target_path,
+        storage_root=transaction.storage_root,
+        fsync=transaction.fsync,
+    )
+    if failure is not None or transaction.sidecar_backup is None:
+        return failure
+    try:
+        no_prior_pdf = transaction.pdf_publication_started and transaction.pdf_backup is None
+        if no_prior_pdf or not path_entry_exists(
+            transaction.target_path, storage_root=transaction.storage_root
+        ):
+            raise FileNotFoundError("Cannot restore completion sidecar without the prior PDF")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        _log_cleanup_failure("rollback_restore", transaction.target_path, exc)
+        return RollbackFailure("rollback_restore", transaction.target_path, exc)
+    return None
+
+
 def _rollback_committed_files(
     transaction: _StorageTransaction,
 ) -> list[RollbackFailure]:
     failures: list[RollbackFailure] = []
-    if transaction.sidecar_committed:
-        _append_rollback_failure(
-            failures,
-            _remove_for_rollback(
-                transaction.sidecar_path,
-                storage_root=transaction.storage_root,
-                fsync=transaction.fsync,
-            ),
+    if transaction.sidecar_publication_started:
+        failure = _remove_for_rollback(
+            transaction.sidecar_path,
+            storage_root=transaction.storage_root,
+            fsync=transaction.fsync,
         )
-    if transaction.pdf_committed:
+        if failure is not None:
+            # Keep the published PDF in place while its completion marker may remain.
+            return [failure]
+    if transaction.pdf_publication_started:
         _append_rollback_failure(
             failures,
             _remove_for_rollback(
@@ -272,24 +292,18 @@ def _rollback_committed_files(
                 fsync=transaction.fsync,
             ),
         )
-    _append_rollback_failure(
-        failures,
-        _restore_backup(
-            transaction.sidecar_backup,
-            transaction.sidecar_path,
-            storage_root=transaction.storage_root,
-            fsync=transaction.fsync,
-        ),
-    )
-    _append_rollback_failure(
-        failures,
-        _restore_backup(
-            transaction.pdf_backup,
-            transaction.target_path,
-            storage_root=transaction.storage_root,
-            fsync=transaction.fsync,
-        ),
-    )
+    pdf_restore_failure = _restore_prior_pdf(transaction)
+    _append_rollback_failure(failures, pdf_restore_failure)
+    if pdf_restore_failure is None:
+        _append_rollback_failure(
+            failures,
+            _restore_backup(
+                transaction.sidecar_backup,
+                transaction.sidecar_path,
+                storage_root=transaction.storage_root,
+                fsync=transaction.fsync,
+            ),
+        )
     return failures
 
 
@@ -321,32 +335,44 @@ def _commit_files_to_storage(
     The sidecar arriving last signals a complete, successful archival.
     """
     try:
-        transaction.pdf_backup = _backup_if_exists(
-            transaction.target_path,
-            transaction_id=transaction.transaction_id,
-            storage_root=transaction.storage_root,
-            fsync=transaction.fsync,
-        )
-        transaction.sidecar_backup = _backup_if_exists(
+        transaction.sidecar_backup = _backup_path_if_exists(
             transaction.sidecar_path,
             transaction_id=transaction.transaction_id,
             storage_root=transaction.storage_root,
-            fsync=transaction.fsync,
         )
+        if transaction.sidecar_backup is not None:
+            move_file_within_root(
+                transaction.sidecar_path,
+                transaction.sidecar_backup,
+                storage_root=transaction.storage_root,
+                fsync=transaction.fsync,
+            )
+        transaction.pdf_backup = _backup_path_if_exists(
+            transaction.target_path,
+            transaction_id=transaction.transaction_id,
+            storage_root=transaction.storage_root,
+        )
+        if transaction.pdf_backup is not None:
+            move_file_within_root(
+                transaction.target_path,
+                transaction.pdf_backup,
+                storage_root=transaction.storage_root,
+                fsync=transaction.fsync,
+            )
+        transaction.pdf_publication_started = True
         move_file_within_root(
             tmp_dir / transaction.target_path.name,
             transaction.target_path,
             storage_root=transaction.storage_root,
             fsync=transaction.fsync,
         )
-        transaction.pdf_committed = True
+        transaction.sidecar_publication_started = True
         move_file_within_root(
             tmp_dir / transaction.sidecar_path.name,
             transaction.sidecar_path,
             storage_root=transaction.storage_root,
             fsync=transaction.fsync,
         )
-        transaction.sidecar_committed = True
     except Exception as primary_error:
         _raise_rollback_error(primary_error, transaction)
         raise

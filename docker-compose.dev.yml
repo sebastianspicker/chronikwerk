@@ -1,5 +1,5 @@
 # =============================================================================
-# Development Docker Compose (hot-reload with source mount)
+# Development Docker Compose (source mount; restart the service to pick up code changes)
 # =============================================================================
 #
 # Usage:  make dev   (or: docker compose -f docker-compose.dev.yml up --build)
@@ -24,6 +24,6 @@ services:
       SERVER__PORT: "${SERVER__PORT:-8080}"
       STORAGE__ROOT: "${STORAGE__ROOT:-/mnt/archive}"
     volumes:
-      # Mount entire project for hot-reload during development.
+      # Mount the project so code changes apply on the next service restart.
       - ./:/app
     command: ["chronikwerk"]

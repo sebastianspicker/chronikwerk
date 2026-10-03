@@ -10,9 +10,11 @@
     "build:admin": "npm run build:admin-css && npm run build:admin-js",
     "duplication:all": "jscpd src/chronikwerk scripts frontend tests --min-lines 5 --min-tokens 70 --reporters console,threshold --threshold 5",
     "duplication:production": "jscpd src/chronikwerk scripts frontend --min-lines 5 --min-tokens 70 --reporters console,threshold --threshold 0",
+    "test:browser": "playwright test",
     "typecheck": "tsc --project tsconfig.json"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "24.13.3",
     "esbuild": "0.27.2",
     "jscpd": "5.3.1",

@@ -1,4 +1,4 @@
-# 03 - Data Model
+# Data model
 
 This page describes the data objects that matter for rendering, storage, and
 audit output.
@@ -28,10 +28,10 @@ Core template fields:
 - `articles_omitted`
 
 Each article may include attachment metadata (`filename`, `size`, content type,
-and identifiers). Attachment binary content is intentionally not persisted by
-the storage layer; the metadata is rendered in the PDF only.
+and identifiers). The storage layer does not persist attachment binaries; only
+the metadata is rendered in the PDF.
 
-## Path Fields
+## Path fields
 
 Path placement is derived from ticket custom fields:
 
@@ -41,13 +41,13 @@ Path placement is derived from ticket custom fields:
 
 See [04 - Path Policy](04-path-policy.md).
 
-## Audit Sidecar
+## Audit sidecar
 
 For every archived PDF, the service writes a JSON sidecar next to the PDF:
 
 ```text
-Ticket-123_20260207T120000Z.pdf
-Ticket-123_20260207T120000Z.pdf.json
+Ticket-123_2026-02-07.pdf
+Ticket-123_2026-02-07.pdf.json
 ```
 
 The sidecar records:

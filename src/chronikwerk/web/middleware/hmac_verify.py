@@ -13,7 +13,11 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from chronikwerk.configuration.models import Settings
-from chronikwerk.web.constants import DELIVERY_ID_HEADER, INGEST_PROTECTED_PATHS
+from chronikwerk.web.constants import (
+    DELIVERY_ID_HEADER,
+    INGEST_PROTECTED_PATHS,
+    normalized_delivery_id,
+)
 from chronikwerk.web.responses import api_error
 
 _SIGNATURE_HEADER = "X-Hub-Signature"
@@ -35,9 +39,7 @@ class _VerificationContext:
     send: Send
 
 
-def _secret_bytes(settings: Settings | None) -> bytes | None:
-    if settings is None:
-        return None
+def _secret_bytes(settings: Settings) -> bytes | None:
     secret = settings.zammad.webhook_hmac_secret
     if secret is None:
         return None
@@ -57,10 +59,6 @@ def _service_misconfigured() -> JSONResponse:
 
 def _missing_delivery_id() -> JSONResponse:
     return api_error(400, "missing_delivery_id", code="missing_delivery_id")
-
-
-def _normalized_delivery_id(value: str | None) -> str | None:
-    return (value or "").strip() or None
 
 
 def _strict_signature_prefix(delivery_id: str) -> bytes:
@@ -151,12 +149,10 @@ def _replay_receive(chunks: list[bytes]) -> Receive:
 class HmacVerifyMiddleware:
     """Reject unauthenticated webhook traffic before route processing."""
 
-    def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
+    def __init__(self, app: ASGIApp, *, settings: Settings) -> None:
         self.app = app
         self._secret = _secret_bytes(settings)
-        self._require_delivery_id = (
-            settings.hardening.webhook.require_delivery_id if settings is not None else False
-        )
+        self._require_delivery_id = settings.hardening.webhook.require_delivery_id
 
     async def _reject_missing_delivery_id(
         self,
@@ -167,7 +163,7 @@ class HmacVerifyMiddleware:
     ) -> bool:
         if not self._require_delivery_id:
             return False
-        if _normalized_delivery_id(headers.get(DELIVERY_ID_HEADER)) is not None:
+        if normalized_delivery_id(headers.get(DELIVERY_ID_HEADER)) is not None:
             return False
 
         await _send_rejection(_missing_delivery_id(), scope, receive, send)
@@ -208,7 +204,7 @@ class HmacVerifyMiddleware:
         )
 
     def _signature_prefix(self, headers: Headers) -> bytes:
-        delivery_id = _normalized_delivery_id(headers.get(DELIVERY_ID_HEADER))
+        delivery_id = normalized_delivery_id(headers.get(DELIVERY_ID_HEADER))
         if self._require_delivery_id and delivery_id is not None:
             return _strict_signature_prefix(delivery_id)
         return b""

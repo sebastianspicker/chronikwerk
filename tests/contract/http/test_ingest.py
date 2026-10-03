@@ -7,13 +7,13 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from chronikwerk.configuration.models import Settings
-from chronikwerk.operations.job import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
 from chronikwerk.web.app import create_app
 from tests.support.http_security_test_helpers import post_signed_json
 from tests.support.scheduling import SchedulingSpy
 from tests.support.settings_factory import make_settings
 
 _WEBHOOK_SECRET = "test-webhook-secret"
+_LEGACY_FORCE_REPROCESS_FIELD = "_force_reprocess"
 
 
 def _settings(storage_root: str, *, overrides: dict[str, Any] | None = None) -> Settings:
@@ -45,7 +45,7 @@ def test_ingest_validates_payload_and_hands_off_sanitized_job(tmp_path) -> None:
     response = _post(
         client,
         "/ingest",
-        {"ticket": {"id": 123}, FORCE_REPROCESS_KEY: True},
+        {"ticket": {"id": 123}, _LEGACY_FORCE_REPROCESS_FIELD: True},
         **{"X-Zammad-Delivery": "delivery-xyz"},
     )
 
@@ -53,11 +53,13 @@ def test_ingest_validates_payload_and_hands_off_sanitized_job(tmp_path) -> None:
     assert response.json() == {"status": "accepted", "ticket_id": 123}
     assert response.headers["X-Request-Id"]
     assert len(scheduler.scheduled) == 1
-    delivery_id, payload = scheduler.scheduled[0]
+    job = scheduler.scheduled[0]
+    delivery_id, payload = job.delivery_id, job.payload
     assert delivery_id == "delivery-xyz"
     assert payload["ticket"]["id"] == 123
-    assert payload[REQUEST_ID_KEY]
-    assert FORCE_REPROCESS_KEY not in payload
+    assert job.request_id
+    assert _LEGACY_FORCE_REPROCESS_FIELD not in payload
+    assert job.force_reprocess is False
 
 
 def test_ingest_rejects_invalid_payload_without_scheduling(tmp_path) -> None:
@@ -81,11 +83,11 @@ def test_batch_assigns_delivery_suffixes_and_keeps_per_item_payloads(tmp_path) -
 
     assert response.status_code == 202
     assert response.json() == {"status": "accepted", "count": 2}
-    assert [(delivery, payload.get("ticket_id")) for delivery, payload in scheduler.scheduled] == [
+    assert [(job.delivery_id, job.payload.get("ticket_id")) for job in scheduler.scheduled] == [
         ("delivery-batch:0", None),
         ("delivery-batch:1", 222),
     ]
-    assert scheduler.scheduled[0][1]["ticket"]["id"] == 111
+    assert scheduler.scheduled[0].payload["ticket"]["id"] == 111
 
 
 def test_ingest_dry_runs_and_capacity_failures_do_not_schedule(tmp_path) -> None:
@@ -98,9 +100,9 @@ def test_ingest_dry_runs_and_capacity_failures_do_not_schedule(tmp_path) -> None
     assert overloaded.status_code == 503
     assert overloaded.json()["code"] == "job_capacity_exhausted"
     assert len(scheduler.scheduled) == 1
-    assert scheduler.scheduled[0][0] is None
-    assert scheduler.scheduled[0][1]["ticket_id"] == 123
-    assert scheduler.scheduled[0][1][REQUEST_ID_KEY]
+    assert scheduler.scheduled[0].delivery_id is None
+    assert scheduler.scheduled[0].payload["ticket_id"] == 123
+    assert scheduler.scheduled[0].request_id
 
 
 def test_retry_requires_token_and_hands_off_authorized_request(tmp_path) -> None:

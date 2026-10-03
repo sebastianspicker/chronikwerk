@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from chronikwerk.documents.models import Article, AttachmentMeta, Snapshot, TicketMeta
 from chronikwerk.storage.options import ArchiveStorageOptions, SigningProvenance
 from chronikwerk.storage.repository import StoreTicketFilesRequest, store_ticket_files_request
@@ -17,12 +19,15 @@ def _storage(root: Path) -> ArchiveStorageOptions:
     return ArchiveStorageOptions(root=root, fsync=False, filename_pattern="Ticket-{ticket}.pdf")
 
 
-def test_store_ticket_files_writes_pdf_and_complete_audit_sidecar(tmp_path: Path) -> None:
+@pytest.mark.parametrize("omitted", [0, 2])
+def test_store_ticket_files_writes_pdf_and_audit_coverage(tmp_path: Path, omitted: int) -> None:
     target = tmp_path / "archive" / "Ticket-10001.pdf"
     sidecar = target.with_suffix(".pdf.json")
     pdf_bytes = b"%PDF-1.7\\n%%EOF\\n"
     snapshot = Snapshot(
         ticket=TicketMeta(id=100, number="10001", title="Storage workflow"),
+        articles_total=1 + omitted,
+        articles_omitted=omitted,
         articles=[
             Article(
                 id=10,
@@ -52,5 +57,10 @@ def test_store_ticket_files_writes_pdf_and_complete_audit_sidecar(tmp_path: Path
     assert result.size_bytes == len(pdf_bytes)
     assert record["ticket_id"] == 100
     assert record["sha256"] == result.sha256_hex
-    assert record["article_coverage"] == {"complete": True, "included": 1, "omitted": 0, "total": 1}
+    assert record["article_coverage"] == {
+        "complete": omitted == 0,
+        "included": 1,
+        "omitted": omitted,
+        "total": 1 + omitted,
+    }
     assert "attachments" not in record

@@ -17,11 +17,11 @@ from chronikwerk.archiving.notes import (
     error_note_html,
 )
 from chronikwerk.archiving.retry import async_retry
+from chronikwerk.archiving.tags import apply_error
 from chronikwerk.failures import PermanentError, TransientError
 from chronikwerk.operations.metrics import failed_total
 from chronikwerk.timestamps import format_timestamp_utc, now_utc
 from chronikwerk.zammad.gateway import AsyncZammadClient
-from chronikwerk.zammad.workflow import apply_error
 
 log = structlog.get_logger(__name__)
 
@@ -49,7 +49,7 @@ async def handle_ticket_pipeline_exception(
     classified = classify(exc)
     classification_label = _classification_label(classified)
     msg = concise_exc_message(exc)
-    action = action_hint(exc, classified=classified) if classified is not None else ""
+    action = action_hint(exc, classified=classified, trigger_tag=trigger_tag)
     code, hint = _error_code_hint(exc, classified=classified)
 
     note = _ErrorNote(
@@ -107,25 +107,29 @@ def _log_pipeline_error(
     )
 
 
-def _failure_status(classified: TransientError | PermanentError | None) -> str:
-    if classified is not None and isinstance(classified, TransientError):
+def _failure_status(classified: TransientError | PermanentError) -> str:
+    if isinstance(classified, TransientError):
         return "failed_transient"
     return "failed_permanent"
 
 
-def _classification_label(classified: TransientError | PermanentError | None) -> str:
+def _classification_label(classified: TransientError | PermanentError) -> str:
     """Map a classified error to its human-readable label for notes and metrics."""
-    is_transient = classified is not None and isinstance(classified, TransientError)
+    is_transient = isinstance(classified, TransientError)
     return "Transient" if is_transient else "Permanent"
 
 
 def _error_code_hint(
-    exc: BaseException, *, classified: TransientError | PermanentError | None
+    exc: BaseException, *, classified: TransientError | PermanentError
 ) -> tuple[str, str]:
-    """Extract a structured error code and hint, but only for permanent errors."""
-    if classified is not None and isinstance(classified, PermanentError):
-        return error_code_and_hint(exc)
-    return "", ""
+    """Extract a structured error code and hint, but only for permanent errors.
+
+    Transient classification wins for dual-typed errors such as ``ServerError`` so the note code
+    never contradicts the "Transient" label.
+    """
+    if isinstance(classified, TransientError):
+        return "", ""
+    return error_code_and_hint(exc)
 
 
 async def _post_error_note(
@@ -167,11 +171,11 @@ async def _apply_error_and_cleanup_processing_tag(
     client: AsyncZammadClient,
     attempt: workflow.ArchiveAttempt,
     classification_label: str,
-    classified: TransientError | PermanentError | None,
+    classified: TransientError | PermanentError,
     trigger_tag: str,
 ) -> None:
     try:
-        keep_trigger = classified is not None and isinstance(classified, TransientError)
+        keep_trigger = isinstance(classified, TransientError)
         await async_retry(
             lambda: apply_error(
                 client,

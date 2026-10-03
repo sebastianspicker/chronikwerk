@@ -1,8 +1,8 @@
 # Architecture
 
-Chronikwerk is a modular monolith. One FastAPI process accepts authenticated Zammad
-webhooks and operator retries, runs bounded background archive work, writes an immutable
-PDF and JSON audit sidecar, and projects the outcome back to Zammad.
+Chronikwerk is a modular monolith. One FastAPI process accepts authenticated Zammad webhooks and
+operator retries, runs bounded background archive work, transactionally publishes a PDF and a JSON
+audit sidecar, and projects the outcome back to Zammad.
 
 ## Runtime flow
 
@@ -15,83 +15,113 @@ flowchart LR
   A --> ZG[Zammad gateway]
   A --> D[documents]
   A --> S[storage]
-  A --> ZP[Zammad workflow projection]
   C[configuration] --> X[composition root]
   X --> W
   X --> Q
   X --> A
 ```
 
-`POST /ingest` and retry endpoints return `202` only after process-local admission. The
-archive workflow fetches ticket data, checks the trigger state, marks the ticket as processing,
+`POST /ingest` and the retry endpoints return `202` only after process-local admission. The archive
+workflow then fetches ticket data, checks the trigger state, marks the ticket as processing,
 normalizes and sanitizes the snapshot, renders and optionally signs the PDF, transactionally
-publishes the PDF and sidecar, and then applies terminal tags. The success note is best effort
-after storage and terminal tags have succeeded.
+publishes the PDF and sidecar, and applies terminal tags. The success note is best effort, attempted
+after storage and the terminal tags have succeeded.
 
 ## Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `composition.py` | Converts validated configuration into narrow runtime options and wires concrete dependencies. |
-| `archiving/` | Archive attempts, outcomes, workflow ordering, failure policy, notes, and product rules. |
-| `zammad/` | Zammad DTOs, bounded transport, resource gateway, and sequential tag/note projection. |
-| `documents/` | Snapshot models and mapping, HTML sanitization, templates, PDF rendering, PAdES signing, and RFC3161 timestamping. |
+| `composition.py` | Converts validated configuration into narrow runtime options and builds the job-processing objects (history, guards, scheduler, Zammad client, processor). |
+| `archiving/` | Workflow and outcomes, Zammad-to-snapshot mapping, tag state machine, notes, failure policy, retry, and archive paths. |
+| `zammad/` | DTOs, policy-checked bounded transport, and the resource gateway. |
+| `documents/` | Snapshot models, HTML sanitization, templates, PDF rendering, PAdES signing, and RFC 3161 timestamping. |
 | `storage/` | Path layout, root-confined filesystem operations, audit records, and transactional PDF/sidecar publication. |
-| `configuration/` | Settings model, precedence, validation, redaction, and managed non-secret revisions. |
-| `operations/` | Volatile job envelopes, admission, scheduling, deduplication, ticket exclusion, history, shutdown, logging, and metrics. |
+| `configuration/` | Settings model, precedence, validation, settings redaction, and managed non-secret revisions. |
+| `operations/` | `TicketJob` envelopes, admission, scheduling and shutdown, delivery dedupe, ticket guards, job history, logging, and metrics. |
 | `web/` | FastAPI app, public routes, middleware, administration UI/API, templates, and generated static assets. |
 
 ## Dependency direction
 
-- `composition.py` may import every concrete module needed to assemble the process.
-- `web` depends only on `configuration` and `operations`; it does not implement archival work.
-- Archive policy and value modules do not import web, configuration, operations, or concrete
-  integration packages.
-- `configuration` is foundational; `operations` and `zammad` may depend on it; `documents` may
-  depend on those boundary modules; `storage` may depend on document models; and `archiving`
-  coordinates the resulting capabilities. Reverse edges are forbidden.
-- `failures.py`, `outbound.py`, and `timestamps.py` are small shared contracts for error
-  classification, HTTP/DNS trust, and audit timestamps. They cannot import other internal modules.
-- `configuration` is a leaf. Runtime feature packages may consume its values only at composition
-  or delivery boundaries; archive and storage requests use narrow immutable options.
-- Cross-package imports of underscore-prefixed implementation modules are forbidden.
+```mermaid
+flowchart LR
+  W[web] --> C[configuration]
+  W --> O[operations]
+  O --> C
+  Z[zammad] --> C
+  S[storage] --> D[documents]
+  A[archiving] --> D
+  A --> O
+  A --> S
+  A --> Z
+  X[composition.py] -. assembles .-> W
+  X -. assembles .-> A
+```
 
-These rules, including the acyclic feature graph, are enforced by architecture tests. The old
-`app`, `adapters`, `domain`, `config`, and `observability` package families are intentionally
-absent.
+Arrows point from a module to the modules it may import; they are permissions, not a claim that
+every edge is present. `tests/unit/configuration/test_architecture.py` holds the authoritative map
+and fails on any other edge or cycle.
+
+- `composition.py` may import any concrete module it needs to assemble the process.
+- `web` depends only on `configuration` and `operations`; it does not implement archival work.
+- `archiving` is the only coordinator. `zammad`, `documents`, and `storage` never import it, and
+  `documents` does not know Zammad wire formats or process mechanics; it depends only on shared
+  leaves. `storage` imports document models only for types. `archiving` receives narrow options
+  built by `composition.py` and imports no `configuration` module.
+- Pure archive policy (`path`, `notes`, `tags`, `error_policy`) imports no feature package.
+- Shared leaves at the package root import no other chronikwerk module: `failures.py`
+  (error classification), `outbound.py` (HTTP/DNS trust and bounded response helpers),
+  `timestamps.py`, `redaction.py` (the single secret scrubber), `concurrency.py`
+  (cancellation-safe thread offloading), `i18n.py`, and `_version.py`.
+  Add another root module only for a concept with several independent owners.
+- Cross-package imports of underscore-prefixed implementation modules are forbidden. The old
+  `app`, `adapters`, `domain`, `config`, and `observability` package families are gone.
 
 ## State and consistency
 
-PDF and JSON sidecar files are Chronikwerk's durable state. The sidecar is published last and
+The PDF and JSON sidecar files are Chronikwerk's durable state. The sidecar is published last and
 signals a complete archive pair. Managed non-secret configuration revisions are also durable and
 become active after an external restart.
 
-Admission reservations, running tasks, delivery-ID deduplication, per-ticket exclusion, job
-history, and admin sessions are process-local. A crash can lose admitted work, and multiple
-instances can race. Those limitations are explicit product contracts, not hidden infrastructure.
+Admission reservations, running tasks, delivery-ID deduplication, per-ticket exclusion, job history,
+and admin sessions are process-local. A crash can lose admitted work, and multiple instances can
+race. These are explicit product contracts, not hidden infrastructure.
 
 Archive publication and Zammad finalization are not one distributed transaction. If storage
-succeeds and terminal tag changes fail, the archive pair remains authoritative and operators
+succeeds but terminal tag changes fail, the archive pair stays authoritative and operators
 reconcile the ticket state. Adding durable jobs, leases, or an outbox would change admission and
-operational semantics and requires a separate product decision.
+operational semantics and needs a separate product decision.
+
+The composition root builds one `JobHistory`, one `TicketGuards` (in-flight locks and delivery
+dedupe), one `TicketSchedulingService`, and one shared Zammad client, and passes them to
+`create_app(settings, *, scheduler=None, history=None, cleanup=None)`; without a scheduler the app is
+read-only. Request-serving state (admin sessions, the managed configuration store, rate-limit
+buckets) is created per application by `create_app`. The remaining module-level state is deliberate:
+process-wide Prometheus metrics, the PDF signer cache, and the WeasyPrint render lock. The processor
+borrows the shared client and never opens or closes it.
+
+On shutdown the scheduler's `aclose()` stops accepting work synchronously, closes admission, and
+drains tracked jobs for `admission.shutdown_timeout_seconds`. It then cancels the remaining jobs and
+awaits their cancellation finalizers. The web lifespan finally calls the injected cleanup callback,
+which closes the shared Zammad client. See [ADR 0009](adr/0009-composition-owned-runtime-state.md).
 
 ## External boundaries
 
-- HTTP: webhook, batch, retry, health, metrics, history, and administration contracts in
-  `docs/api.md`.
-- Zammad: fixed `/api/v1` resource shapes, token authentication, deny-by-default outbound
+- **HTTP:** webhook, batch, retry, health, metrics, history, and administration contracts in
+  [api.md](api.md).
+- **Zammad:** fixed `/api/v1` resource shapes, token authentication, deny-by-default outbound
   transport policy, and workflow tags/notes.
-- Filesystem: configured archive root, sanitized layout, descriptor-relative symlink-resistant
-  writes, atomic replacement, and JSON audit schema.
-- Documents: packaged templates, PDF/UA-targeted rendering, optional PAdES signature, and optional
-  RFC3161 timestamp.
-- Deployment: console scripts, Docker/Compose, and systemd interfaces documented in
-  `docs/deploy.md`.
+- **Filesystem:** configured archive root, sanitized layout, descriptor-relative symlink-resistant
+  writes, atomic replacement, and the JSON audit schema.
+- **Documents:** packaged templates, PDF/UA-targeted rendering, an optional PAdES signature, and an
+  optional RFC 3161 timestamp.
+- **Deployment:** console scripts, Docker/Compose, and systemd interfaces documented in
+  [deploy.md](deploy.md).
 
 ## Where code belongs
 
-Put product rules and archive outcomes in `archiving`; Zammad wire formats and calls in `zammad`;
-rendering/signing code in `documents`; filesystem and audit publication in `storage`; settings and
-managed revisions in `configuration`; volatile process mechanics in `operations`; and HTTP/admin
-delivery in `web`. Shared code belongs in the module that owns the concept, not in a generic helper
-package.
+Put product rules, Zammad-to-snapshot mapping, tag transitions, and archive outcomes in `archiving`;
+Zammad wire formats and calls in `zammad`; rendering and signing in `documents`; filesystem and audit
+publication in `storage`; settings and managed revisions in `configuration`; volatile process
+mechanics in `operations`; and HTTP/admin delivery in `web`. Shared code belongs in the module that
+owns the concept, not in a generic helper package; new volatile state is built in `composition.py`
+and passed in, not held in a module global.

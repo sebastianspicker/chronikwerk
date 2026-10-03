@@ -1,5 +1,12 @@
 # Changelog
 
+## Repository naming migration
+
+The repository moves from `sebastianspicker/chronikwerk` to
+`sebastianspicker/zammad-ticket-archiver`. Product commands, data formats, and runtime
+identifiers remain unchanged. The demo moves to
+https://sebastianspicker.github.io/zammad-ticket-archiver/.
+
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -7,6 +14,21 @@ Python package versions use PEP 440 (for example, `0.3.0a1`), while Git prerelea
 tags use the public form `v0.3.0-alpha.1`.
 
 ## [Unreleased]
+
+### Changed
+- Zammad error-note hints now name the configured trigger tag, and the permission and field
+  hints apply to the failures they describe. Error notes redact more secret shapes through one
+  shared scrubber.
+- Remove the `settings_not_configured` 503 and the `skipped_no_ticket_id` history status; jobs
+  always carry a ticket id. Delivery dedupe no longer pauses while shutting down.
+- Job history, ticket guards, and shutdown are owned by the composition root instead of module
+  globals (ADR 0009); `documents` no longer depends on `zammad`.
+- Remove the `smoke`, `qa`, `test-unit`, `test-all`, `ci`, `docker-smoke`, and `typecheck-all`
+  make targets; use `test`, `test-fast`, `test-int`, `verify-core`, and `verify`.
+
+### Documentation
+- Correct the default archive filename example to the date-only `Ticket-123_2026-02-07.pdf`
+  and document the Prometheus metric names.
 
 ## [0.3.0-alpha.1]
 

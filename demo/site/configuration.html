@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Configuration · Chronikwerk Administration demonstration</title>
+  <link rel="icon" href="assets/chronikwerk-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/admin.css">
+  <link rel="stylesheet" href="assets/demo.css">
+  <script src="assets/demo.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="runhead">
+    <div class="runhead__inner">
+      <a class="wordmark" href="index.html">
+        <img src="assets/chronikwerk-mark.svg" alt="" width="28" height="28">
+        <span>
+          <span class="wordmark__name">Chronikwerk</span>
+          <span class="wordmark__kind">Administration</span>
+        </span>
+      </a>
+      <nav class="routes" aria-label="Primary navigation">
+        <a href="index.html">Overview</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="configuration.html" aria-current="page">Configuration</a>
+        <a href="tour.html">Tour</a>
+      </nav>
+      <div class="runhead__tools">
+        <p class="margin-note">Demonstration · synthetic data</p>
+      </div>
+    </div>
+  </header>
+  <main id="main-content" class="page" tabindex="-1">
+    <header class="page-head">
+      <div class="page-head__margin"></div>
+      <div class="page-head__body">
+        <div class="page-head__title">
+          <h1>Configuration</h1>
+          <p class="lede">Review managed, non-secret values before staging a new revision.</p>
+        </div>
+        <a class="button" href="revisions.html">View revisions</a>
+      </div>
+    </header>
+    <div class="annal annal--notice">
+      <div class="annal__margin"></div>
+      <div class="annal__body">
+      <aside class="demo-notice" role="note">
+        <p><strong>Interactive demonstration.</strong> No backend is connected.</p>
+        <p>Values and revisions are synthetic and remain in this browser session only. Nothing is written to a configuration file or service.</p>
+      </aside>
+      </div>
+    </div>
+    <form id="configuration-form" class="annal config" data-demo-config>
+      <div class="annal__margin config__margin">
+        <nav class="config-index" aria-labelledby="config-index-title">
+          <h2 id="config-index-title" class="margin-label">Sections</h2>
+          <ul>
+            <li><a href="#config-group-workflow">Archive workflow<span class="config-index__count">3</span></a></li>
+            <li><a href="#config-group-projection">Ticket projection<span class="config-index__count">2</span></a></li>
+            <li class="config-index__jump"><a href="#config-changes-title">Changes<span aria-hidden="true">↓</span></a></li>
+          </ul>
+        </nav>
+        <p class="margin-note">This is a synthetic configuration. No running service is changed.</p>
+      </div>
+      <div class="annal__body config__body">
+        <div class="config__notices">
+          <div class="banner banner--warning" data-config-staged hidden role="status"></div>
+        </div>
+        <div class="config__fields">
+        <fieldset class="config-group" id="config-group-workflow">
+          <legend>Archive workflow <span class="config-group__count">3 values</span></legend>
+        <div class="config-field" data-path="archive.output_root" data-original="/var/lib/chronikwerk/archive">
+          <div class="config-field__head">
+            <label for="output-root">Archive location</label>
+            <code class="config-field__path">archive.<wbr>output_root</code>
+            <span class="provenance provenance--managed">Managed value</span>
+          </div>
+          <div class="config-field__control">
+            <input id="output-root" type="text" value="/var/lib/chronikwerk/archive" required>
+          </div>
+        </div>
+        <div class="config-field" data-path="archive.max_pending" data-original="8">
+          <div class="config-field__head">
+            <label for="max-pending">Waiting jobs</label>
+            <code class="config-field__path">archive.<wbr>max_pending</code>
+            <span class="provenance provenance--managed">Managed value</span>
+          </div>
+          <div class="config-field__control">
+            <input id="max-pending" type="number" min="0" max="50" value="8" required>
+          </div>
+        </div>
+        <div class="config-field" data-path="archive.include_attachments" data-original="true">
+          <div class="config-field__head">
+            <label for="include-attachments">Include attachments</label>
+            <code class="config-field__path">archive.<wbr>include_attachments</code>
+            <span class="provenance provenance--managed">Managed value</span>
+          </div>
+          <div class="config-field__control">
+            <select id="include-attachments">
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </div>
+        </div>
+        </fieldset>
+        <fieldset class="config-group" id="config-group-projection">
+          <legend>Ticket projection <span class="config-group__count">2 values</span></legend>
+        <div class="config-field" data-path="zammad.success_tag" data-original="chronikwerk::archived">
+          <div class="config-field__head">
+            <label for="success-tag">Success tag</label>
+            <code class="config-field__path">zammad.<wbr>success_tag</code>
+            <span class="provenance provenance--managed">Managed value</span>
+          </div>
+          <div class="config-field__control">
+            <input id="success-tag" type="text" value="chronikwerk::archived" required>
+          </div>
+        </div>
+        <div class="config-field" data-path="zammad.failure_tag" data-original="chronikwerk::review">
+          <div class="config-field__head">
+            <label for="failure-tag">Failure tag</label>
+            <code class="config-field__path">zammad.<wbr>failure_tag</code>
+            <span class="provenance provenance--managed">Managed value</span>
+          </div>
+          <div class="config-field__control">
+            <input id="failure-tag" type="text" value="chronikwerk::review" required>
+          </div>
+        </div>
+        </fieldset>
+        </div>
+        <aside class="config__changes" aria-labelledby="config-changes-title">
+          <div class="changes" role="group" aria-label="Review configuration changes">
+            <h2 id="config-changes-title" class="changes__title">Changes</h2>
+            <p class="changes__count" data-config-count>No changes</p>
+            <p class="changes__help">Edit a value to review a synthetic revision.</p>
+            <label class="checkbox changes__ack" for="config-ack">
+              <input id="config-ack" type="checkbox"> I acknowledge this is a simulated stage and activation would require a restart.
+            </label>
+            <div class="changes__actions">
+              <button class="button button--primary" type="button" data-config-review disabled>Review changes</button>
+              <button class="button button--quiet" type="button" data-config-reset>Reset edits</button>
+            </div>
+          </div>
+          <section class="review" data-config-review-panel hidden aria-labelledby="review-title" data-label-path="Path" data-label-before="Before" data-label-after="After" tabindex="-1">
+            <h2 id="review-title" class="changes__title">Review</h2>
+            <p class="changes__help">Compare the synthetic revision below. It remains staged until an external restart in the real product; this demo does not restart anything.</p>
+            <div class="table-region" role="region" aria-labelledby="review-title" tabindex="0">
+              <table class="diff">
+                <thead>
+                  <tr>
+                    <th scope="col">Path</th>
+                    <th scope="col">Before</th>
+                    <th scope="col">After</th>
+                  </tr>
+                </thead>
+                <tbody data-config-diff></tbody>
+              </table>
+            </div>
+            <button class="button button--primary" type="button" data-config-stage disabled>Simulate stage revision</button>
+            <div class="inline-result" data-config-result aria-live="polite"></div>
+          </section>
+        </aside>
+      </div>
+    </form>
+  </main>
+  <footer class="colophon">
+    <p>Static demonstration with synthetic data. No backend is connected.</p>
+  </footer>
+</body>
+</html>

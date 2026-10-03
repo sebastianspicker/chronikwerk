@@ -1,0 +1,6 @@
+include requirements/*.in
+include requirements/*.lock
+include scripts/ci/check_dependency_locks.py
+include scripts/ci/compile_dependency_locks.sh
+include scripts/ci/dev_lock_requirements.py
+include docs/dependency-locks.md

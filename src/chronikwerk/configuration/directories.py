@@ -9,16 +9,14 @@ from pathlib import Path
 from chronikwerk.configuration.errors import ManagedConfigError
 
 
-class _TrustedDirectoryTraversal:
+class TrustedDirectories:
     """Open and validate managed-state directories without following symlinks."""
 
-    state_dir: Path
-    overlay_path: Path
-    revisions_dir: Path
-    _state_identity: tuple[int, int] | None
-    _revisions_identity: tuple[int, int] | None
-
-    def _initialize_managed_directories(self) -> None:
+    def __init__(self, state_dir: Path) -> None:
+        self.state_dir = Path(os.path.abspath(state_dir))
+        self.revisions_dir = self.state_dir / "revisions"
+        self._state_identity: tuple[int, int] | None = None
+        self._revisions_identity: tuple[int, int] | None = None
         if os.name != "posix":
             self._ensure_directory(self.state_dir)
             self._ensure_directory(self.revisions_dir)
@@ -209,7 +207,8 @@ class _TrustedDirectoryTraversal:
             os.close(child_fd)
             raise
 
-    def _open_state_directory(self) -> int:
+    def open_state(self) -> int:
+        """Open the verified state directory and return its descriptor."""
         if self._state_identity is None:
             return os.open(self.state_dir, os.O_RDONLY)
         return self._open_directory_chain(
@@ -218,10 +217,11 @@ class _TrustedDirectoryTraversal:
             expected_identity=self._state_identity,
         )
 
-    def _open_revisions_directory(self) -> int:
+    def open_revisions(self) -> int:
+        """Open the verified revisions directory and return its descriptor."""
         if self._revisions_identity is None:
             return os.open(self.revisions_dir, os.O_RDONLY)
-        state_fd = self._open_state_directory()
+        state_fd = self.open_state()
         try:
             return self._open_child_directory(
                 state_fd,

@@ -1,4 +1,4 @@
-# Code of Conduct
+# Code of conduct
 
 We want participation in this project to be respectful, constructive, and safe.
 
@@ -13,6 +13,7 @@ Contributors are expected to:
 Unacceptable behavior includes harassment, discrimination, threats, deliberate exposure of
 private information, and sustained disruption of project spaces.
 
-Report conduct concerns privately through the maintainer contact path described in
-[SECURITY.md](SECURITY.md). Maintainers may edit or remove contributions, lock threads, or
-restrict participation when needed to protect the project and its community.
+The project has not yet published a private conduct-reporting channel. Do not place sensitive
+conduct reports or personal information in a public issue. Maintainers may edit or remove
+contributions, lock threads, or restrict participation when needed to protect the project and its
+community.

@@ -15,9 +15,9 @@ of the assurance contract.
 
 ## Decision
 
-This decision governs the repository skeleton gate in
-`scripts/ci/smoke-test.sh`; keep that gate synchronous, fail-fast, and limited
-to release-critical path existence checks before more expensive CI lanes run.
+A separate repository-skeleton path-existence gate (`scripts/ci/smoke-test.sh`)
+was removed on 2026-10-03: every path it listed is already required by the
+documentation, build, and test gates, so it added no failure signal of its own.
 
 Keep release-assurance workflows synchronous and command-line driven. The
 security workflow records each `pip-audit` command status and JSON report, then

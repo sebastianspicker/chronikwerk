@@ -1,269 +1,327 @@
-/* App shell: topbar, nav, page frame */
-.app-shell {
+/* Shell: running head, annal grid, page heading, colophon */
+.runhead {
+  border-bottom: var(--hairline);
+  background: var(--paper);
+}
+
+.runhead__inner {
   display: flex;
-  flex-direction: column;
-  min-height: 100dvh;
+  flex-wrap: wrap;
+  align-items: stretch;
+  column-gap: var(--margin-gap);
+  max-width: var(--page-max);
+  min-height: 3.75rem;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
 }
 
-.topbar {
-  align-items: center;
-  backdrop-filter: saturate(1.2) blur(10px);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  border-bottom: 1px solid var(--ink-100);
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
-  min-height: 56px;
-  padding: 0 clamp(20px, 3vw, 40px);
-  position: sticky;
-  top: 0;
-  z-index: 40;
-}
-
-.service-name {
-  align-items: center;
-  color: var(--ink-900);
+.wordmark {
   display: inline-flex;
-  gap: 10px;
-  justify-self: start;
+  align-items: center;
+  gap: var(--s-3);
+  width: calc(var(--margin-track) - var(--margin-gap));
+  color: var(--ink);
   text-decoration: none;
 }
 
-.service-name:hover {
-  color: var(--process);
+.wordmark:hover {
+  color: var(--ink);
 }
 
-.service-mark {
-  height: 30px;
-  object-fit: contain;
-  width: 26px;
+.wordmark img {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
 }
 
-.service-name strong {
-  font-size: 1.05rem;
+.wordmark__name {
+  display: block;
+  font-size: var(--step-1);
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.005em;
+  line-height: 1.1;
 }
 
-.service-meta {
-  background: var(--ink-50);
-  border: 1px solid var(--ink-100);
-  border-radius: 999px;
-  color: var(--ink-600);
-  display: none;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  margin-left: 4px;
-  padding: 2px 7px;
-  text-transform: uppercase;
+.wordmark__kind {
+  display: block;
+  color: var(--ink-3);
+  font-size: var(--step--1);
+  line-height: 1.2;
 }
 
-@media (min-width: 900px) {
-  .service-meta {
-    display: inline-block;
-  }
-}
-
-.primary-nav {
-  align-items: stretch;
+.routes {
   display: flex;
-  gap: 2px;
-  height: 56px;
+  align-items: stretch;
+  gap: var(--s-5);
+  margin-right: auto;
+}
+
+.routes a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h);
+  padding-top: 3px;
+  border-bottom: 3px solid transparent;
+  color: var(--ink-2);
+  font-weight: 500;
+  text-decoration: none;
+  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+
+.routes a:hover {
+  border-bottom-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.routes a[aria-current="page"] {
+  border-bottom-color: var(--copy-ink);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.runhead__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.runhead__tools form {
+  margin: 0;
+}
+
+.runhead__tools select {
+  min-height: 2.25rem;
+  width: auto;
+  padding-block: 0;
+  font-size: var(--step-0);
+}
+
+/* The page is an annal: margin track for reference, body track for record. */
+.page {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--s-8);
+}
+
+.page:focus {
+  outline: none;
+}
+
+.annal,
+.page-head {
+  display: grid;
+  grid-template-columns: var(--margin-track) minmax(0, 1fr);
+}
+
+.annal {
+  border-top: var(--hairline);
+}
+
+.annal__margin,
+.page-head__margin {
+  padding: var(--s-5) var(--margin-gap) var(--s-5) 0;
   min-width: 0;
 }
 
-.primary-nav a {
-  align-items: center;
-  color: var(--ink-600);
-  display: inline-flex;
-  font-size: 0.95rem;
-  font-weight: 600;
-  padding: 0 16px;
-  position: relative;
-  text-decoration: none;
+.annal__body,
+.page-head__body {
+  min-width: 0;
+  padding: var(--s-5) 0 var(--s-7) var(--margin-gap);
+  border-left: var(--hairline);
 }
 
-.primary-nav a:hover {
-  color: var(--ink-900);
+.annal__margin h2:not(.margin-label) {
+  font-size: var(--step-2);
+  letter-spacing: -0.01em;
 }
 
-.primary-nav a[aria-current="page"] {
-  color: var(--ink-900);
+.annal__margin > * + * {
+  margin-top: var(--s-3);
 }
 
-.primary-nav a[aria-current="page"]::after {
-  background: var(--process);
-  border-radius: 2px 2px 0 0;
-  bottom: 0;
-  content: "";
-  height: 2.5px;
-  left: 12px;
-  position: absolute;
-  right: 12px;
+.margin-note {
+  color: var(--ink-3);
+  font-size: var(--step--1);
+  line-height: 1.45;
 }
 
-.nav-actions {
-  align-items: center;
-  display: flex;
-  gap: 4px;
-  justify-self: end;
-}
-
-.inline-form {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  margin: 0;
-}
-
-.nav-actions .inline-form + .inline-form {
-  border-left: 1px solid var(--ink-100);
-  margin-left: 4px;
-  padding-left: 8px;
-}
-
-.nav-actions label {
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  height: 1px;
-  overflow: hidden;
-  position: absolute;
-  white-space: nowrap;
-  width: 1px;
-}
-
-.nav-actions select {
-  background: transparent;
-  border: 0;
-  color: var(--ink-600);
-  font-size: 0.9rem;
-  font-weight: 600;
-  min-height: var(--control-height);
-  padding: 8px 12px;
-}
-
-.nav-actions select:hover {
-  color: var(--ink-900);
-}
-
-.main-content {
-  flex: 1;
-  margin: 0 auto;
-  max-width: var(--content);
-  padding: 28px clamp(20px, 3vw, 40px) 64px;
-  width: 100%;
-}
-
-.route-page,
-.overview-page {
-  margin: 0 auto;
-  max-width: var(--content);
-}
-
-.route-page--detail {
-  max-width: 1100px;
-}
-
-.route-page--settings {
-  max-width: 1260px;
-}
-
-.route-page--audit,
-.route-page--data {
-  max-width: var(--content);
-}
-
-/* Page masthead and headings at product scale */
-.page-heading {
-  align-items: end;
-  display: flex;
-  gap: 24px;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.page-heading > div {
-  max-width: 780px;
-}
-
-.page-heading h1 {
-  font-size: 1.75rem;
-  margin-bottom: 8px;
-}
-
-.page-kicker,
-.masthead-label {
-  color: var(--ink-500);
-  font-size: 0.72rem;
+.margin-label {
+  color: var(--ink-3);
+  font-size: var(--step--1);
   font-weight: 700;
-  letter-spacing: 0.08em;
-  margin-bottom: 6px;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
 
-.page-intro {
-  color: var(--ink-600);
-  font-size: 0.98rem;
-  line-height: 1.5;
-  margin: 0;
-  max-width: 58ch;
+.page-head__margin {
+  padding-top: var(--s-7);
 }
 
-.breadcrumb {
-  align-items: center;
-  color: var(--ink-500);
+.page-head__body {
   display: flex;
   flex-wrap: wrap;
-  font-family: var(--mono);
-  font-size: 0.68rem;
-  gap: 8px;
-  letter-spacing: 0.03em;
-  margin: 0 0 20px;
-  text-transform: uppercase;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4) var(--s-6);
+  padding-top: var(--s-7);
+  padding-bottom: var(--s-6);
 }
 
-.breadcrumb a {
-  color: inherit;
+.page-head__title {
+  flex: 1 1 28rem;
+  min-width: 0;
 }
 
-.scope-note {
-  align-items: flex-start;
-  background: var(--surface);
-  border: 1px solid var(--ink-100);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-tight);
-  color: var(--ink-600);
-  display: flex;
-  font-size: 0.92rem;
-  gap: 12px;
-  line-height: 1.45;
-  margin: 0 0 22px;
-  padding: 12px 14px;
+.page-head h1 {
+  font-size: var(--step-4);
+  letter-spacing: -0.02em;
 }
 
-.scope-note__icon {
-  align-items: center;
-  background: var(--process-soft);
-  border-radius: 50%;
-  color: var(--process-deep);
+.page-head h1 code {
+  margin-left: 0.15em;
+  color: var(--copy-ink);
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.lede {
+  margin-top: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--step-1);
+}
+
+.back-link {
   display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 0.72rem;
-  font-weight: 800;
-  height: 22px;
-  justify-content: center;
-  margin-top: 1px;
-  width: 22px;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control-h);
+  font-weight: 500;
 }
 
-/* Unauthenticated shell */
-.app-shell:not(.app-shell--session) .topbar {
-  grid-template-columns: 1fr;
-  position: static;
+.colophon {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--s-6);
 }
 
-.app-shell:not(.app-shell--session) .main-content {
+.colophon p {
   max-width: none;
-  padding: 0;
+  padding-top: var(--s-4);
+  border-top: var(--hairline);
+  color: var(--ink-3);
+  font-size: var(--step--1);
+}
+
+/* Narrow: the margin track folds into the rule; the rule keeps running down the left edge. */
+@media (max-width: 52rem) {
+  .runhead__inner {
+    column-gap: var(--s-3);
+    padding-top: var(--s-2);
+  }
+
+  .wordmark {
+    width: auto;
+    margin-right: auto;
+    min-height: var(--control-h);
+  }
+
+  .routes {
+    order: 3;
+    flex: 1 0 100%;
+    gap: var(--s-5);
+    margin-right: 0;
+    overflow-x: auto;
+  }
+
+  .annal,
+  .page-head {
+    display: block;
+    border-left: var(--hairline);
+    padding-left: var(--s-4);
+  }
+
+  .annal__margin,
+  .page-head__margin {
+    padding: var(--s-5) 0 0;
+  }
+
+  .annal__margin {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-2) var(--s-4);
+  }
+
+  .annal__margin > * + * {
+    margin-top: 0;
+  }
+
+  .annal__margin .margin-note {
+    flex-basis: 100%;
+  }
+
+  .annal__body,
+  .page-head__body {
+    padding: var(--s-4) 0 var(--s-6);
+    border-left: 0;
+  }
+
+  .page-head:has(.page-head__margin--after) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .page-head__margin--after {
+    order: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1) var(--s-2);
+    padding: 0 0 var(--s-5);
+  }
+
+  .page-head__margin--after .margin-stamp {
+    margin: 0;
+  }
+
+  .page-head__margin:empty {
+    display: none;
+  }
+
+  .page-head__margin + .page-head__body {
+    padding-top: var(--s-2);
+  }
+
+  .page-head__body {
+    padding-top: var(--s-5);
+  }
+
+  .page-head h1 {
+    font-size: var(--step-3);
+  }
+}
+
+@media (max-width: 30rem) {
+  .wordmark__kind {
+    display: none;
+  }
+
+  .routes {
+    gap: var(--s-4);
+  }
+}
+
+/* Notice rows carry banners only; they keep the rule but not the full annal rhythm. */
+.annal--notice .annal__body {
+  padding-bottom: var(--s-1);
+}
+
+@media (max-width: 52rem) {
+  .annal__margin:empty,
+  .annal__body:empty {
+    display: none;
+  }
+
+  .annal--notice .annal__body {
+    padding-top: var(--s-5);
+  }
 }

@@ -1,13 +1,15 @@
 """Create safe, concise Zammad notes describing archival outcomes."""
 
+import errno
 from dataclasses import dataclass
 from html import escape
 
 import structlog
 
 from chronikwerk._version import VERSION
-from chronikwerk.archiving.redaction import scrub_secrets_in_text
+from chronikwerk.archiving.tags import ERROR_TAG
 from chronikwerk.failures import PermanentError, TransientError
+from chronikwerk.redaction import scrub_secrets_in_text
 
 log = structlog.get_logger(__name__)
 
@@ -152,47 +154,51 @@ def concise_exc_message(exc: BaseException) -> str:
     return text[:500] if len(text) > 500 else text
 
 
-def action_hint(exc: BaseException, *, classified: TransientError | PermanentError | None) -> str:
+def _is_permission_denied(exc: BaseException) -> bool:
+    """Report whether the exception is an OS error caused by missing storage permission."""
+    return isinstance(exc, OSError) and exc.errno in (errno.EACCES, errno.EPERM)
+
+
+def _is_ticket_field_error(exc: BaseException) -> bool:
+    """Report whether the exception is a plain ticket-field or path-policy error."""
+    return type(exc) in (ValueError, TypeError) and error_code_and_hint(exc)[1] != ""
+
+
+def action_hint(
+    exc: BaseException, *, classified: TransientError | PermanentError, trigger_tag: str
+) -> str:
     """Return a human-readable operator action hint for the given exception and classification."""
-    if classified is not None and isinstance(classified, TransientError):
+    if isinstance(classified, TransientError):
         return (
             "Transient failure. Verify Zammad/TSA reachability and storage availability; "
-            "the ticket keeps pdf:sign so a retry can be triggered by saving the ticket "
+            f"the ticket keeps {trigger_tag} so a retry can be triggered by saving the ticket "
             "or reapplying the macro."
         )
 
     # PermanentError: aim for a concrete operator action.
-    for error_type, hint in (
-        (
-            "AuthError",
-            "Fix Zammad API token/permissions (HTTP 401/403), then reapply the pdf:sign macro.",
+    zammad_hints = {
+        "AuthError": (
+            "Fix Zammad API token/permissions (HTTP 401/403), "
+            f"then reapply the {trigger_tag} macro."
         ),
-        (
-            "NotFoundError",
+        "NotFoundError": (
             "Ticket/resource not found in Zammad. Verify the ticket still exists, then reapply "
-            "pdf:sign.",
+            f"{trigger_tag}."
         ),
-        (
-            ("ServerError", "RateLimitError"),
-            "Upstream Zammad error was treated as permanent by policy. "
-            "If the issue is resolved, reapply the pdf:sign macro to reprocess.",
-        ),
-        (
-            PermissionError,
+    }
+    if hint := zammad_hints.get(exc.__class__.__name__):
+        return hint
+    if _is_permission_denied(exc):
+        return (
             "Storage permission denied. Check network share mount options, ownership, and ACLs, "
-            "then reapply the pdf:sign macro.",
-        ),
-        (
-            (ValueError, TypeError),
-            "Fix ticket fields / path policy validation, then reapply the pdf:sign macro "
-            "(and optionally remove pdf:error for clarity).",
-        ),
-    ):
-        if exc.__class__.__name__ in (
-            error_type if isinstance(error_type, tuple) else (error_type,)
-        ):
-            return hint
+            f"then reapply the {trigger_tag} macro."
+        )
+    if _is_ticket_field_error(exc):
+        return (
+            f"Fix ticket fields / path policy validation, then reapply the {trigger_tag} macro "
+            f"(and optionally remove {ERROR_TAG} for clarity)."
+        )
     return (
-        "Non-retryable failure by policy. Fix the underlying issue and reapply the pdf:sign macro "
-        "(and optionally remove pdf:error)."
+        f"Non-retryable failure by policy. Fix the underlying issue and reapply the {trigger_tag} "
+        f"macro (and optionally remove {ERROR_TAG})."
     )

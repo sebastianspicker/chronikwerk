@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Overview · Chronikwerk Administration demonstration</title>
+  <link rel="icon" href="assets/chronikwerk-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/admin.css">
+  <link rel="stylesheet" href="assets/demo.css">
+  <script src="assets/demo.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="runhead">
+    <div class="runhead__inner">
+      <a class="wordmark" href="index.html">
+        <img src="assets/chronikwerk-mark.svg" alt="" width="28" height="28">
+        <span>
+          <span class="wordmark__name">Chronikwerk</span>
+          <span class="wordmark__kind">Administration</span>
+        </span>
+      </a>
+      <nav class="routes" aria-label="Primary navigation">
+        <a href="index.html" aria-current="page">Overview</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="tour.html">Tour</a>
+      </nav>
+      <div class="runhead__tools">
+        <p class="margin-note">Demonstration · synthetic data</p>
+      </div>
+    </div>
+  </header>
+  <main id="main-content" class="page" tabindex="-1">
+    <header class="page-head">
+      <div class="page-head__margin page-head__margin--after">
+        <p class="margin-label">Sample refreshed</p>
+        <p class="margin-stamp"><time datetime="2026-08-31T09:42:00+02:00">31 Aug 2026, 09:42</time></p>
+      </div>
+      <div class="page-head__body">
+        <div class="page-head__title">
+          <h1>Overview</h1>
+          <p class="lede">A process-local view of the archive worker and its recent evidence.</p>
+        </div>
+        <ul class="record-line" aria-label="Status">
+          <li><span class="notation notation--ok">Process responding</span></li>
+          <li><a class="notation notation--caution" href="configuration.html">Restart required</a></li>
+        </ul>
+      </div>
+    </header>
+    <div class="annal annal--notice">
+      <div class="annal__margin"></div>
+      <div class="annal__body">
+      <aside class="demo-notice" role="note">
+        <p><strong>Interactive demonstration.</strong> All records are synthetic. No backend is connected.</p>
+        <p>Controls simulate local UI state only: this static site makes no backend or Zammad writes.</p>
+      </aside>
+      </div>
+    </div>
+    <section class="annal" aria-labelledby="live-title">
+      <div class="annal__margin">
+        <h2 id="live-title">Live process</h2>
+        <p class="margin-note">Admission is process-local. “Accepted” records an in-memory admission, not completed archival work.</p>
+      </div>
+      <div class="annal__body">
+        <div class="gauges">
+          <div class="gauge gauge--storage">
+            <h3 class="gauge__label">Storage</h3>
+            <p class="state-value state-value--warning" data-storage-state>Not checked this session</p>
+            <p class="gauge__note">Simulate a check of the archive location. <time data-storage-time hidden></time></p>
+            <button class="button" type="button" data-storage-check>Check storage</button>
+            <p class="inline-result" data-storage-result aria-live="polite"></p>
+          </div>
+          <div class="gauge">
+            <h3 class="gauge__label">Running</h3>
+            <p class="gauge__figure"><span>1</span><span class="gauge__limit"><span class="visually-hidden">Limit:</span> / <span>2</span></span></p>
+            <progress class="meter" max="2" value="1" aria-hidden="true"></progress>
+          </div>
+          <div class="gauge">
+            <h3 class="gauge__label">Waiting</h3>
+            <p class="gauge__figure"><span>2</span><span class="gauge__limit"><span class="visually-hidden">Limit:</span> / <span>8</span></span></p>
+            <progress class="meter" max="8" value="2" aria-hidden="true"></progress>
+            <p class="gauge__note">Accepted work is not completed archiving.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="annal" aria-labelledby="failures-title">
+      <div class="annal__margin">
+        <h2 id="failures-title">Recent failures</h2>
+        <p class="margin-count">2 in this sample history</p>
+        <p class="margin-note">Sample history is volatile and would clear on restart.</p>
+        <p><a href="jobs.html">View activity record<span aria-hidden="true"> →</span></a></p>
+      </div>
+      <div class="annal__body">
+        <div class="table-region" role="region" aria-labelledby="failures-title" tabindex="0">
+          <table class="records">
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Ticket ID</th>
+                <th scope="col">Classification</th>
+                <th scope="col">Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="records__time" data-label="Time"><time>09:34:18</time></td>
+                <td class="records__ticket" data-label="Ticket ID"><a href="job.html">4813</a></td>
+                <td data-label="Classification"><span class="notation notation--caution">Transient</span></td>
+                <td class="records__message" data-label="Message">Synthetic upstream timeout; retry remains an operator decision.</td>
+              </tr>
+              <tr>
+                <td class="records__time" data-label="Time"><time>08:55:02</time></td>
+                <td class="records__ticket" data-label="Ticket ID"><a href="job.html">4807</a></td>
+                <td data-label="Classification"><span class="notation notation--fault">Permanent</span></td>
+                <td class="records__message" data-label="Message">Synthetic ticket payload was incomplete.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="annal" aria-labelledby="archive-evidence-title">
+      <div class="annal__margin">
+        <h2 id="archive-evidence-title">Configuration &amp; archive</h2>
+        <p><a href="configuration.html">Open configuration<span aria-hidden="true"> →</span></a></p>
+      </div>
+      <div class="annal__body">
+        <dl class="facts">
+          <div class="facts__row facts__row--wide">
+            <dt>Active revision</dt>
+            <dd>
+              <span class="notation notation--ok">Active</span>
+              <code class="digest" title="9fd7c6130a0f…f98d2e">9fd7c6130a0f…f98d2e</code>
+            </dd>
+          </div>
+          <div class="facts__row facts__row--wide">
+            <dt>Staged revision</dt>
+            <dd>
+              <span class="notation notation--caution">Restart required</span>
+              <code class="digest" title="2cb31eabf2d4…a9c0d1">2cb31eabf2d4…a9c0d1</code>
+            </dd>
+          </div>
+          <div class="facts__row">
+            <dt>Version</dt>
+            <dd><code>0.3.0a1</code></dd>
+          </div>
+          <div class="facts__row">
+            <dt>Started</dt>
+            <dd><time datetime="2026-08-31T08:12:00+02:00">31 Aug 2026, 08:12</time></dd>
+          </div>
+          <div class="facts__row">
+            <dt>Signing</dt>
+            <dd>Optional, disabled in this demo</dd>
+          </div>
+          <div class="facts__row">
+            <dt>Timestamping</dt>
+            <dd>Optional, disabled in this demo</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+  </main>
+  <footer class="colophon">
+    <p>Static demonstration with synthetic data. No backend is connected.</p>
+  </footer>
+</body>
+</html>

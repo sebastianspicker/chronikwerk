@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from chronikwerk.operations.admission import AdmissionClosed, JobAdmission
-from chronikwerk.operations.job import FORCE_REPROCESS_KEY, REQUEST_ID_KEY
+from chronikwerk.operations.history import JobHistory
+from chronikwerk.operations.job import TicketJob
 from chronikwerk.operations.scheduling import TicketSchedulingService
-from chronikwerk.operations.shutdown import clear_shutting_down, wait_for_tasks
 
 
 def test_admission_is_bounded_and_closes_queued_work() -> None:
@@ -32,28 +31,29 @@ def test_admission_is_bounded_and_closes_queued_work() -> None:
 
 def test_operator_retry_preserves_archive_job_metadata() -> None:
     async def exercise() -> None:
-        captured: list[tuple[str | None, dict[str, Any]]] = []
+        captured: list[TicketJob] = []
 
-        async def process(delivery_id: str | None, payload: dict[str, Any]) -> None:
-            captured.append((delivery_id, payload))
+        async def process(job: TicketJob) -> None:
+            captured.append(job)
 
-        clear_shutting_down()
         scheduler = TicketSchedulingService(
             admission=JobAdmission(max_pending=1, max_running=1),
             process_ticket=process,
+            history=JobHistory(),
+            shutdown_timeout_seconds=1.0,
         )
 
         assert scheduler.schedule_retry(ticket_id=123, request_id="request-1")
-        await wait_for_tasks()
+        current = asyncio.current_task()
+        await asyncio.gather(*(task for task in asyncio.all_tasks() if task is not current))
 
         assert captured == [
-            (
-                None,
-                {
-                    "ticket_id": 123,
-                    REQUEST_ID_KEY: "request-1",
-                    FORCE_REPROCESS_KEY: True,
-                },
+            TicketJob(
+                ticket_id=123,
+                payload={"ticket_id": 123},
+                delivery_id=None,
+                request_id="request-1",
+                force_reprocess=True,
             )
         ]
 

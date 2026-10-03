@@ -1,9 +1,9 @@
-# 04 - Path Policy
+# Path policy
 
 Archive paths are parsed from ticket fields, sanitized, and confined under
 `storage.root`.
 
-## Input Fields
+## Input fields
 
 ### `archive_path`
 
@@ -54,15 +54,14 @@ Examples:
 | `Sales Team EMEA` | `Sales_Team_EMEA` |
 | `客户` | `_` |
 
-Sanitization is lossy, so an archive component whose sanitized form differs
-from its raw input receives a `-<32 hex characters>` suffix derived from the
-SHA-256 digest of the raw UTF-8 input. This prevents distinct usernames, path
-segments, or ticket numbers such as `alice+hr` and `alice?hr` from mapping to
-the same archive location. Already-safe components remain unchanged. The
-readable prefix is truncated when necessary so the stored component stays
-within the 64-character path limit.
+Sanitization is lossy. When a component's sanitized form differs from its raw
+input, Chronikwerk appends a `-<32 hex characters>` suffix derived from the
+SHA-256 digest of the raw UTF-8 input. Without it, distinct values such as
+`alice+hr` and `alice?hr` could map to the same archive location. Components that
+are already safe are left unchanged, and the readable prefix is truncated when
+needed to keep the stored component within the 64-character limit.
 
-## Root Confinement
+## Root confinement
 
 The final resolved path must stay under `storage.root`. Escape attempts fail the
 job before writing.
@@ -70,9 +69,9 @@ job before writing.
 Example output:
 
 ```text
-/mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_20260207T120000Z.pdf
-/mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_20260207T120000Z.pdf.json
+/mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_2026-02-07.pdf
+/mnt/archive/john.doe/Customers/ACME_GmbH/2026/Ticket-123_2026-02-07.pdf.json
 ```
 
-The example uses already-safe stored components; lossy inputs include the
+The example uses components that are already safe; lossy inputs also carry the
 disambiguation suffix described above.

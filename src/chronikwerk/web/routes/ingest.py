@@ -2,24 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Path, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from starlette.responses import JSONResponse
 
 from chronikwerk.configuration.models import Settings
-from chronikwerk.operations.job import FORCE_REPROCESS_KEY, REQUEST_ID_KEY, extract_ticket_id
+from chronikwerk.operations.job import TicketJob, extract_ticket_id
 from chronikwerk.operations.scheduling import TicketScheduler
-from chronikwerk.operations.shutdown import is_shutting_down
-from chronikwerk.web.constants import DELIVERY_ID_HEADER
-from chronikwerk.web.responses import api_error, settings_or_503, verify_bearer_token
+from chronikwerk.web.constants import DELIVERY_ID_HEADER, normalized_delivery_id
+from chronikwerk.web.responses import api_error, verify_bearer_token
 
 router = APIRouter()
 
 # Security: explicit upper bound on batch size to prevent resource exhaustion.
 # The body-size middleware provides some protection, but this is defense-in-depth.
 MAX_BATCH_SIZE: int = 100
+
+# A webhook body cannot request forced reprocessing; drop the legacy marker as inert data.
+_LEGACY_FORCE_REPROCESS_FIELD = "_force_reprocess"
 
 
 class IngestPayload(BaseModel):
@@ -49,16 +51,27 @@ class IngestPayload(BaseModel):
         """Resolve the ticket identifier from the validated webhook event."""
         return extract_ticket_id(self.model_dump())
 
-
-def _public_payload_for_job(payload: IngestPayload, request_id: str | None) -> dict[str, Any]:
-    payload_for_job = payload.model_dump()
-    payload_for_job.pop(FORCE_REPROCESS_KEY, None)
-    payload_for_job[REQUEST_ID_KEY] = request_id
-    return payload_for_job
+    def ticket_id_value(self) -> int:
+        """Return the ticket id that the model validator guarantees is present."""
+        return cast(int, self.resolved_ticket_id())
 
 
-def _normalized_delivery_id(value: str | None) -> str | None:
-    return (value or "").strip() or None
+def _job(
+    payload: IngestPayload,
+    *,
+    ticket_id: int,
+    delivery_id: str | None,
+    request_id: str | None,
+) -> TicketJob:
+    """Build a typed job whose payload is only the validated webhook event."""
+    webhook_payload = payload.model_dump()
+    webhook_payload.pop(_LEGACY_FORCE_REPROCESS_FIELD, None)
+    return TicketJob(
+        ticket_id=ticket_id,
+        payload=webhook_payload,
+        delivery_id=delivery_id,
+        request_id=request_id,
+    )
 
 
 def _batch_jobs(
@@ -66,13 +79,14 @@ def _batch_jobs(
     *,
     batch_delivery_id: str | None,
     request_id: str | None,
-) -> list[tuple[str | None, dict[str, Any]]]:
-    jobs: list[tuple[str | None, dict[str, Any]]] = []
+) -> list[TicketJob]:
+    jobs: list[TicketJob] = []
     for index, payload in enumerate(payloads):
-        if payload.resolved_ticket_id() is None:
-            continue
+        ticket_id = payload.ticket_id_value()
         delivery_id = f"{batch_delivery_id}:{index}" if batch_delivery_id is not None else None
-        jobs.append((delivery_id, _public_payload_for_job(payload, request_id)))
+        jobs.append(
+            _job(payload, ticket_id=ticket_id, delivery_id=delivery_id, request_id=request_id)
+        )
     return jobs
 
 
@@ -86,18 +100,21 @@ def _overload_error() -> JSONResponse:
     return response
 
 
-def _resolve_settings_or_error(request: Request) -> tuple[Settings | None, JSONResponse | None]:
-    if is_shutting_down():
-        return None, api_error(503, "Service is shutting down", code="shutting_down")
-    settings: Settings | None = getattr(request.app.state, "settings", None)
-    if settings is None:
-        return None, api_error(503, "settings not configured", code="settings_not_configured")
-    return settings, None
-
-
 def _scheduler(request: Request) -> TicketScheduler | None:
     """Resolve the composition-root-owned scheduling service."""
-    return getattr(request.app.state, "scheduler", None)
+    return request.app.state.scheduler
+
+
+def _accepting_scheduler_or_error(
+    request: Request,
+) -> tuple[TicketScheduler | None, JSONResponse | None]:
+    """Reject ingest during shutdown and when the application is read-only."""
+    scheduler = _scheduler(request)
+    if scheduler is not None and not scheduler.accepting:
+        return None, api_error(503, "Service is shutting down", code="shutting_down")
+    if scheduler is None:
+        return None, _overload_error()
+    return scheduler, None
 
 
 @router.post("/ingest", status_code=202)
@@ -107,35 +124,25 @@ async def ingest_webhook(
     dry_run: bool = False,
 ) -> JSONResponse:
     """Accept a single Zammad webhook payload and dispatch it for ticket archival."""
-    settings, error = _resolve_settings_or_error(request)
-    if error is not None:
-        return error
-    if settings is None:
-        return api_error(503, "settings not configured", code="settings_not_configured")
-    scheduler = _scheduler(request)
-    if scheduler is None:
-        return _overload_error()
+    scheduler, error = _accepting_scheduler_or_error(request)
+    if error is not None or scheduler is None:
+        return error or _overload_error()
 
-    ticket_id = payload.resolved_ticket_id()
+    ticket_id = payload.ticket_id_value()
     if dry_run:
         return JSONResponse(
             status_code=202,
             content={"status": "dry_run_accepted", "ticket_id": ticket_id},
         )
 
-    if ticket_id is not None:
-        delivery_id = _normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER))
-        payload_for_job = _public_payload_for_job(
-            payload,
-            getattr(request.state, "request_id", None),
-        )
-        ticket_id = extract_ticket_id(payload_for_job)
-        if ticket_id is not None:
-            if not scheduler.schedule(
-                delivery_id=delivery_id,
-                payload=payload_for_job,
-            ):
-                return _overload_error()
+    job = _job(
+        payload,
+        ticket_id=ticket_id,
+        delivery_id=normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER)),
+        request_id=getattr(request.state, "request_id", None),
+    )
+    if not scheduler.schedule(job):
+        return _overload_error()
 
     return JSONResponse(status_code=202, content={"status": "accepted", "ticket_id": ticket_id})
 
@@ -147,14 +154,9 @@ async def batch_ingest(
     dry_run: bool = False,
 ) -> JSONResponse:
     """Accept a batch of webhook payloads and dispatch each for ticket archival."""
-    settings, error = _resolve_settings_or_error(request)
-    if error is not None:
-        return error
-    if settings is None:
-        return api_error(503, "settings not configured", code="settings_not_configured")
-    scheduler = _scheduler(request)
-    if scheduler is None:
-        return _overload_error()
+    scheduler, error = _accepting_scheduler_or_error(request)
+    if error is not None or scheduler is None:
+        return error or _overload_error()
 
     # Security: reject oversized batches before processing any items.
     if len(payloads) > MAX_BATCH_SIZE:
@@ -172,7 +174,7 @@ async def batch_ingest(
 
     jobs = _batch_jobs(
         payloads,
-        batch_delivery_id=_normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER)),
+        batch_delivery_id=normalized_delivery_id(request.headers.get(DELIVERY_ID_HEADER)),
         request_id=getattr(request.state, "request_id", None),
     )
     if not scheduler.schedule_batch(jobs):
@@ -188,7 +190,7 @@ async def retry_ticket(
     ticket_id: int = Path(..., ge=1),
 ) -> JSONResponse:
     """Force reprocessing of a ticket by ID, bypassing idempotency checks."""
-    settings = settings_or_503(request)
+    settings: Settings = request.app.state.settings
     verify_bearer_token(
         request,
         settings.retry_bearer_token,

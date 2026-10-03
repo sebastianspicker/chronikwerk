@@ -9,12 +9,9 @@ import pytest
 from pydantic import SecretStr
 
 from chronikwerk.configuration.load import load_settings
-from chronikwerk.configuration.models import (
-    ZAMMAD_CONNECTION_CONTRACT_VERSION,
-    Settings,
-    ZammadConnection,
-)
+from chronikwerk.configuration.models import Settings, ZammadConnection
 from chronikwerk.configuration.validation import ConfigValidationError, validate_settings
+from chronikwerk.configuration.zammad import ZAMMAD_CONNECTION_CONTRACT_VERSION
 from chronikwerk.zammad.gateway import AsyncZammadClient
 
 _WEBHOOK_SECRET = "test-webhook-secret-0123456789abcdef"
@@ -115,3 +112,46 @@ def test_validated_connection_drives_safe_client_transport(tmp_path: Path) -> No
     assert settings.zammad_connection.api_root == "https://zammad.example/api/v1"
     assert settings.zammad_connection.timeout_seconds == 7.0
     asyncio.run(client.aclose())
+
+
+@pytest.mark.parametrize(
+    ("canonical", "legacy", "value", "equivalent", "conflict", "path"),
+    [
+        (
+            "ZAMMAD_TIMEOUT_SECONDS",
+            "ZAMMAD__TIMEOUT_SECONDS",
+            "12",
+            "12.0",
+            "13",
+            "zammad.timeout_seconds",
+        ),
+        (
+            "ZAMMAD_TRUST_ENV",
+            "HARDENING__TRANSPORT__TRUST_ENV",
+            "true",
+            "1",
+            "false",
+            "hardening.transport.trust_env",
+        ),
+        (
+            "ZAMMAD_ALLOW_PRIVATE_ORIGIN",
+            "HARDENING__TRANSPORT__ALLOW_PRIVATE_NETWORKS",
+            "false",
+            "0",
+            "true",
+            "hardening.transport.allow_private_networks",
+        ),
+    ],
+)
+def test_shared_aliases_accept_equivalence_reject_conflicts_and_report_ownership(
+    monkeypatch, tmp_path, canonical, legacy, value, equivalent, conflict, path
+) -> None:
+    from chronikwerk.configuration.environment import environment_owns
+
+    monkeypatch.setenv(canonical, value)
+    monkeypatch.setenv(legacy, equivalent)
+    load_settings(config_path=_yaml(tmp_path))
+    assert environment_owns(path)
+    monkeypatch.setenv(legacy, conflict)
+    with pytest.raises(ConfigValidationError, match="conflicts with"):
+        load_settings(config_path=_yaml(tmp_path))

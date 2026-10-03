@@ -10,9 +10,9 @@ assignees: ""
 
 <!-- What problem are you trying to solve? -->
 
-Please review the [alpha candidate scope](../../docs/alpha-release.md) first. Durable queues,
-archive browsing, secret management, RBAC, and multi-instance correctness are currently
-explicit non-goals.
+Please review the [alpha candidate scope](https://github.com/sebastianspicker/zammad-ticket-archiver/blob/main/docs/alpha-release.md)
+first. Durable queues, archive browsing, secret management, RBAC, and multi-instance
+correctness are currently explicit non-goals.
 
 ## Proposed solution
 

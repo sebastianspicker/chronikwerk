@@ -9,15 +9,12 @@ from fastapi import HTTPException, Request
 from pydantic import SecretStr
 from starlette.responses import JSONResponse
 
-from chronikwerk.configuration.models import Settings
 
-
-def settings_or_503(request: Request) -> Settings:
-    """Extract Settings from app state or raise HTTP 503."""
-    settings: Settings | None = getattr(request.app.state, "settings", None)
-    if settings is None:
-        raise HTTPException(status_code=503, detail="settings_not_configured")
-    return settings
+def secret_matches(provided: str, expected: SecretStr) -> bool:
+    """Compare a presented secret with the expected one in constant time."""
+    provided_hash = hashlib.sha256(provided.encode("utf-8")).digest()
+    expected_hash = hashlib.sha256(expected.get_secret_value().encode("utf-8")).digest()
+    return hmac.compare_digest(provided_hash, expected_hash)
 
 
 def bearer_auth_matches(request: Request, token: SecretStr) -> bool:
@@ -26,11 +23,7 @@ def bearer_auth_matches(request: Request, token: SecretStr) -> bool:
     if not auth.startswith("Bearer ") or len(auth) < 8:
         return False
 
-    expected = token.get_secret_value().encode("utf-8")
-    provided = auth[7:].strip().encode("utf-8")
-    expected_hash = hashlib.sha256(expected).digest()
-    provided_hash = hashlib.sha256(provided).digest()
-    return hmac.compare_digest(expected_hash, provided_hash)
+    return secret_matches(auth[7:].strip(), token)
 
 
 def verify_bearer_token(

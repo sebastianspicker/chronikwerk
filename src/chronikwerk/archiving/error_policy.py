@@ -1,4 +1,4 @@
-"""Classify archive failures and calculate bounded retry delays."""
+"""Classify archive failures as transient or permanent and format safe failure messages."""
 
 from __future__ import annotations
 
@@ -6,12 +6,11 @@ import errno
 
 import httpx
 
-from chronikwerk.archiving.error_messages import (
-    ErrorMessages,
-    format_fs_error,
-    format_http_error,
-)
 from chronikwerk.failures import PermanentError, TransientError, wrap_exception
+
+_HTTP_TIMEOUT = "HTTP timeout"
+_HTTP_REQUEST_ERROR = "HTTP connection/request error"
+_FS_GENERIC_ERROR = "Filesystem error"
 
 _TRANSIENT_ERRNOS: set[int] = {
     # Temporary / retryable.
@@ -45,29 +44,43 @@ _PERMANENT_ERRNOS: set[int] = {
 }
 
 _TRANSIENT_EXCEPTION_RULES: tuple[tuple[type[BaseException], str], ...] = (
-    (httpx.TimeoutException, ErrorMessages.HTTP_TIMEOUT),
-    (httpx.RequestError, ErrorMessages.HTTP_REQUEST_ERROR),
+    (httpx.TimeoutException, _HTTP_TIMEOUT),
+    (httpx.RequestError, _HTTP_REQUEST_ERROR),
 )
+
+
+def _format_http_error(status: int, *, is_auth: bool = False) -> str:
+    """Format an HTTP failure without exposing sensitive response content."""
+    if is_auth:
+        return f"HTTP {status} (auth/permission) from upstream"
+    return f"HTTP {status} from upstream"
+
+
+def _format_fs_error(err: int, *, is_temporary: bool) -> str:
+    """Format a filesystem failure without leaking host-specific details."""
+    if is_temporary:
+        return f"Temporary filesystem error (errno={err})"
+    return f"Filesystem policy/permission error (errno={err})"
 
 
 def _classify_http_status(exc: httpx.HTTPStatusError) -> TransientError | PermanentError:
     status = exc.response.status_code
     if 500 <= status <= 599:
-        return TransientError(format_http_error(status))
+        return TransientError(_format_http_error(status))
     if status in (401, 403):
-        return PermanentError(format_http_error(status, is_auth=True))
-    return PermanentError(format_http_error(status))
+        return PermanentError(_format_http_error(status, is_auth=True))
+    return PermanentError(_format_http_error(status))
 
 
 def _classify_os_error(exc: OSError) -> TransientError | PermanentError:
     err = exc.errno
     if isinstance(err, int) and err in _TRANSIENT_ERRNOS:
-        return TransientError(format_fs_error(err, is_temporary=True))
+        return TransientError(_format_fs_error(err, is_temporary=True))
     if isinstance(err, int) and err in _PERMANENT_ERRNOS:
-        return PermanentError(format_fs_error(err, is_temporary=False))
+        return PermanentError(_format_fs_error(err, is_temporary=False))
 
     # Unknown OS errors default to permanent to avoid endless reprocessing loops.
-    return PermanentError(ErrorMessages.FS_GENERIC_ERROR)
+    return PermanentError(_FS_GENERIC_ERROR)
 
 
 def _classify_httpx_error(exc: BaseException) -> TransientError | PermanentError | None:
@@ -82,6 +95,8 @@ def _classify_httpx_error(exc: BaseException) -> TransientError | PermanentError
 def classify(exc: BaseException) -> TransientError | PermanentError:
     """
     Classify an exception into retryable (TransientError) vs non-retryable (PermanentError).
+
+    Always returns a classification; unknown exceptions are wrapped as permanent.
 
     Policy goals:
       - Predictable ticket state transitions (avoid accidental infinite retry loops).

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Tour · Chronikwerk Administration demonstration</title>
+  <link rel="icon" href="assets/chronikwerk-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/admin.css">
+  <link rel="stylesheet" href="assets/demo.css">
+  <script src="assets/demo.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="runhead">
+    <div class="runhead__inner">
+      <a class="wordmark" href="index.html">
+        <img src="assets/chronikwerk-mark.svg" alt="" width="28" height="28">
+        <span>
+          <span class="wordmark__name">Chronikwerk</span>
+          <span class="wordmark__kind">Administration</span>
+        </span>
+      </a>
+      <nav class="routes" aria-label="Primary navigation">
+        <a href="index.html">Overview</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="tour.html" aria-current="page">Tour</a>
+      </nav>
+      <div class="runhead__tools">
+        <p class="margin-note">Demonstration · synthetic data</p>
+      </div>
+    </div>
+  </header>
+  <main id="main-content" class="page" tabindex="-1">
+    <header class="page-head">
+      <div class="page-head__margin">
+        <p class="margin-label">Documentation renders</p>
+        <p class="margin-stamp">Not live services</p>
+      </div>
+      <div class="page-head__body">
+        <div class="page-head__title">
+          <h1>Tour</h1>
+          <p class="lede">The same interface as the running service, shown as static screenshots.</p>
+        </div>
+      </div>
+    </header>
+    <div class="annal annal--notice">
+      <div class="annal__margin"></div>
+      <div class="annal__body">
+      <aside class="demo-notice" role="note">
+        <p><strong>Documentation only.</strong> These captures use synthetic local data. No backend is connected and no filesystem or Zammad call is made.</p>
+        <p>The live interface is localized in German and English; these examples mix locales to show both.</p>
+      </aside>
+      </div>
+    </div>
+    <section class="annal" aria-labelledby="tour-title">
+      <div class="annal__margin">
+        <h2 id="tour-title">Captures</h2>
+        <p class="margin-note">Captures are deterministic documentation previews. They are not browser, accessibility, storage, signing, or release evidence.</p>
+      </div>
+      <div class="annal__body">
+        <div class="tour-grid">
+          <figure class="tour-shot">
+            <figcaption><strong>Overview</strong> — process health, capacity, recent failures, and configuration state, with the volatile, process-local state called out up front.</figcaption>
+            <a href="assets/tour/admin-overview.png"><img src="assets/tour/admin-overview.png" alt="English administration overview with a process-local warning and a recent failure row" loading="lazy"></a>
+          </figure>
+          <figure class="tour-shot">
+            <figcaption><strong>Jobs</strong> — a filterable record of recent processing events.</figcaption>
+            <a href="assets/tour/admin-jobs.png"><img src="assets/tour/admin-jobs.png" alt="English jobs list with a ticket filter and status column" loading="lazy"></a>
+          </figure>
+          <figure class="tour-shot">
+            <figcaption><strong>Ticket history</strong> — one ticket's processing timeline and the acknowledged retry action.</figcaption>
+            <a href="assets/tour/admin-ticket.png"><img src="assets/tour/admin-ticket.png" alt="English ticket history timeline with a reprocess action" loading="lazy"></a>
+          </figure>
+          <figure class="tour-shot tour-shot--wide">
+            <figcaption><strong>Configuration (German)</strong> — grouped, allowlisted non-secret values with inline provenance and a review panel.</figcaption>
+            <a href="assets/tour/admin-configuration.png"><img src="assets/tour/admin-configuration.png" alt="German configuration editor showing grouped non-secret values and a review panel" loading="lazy"></a>
+          </figure>
+          <figure class="tour-shot">
+            <figcaption><strong>Configuration revisions (German)</strong> — active and staged revisions with a restore review.</figcaption>
+            <a href="assets/tour/admin-revisions.png"><img src="assets/tour/admin-revisions.png" alt="German configuration revisions with a staged revision and restore action" loading="lazy"></a>
+          </figure>
+          <figure class="tour-shot">
+            <figcaption><strong>Sign in</strong> — the access-token login page.</figcaption>
+            <a href="assets/tour/admin-login.png"><img src="assets/tour/admin-login.png" alt="English administration sign-in page with an access token field" loading="lazy"></a>
+          </figure>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="colophon">
+    <p>Static demonstration with synthetic data. No backend is connected.</p>
+  </footer>
+</body>
+</html>

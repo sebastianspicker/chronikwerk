@@ -23,14 +23,8 @@ from chronikwerk.configuration.signing import (
     SigningSettings,
 )
 from chronikwerk.configuration.zammad import (
-    ZAMMAD_CONNECTION_CONTRACT_VERSION as ZAMMAD_CONNECTION_CONTRACT_VERSION,
-)
-from chronikwerk.configuration.zammad import (
     ZammadConnection,
     ZammadSettings,
-)
-from chronikwerk.configuration.zammad import (
-    canonicalize_zammad_origin as canonicalize_zammad_origin,
 )
 
 
@@ -60,7 +54,7 @@ class Settings(BaseSettings):
 
     @property
     def zammad_connection(self) -> ZammadConnection:
-        """Build the fixed-safe runtime connection from legacy configuration fields."""
+        """Build the runtime connection from the validated Zammad and hardening settings."""
         return ZammadConnection(
             origin=str(self.zammad.base_url),
             api_token=self.zammad.api_token,

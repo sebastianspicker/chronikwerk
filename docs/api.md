@@ -1,4 +1,4 @@
-# API Reference
+# API reference
 
 This document describes the HTTP contract exposed by Chronikwerk.
 
@@ -45,6 +45,8 @@ Common errors:
 | `413` | `request_too_large` | Request body exceeds the configured limit. |
 | `422` | validation error | Payload does not contain a positive ticket ID. |
 | `429` | `rate_limited` | Rate limit exceeded. |
+| `503` | `job_capacity_exhausted` | Admission capacity is full, or the app was built without a scheduler (read-only). Sent with `Retry-After: 1`. |
+| `503` | `shutting_down` | The process is draining for shutdown and accepts no new work. |
 | `503` | `webhook_auth_not_configured` | Defensive fail-closed response if an app is constructed without validated webhook authentication settings. Normal startup rejects this configuration. |
 
 ## `POST /ingest/batch`
@@ -53,7 +55,8 @@ Accepts a JSON array of webhook payloads and schedules one job per item.
 
 Limits:
 
-- Maximum batch size: `100`.
+- Maximum batch size: `100`; larger batches return `422 batch_too_large`.
+- Admission is all-or-nothing: if capacity cannot hold every item, nothing is scheduled.
 - Each item must contain either `ticket.id` or `ticket_id`.
 
 Headers and error behavior match `POST /ingest`. When a batch-level
@@ -90,11 +93,12 @@ Success (`202`):
 Common errors:
 
 - `401`: missing or invalid bearer token.
-- `503`: retry token or settings are not configured.
+- `503`: retry token is not configured.
+- `503 job_capacity_exhausted`: admission capacity is full or the process is shutting down.
 
 ## `GET /jobs/history`
 
-Returns process-local processing history when explicitly enabled. The route is
+Returns process-local processing history when enabled. The route is
 disabled by default and requires `Authorization: Bearer <OBSERVABILITY__HISTORY_BEARER_TOKEN>`.
 
 Query parameters:

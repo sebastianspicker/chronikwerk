@@ -1,0 +1,152 @@
+"""Pin archive path confinement, depth limits, collision-safe names, and filename patterns."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from chronikwerk.storage.filesystem import (
+    move_file_within_root,
+    path_entry_exists,
+    write_bytes,
+)
+from chronikwerk.storage.layout import build_filename_from_pattern, build_target_dir
+
+_DEFAULT_PATTERN = "Ticket-{ticket_number}_{timestamp_utc}.pdf"
+
+
+def test_write_rejects_symlink_traversal_under_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    try:
+        (root / "link").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not supported in this environment")
+
+    with pytest.raises(ValueError, match="symlink|escapes root"):
+        write_bytes(root / "link" / "payload.bin", b"x", storage_root=root)
+
+    assert list(outside.iterdir()) == []
+
+
+def test_write_rejects_symlinked_intermediate_directory(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    (root / "user").mkdir(parents=True)
+    outside.mkdir()
+    try:
+        (root / "user" / "year").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not supported in this environment")
+
+    with pytest.raises(ValueError):
+        write_bytes(root / "user" / "year" / "file.pdf", b"x", storage_root=root)
+
+    assert list(outside.iterdir()) == []
+
+
+def test_write_rejects_target_outside_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+
+    with pytest.raises(ValueError, match="escapes root"):
+        write_bytes(tmp_path / "outside.bin", b"x", storage_root=root)
+
+    assert not (tmp_path / "outside.bin").exists()
+
+
+def test_move_rejects_destination_outside_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    source = root / "a.bin"
+    source.write_bytes(b"x")
+
+    with pytest.raises(ValueError, match="escapes root"):
+        move_file_within_root(source, tmp_path / "b.bin", storage_root=root)
+
+    assert source.exists()
+
+
+def test_path_entry_exists_does_not_follow_leaf_symlink(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    try:
+        (root / "dangling").symlink_to(tmp_path / "nowhere")
+    except OSError:
+        pytest.skip("symlinks are not supported in this environment")
+
+    assert path_entry_exists(root / "dangling", storage_root=root) is True
+    assert path_entry_exists(root / "absent", storage_root=root) is False
+
+
+@pytest.mark.parametrize("unsafe", ["..", ".", "a/b", "a\\b", "a\x00b", ""])
+def test_target_dir_rejects_unsafe_segments(tmp_path: Path, unsafe: str) -> None:
+    with pytest.raises(ValueError):
+        build_target_dir(tmp_path, "user", ["2026", unsafe])
+
+
+@pytest.mark.parametrize("unsafe", ["..", "a/b", "a\\b", "a\x00b", ""])
+def test_target_dir_rejects_unsafe_username(tmp_path: Path, unsafe: str) -> None:
+    with pytest.raises(ValueError):
+        build_target_dir(tmp_path, unsafe, ["2026"])
+
+
+def test_target_dir_allows_ten_segments_and_rejects_eleven(tmp_path: Path) -> None:
+    ten = [f"s{index}" for index in range(10)]
+
+    target = build_target_dir(tmp_path, "user", ten)
+
+    assert target == tmp_path.joinpath("user", *ten)
+    with pytest.raises(ValueError, match="too many path segments"):
+        build_target_dir(tmp_path, "user", [*ten, "s10"])
+
+
+def test_target_dir_rejects_overlong_segment(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="too long"):
+        build_target_dir(tmp_path, "user", ["x" * 65])
+
+
+def test_clean_segments_are_kept_verbatim(tmp_path: Path) -> None:
+    assert build_target_dir(tmp_path, "alice", ["2026", "Dossier_1"]) == (
+        tmp_path / "alice" / "2026" / "Dossier_1"
+    )
+
+
+def test_sanitized_segment_gets_sha256_prefix_suffix(tmp_path: Path) -> None:
+    target = build_target_dir(tmp_path, "user", ["Müller Team"])
+
+    # sha256("Müller Team".encode("utf-8")).hexdigest()[:32] == e71f884f...
+    assert target.name == "Muller_Team-e71f884fc9d8c48fe8244a10d312564c"
+
+
+def test_colliding_raw_names_stay_distinct(tmp_path: Path) -> None:
+    spaced = build_target_dir(tmp_path, "user", ["AB 12"])
+    underscored = build_target_dir(tmp_path, "user", ["AB_12"])
+
+    assert underscored.name == "AB_12"
+    assert spaced.name == "AB_12-972bc8a6eac1ac13d28b02d997d33c2d"
+
+
+def test_default_filename_pattern_renders_ticket_number_and_date() -> None:
+    name = build_filename_from_pattern(
+        _DEFAULT_PATTERN, ticket_number="123", timestamp_utc="2026-02-07"
+    )
+
+    assert name == "Ticket-123_2026-02-07.pdf"
+
+
+def test_filename_pattern_disambiguates_unsafe_ticket_number() -> None:
+    name = build_filename_from_pattern(
+        _DEFAULT_PATTERN, ticket_number="a|b", timestamp_utc="2026-02-07"
+    )
+
+    assert name == "Ticket-a_b-0eab8a0a3380abf4c7d1fb0b43b66aaf_2026-02-07.pdf"
+
+
+@pytest.mark.parametrize("pattern", ["../{ticket_number}.pdf", "a/{ticket_number}.pdf", "  "])
+def test_filename_pattern_rejects_separators_and_blank(pattern: str) -> None:
+    with pytest.raises(ValueError):
+        build_filename_from_pattern(pattern, ticket_number="1", timestamp_utc="2026-02-07")

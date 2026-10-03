@@ -1,4 +1,4 @@
-# Public Alpha Status
+# Public alpha status
 
 ## Candidate
 
@@ -8,96 +8,75 @@
 | Proposed tag | `v0.3.0-alpha.1` |
 | Publication state | Unreleased |
 | Readiness | Not ready for publication |
-| Evidence date | 2026-08-27 |
+| Status reviewed | 2026-09-02 |
 
-Chronikwerk is available for local evaluation with non-production data. No source
-checkout, package, image, or screenshot should be treated as release evidence until it
-is produced from and verified against the same reviewed tag.
+The worktree is an unfrozen development candidate with uncommitted product, demo, documentation,
+and generated-asset changes. It is suitable only for local evaluation with non-production data.
+A source checkout, package, image, screenshot, or Pages artifact counts as release evidence only
+when it is produced from — and verified against — the same reviewed tag.
 
-## Implemented surface
+## What works today
 
-The candidate currently provides:
+The candidate can:
 
-- authenticated single and batch Zammad webhook ingestion;
-- bounded process-local admission and background processing;
-- one localized archival PDF layout and JSON audit sidecar;
-- optional PAdES signing and RFC3161 timestamping;
-- atomic filesystem storage with path confinement and recovery handling;
-- Zammad tag transitions and processing notes;
-- optional authenticated process-local job history;
-- a disabled-by-default administration application for operational state, retries,
-  and staged non-secret configuration; and
-- Python, systemd, Compose, and container deployment surfaces.
+- accept authenticated Zammad webhooks and run bounded background work in-process;
+- render a localized PDF together with its JSON audit sidecar;
+- optionally apply a PAdES signature and an RFC 3161 timestamp;
+- write under a confined archive root and project the outcome back to Zammad; and
+- expose optional authenticated history and metrics plus a disabled-by-default administration
+  application.
 
-The runtime remains single-process. Admission, job history, sessions, replay
-deduplication, and ticket locks are volatile. A `202 Accepted` response confirms
-admission, not archival completion.
+The runtime is single-process. Admission, jobs, history, sessions, replay deduplication, and ticket
+locks are volatile, so `202 Accepted` confirms admission rather than archival completion. The static
+Pages demo uses synthetic browser-local state and is not an operational deployment or release
+validation surface.
 
-## Recorded local validation for the unfrozen checkout
+## Repository checks
 
-The following checks pass on Python 3.14.6 and the current locked frontend toolchain:
+These aggregate gates are defined in the repository:
 
-- 48 behavior-focused Python tests;
-- 64 percent branch-aware coverage against a mechanically enforced 57 percent minimum;
-- Ruff lint;
-- Ruff formatting across 164 files;
-- mypy across 125 source and test files;
-- TypeScript type checking and compiled administration asset comparison;
-- Python source distribution and wheel builds;
-- production and full-corpus duplication checks with zero clones;
-- architecture dependency, configuration, HTTP, Zammad, document, storage, and workflow
-  contract tests;
-- brand, documentation-link, screenshot-manifest, source-purpose, source-length, complexity,
-  repository smoke, and clean-wheel checks; and
-- whitespace validation with `git diff --check`.
+- `make verify-core`: Python and frontend checks, tests with coverage, documentation and source
+  policy checks, package build, clean-wheel import, and repository smoke checks.
+- `make verify`: `verify-core` plus the production-image smoke test.
+- The security workflow: separate fail-closed dependency audits for the base and signing
+  environments.
+- `make pdf-ua-check PDF_FILES="..."`: pinned veraPDF validation for representative output.
 
-The Python suite emits one upstream Starlette/httpx deprecation warning.
+No earlier result proves anything about the current dirty worktree. When the candidate is frozen,
+record automated results, external evidence, artifact checksums, and the exact commit or tag
+together.
 
-## Open validation gates
+## Open publication gates
 
-Publication still requires:
+Publication still requires all of the following against the exact proposed tag:
 
-- Firefox, WebKit, and narrow WebKit browser runs;
-- production-image smoke and Docker deployment checks;
+- a complete `make verify` run and security-workflow results;
 - live Zammad workflow verification, including terminal tags and internal notes;
+- production storage, signing, TSA, TLS-proxy, restart, and recovery checks;
 - representative signed and unsigned PDF/UA validation;
-- manual screen-reader, keyboard, contrast, 400 percent zoom, and populated-data
-  review; and
-- a complete verification run against the exact proposed tag.
+- Chromium, Firefox, WebKit, narrow-layout, keyboard, and automated accessibility checks;
+- manual screen-reader, reading-order, contrast, 400 percent zoom, and populated-data review; and
+- review of packages, image, checksums, release notes, screenshots, and the static demo artifact.
 
-## Release blockers and residual risk
+## Known release risks
 
-- The package and repository identity migration has not been frozen into a reviewed
-  source state.
-- Python dependency resolution is range-based and does not provide a reviewed,
-  hash-pinned release lock.
+- Python release dependencies are range-based rather than hash-pinned.
 - Docker base images and operating-system packages are not immutable.
-- Container registry publication is intentionally not configured.
-- Replay-resistant delivery-ID signing is opt-in.
-- Deep storage health checks are unauthenticated filesystem writes and must remain on a
-  trusted operator path.
-- Delivery IDs do not have a documented size and character bound.
-- FastAPI `/docs`, `/redoc`, and `/openapi.json` remain unauthenticated; the interactive
-  pages load external browser assets.
-- The final security-reporting destination, copyright holder, dependency-license
-  inventory, image SBOM, and attribution review are unresolved.
+- Container registry publication is not configured.
+- Delivery-ID signing is opt-in, while process-local replay state resets on restart.
+- Deep storage health and FastAPI documentation routes are unauthenticated and need a trusted
+  network boundary.
+- Private vulnerability reporting has not been verified, and no fallback private channel is
+  published.
+- The copyright holder, dependency-license inventory, image SBOM, and attribution review are not
+  established in repository evidence.
 
-## Maintained compiled assets
+## Maintained artifacts
 
-The following compiled files are intentional project artifacts:
+The packaged admin files `src/chronikwerk/web/static/admin/admin.js` and `admin.css` are generated
+from `frontend/` and intentionally versioned. The administration screenshots and their manifest are
+maintained documentation assets. The Pages workflow builds its static artifact from `demo/site/`;
+`build/` and `dist/` stay generated output.
 
-- `src/chronikwerk/web/static/admin/admin.js`, built from `frontend/admin.ts`;
-- `src/chronikwerk/web/static/admin/admin.css`, assembled from
-  `frontend/admin/css/*.css`; and
-- `docs/screenshots/*.png` with `docs/screenshots/manifest.json`.
-
-The build and documentation checks compare these files with their source inputs.
-Build directories, caches, browser reports, local configuration, credentials, local
-databases, logs, archive output, and development-tool state are not release artifacts.
-
-## Publication gate
-
-Do not publish this candidate until the source state is frozen, the blockers above are
-resolved or explicitly accepted, every required automated and manual gate passes
-against the same tag, and the resulting packages, image, release notes, screenshots,
-and checksums receive final review.
+Do not publish the candidate until the source is frozen, every required automated, manual, and
+external gate passes against that state, and a release owner reviews the resulting artifacts.

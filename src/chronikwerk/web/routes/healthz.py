@@ -11,9 +11,9 @@ import structlog
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
+from chronikwerk.concurrency import run_sync_cancellation_safe
 from chronikwerk.configuration.models import Settings
-from chronikwerk.configuration.redaction import scrub_secrets_in_text
-from chronikwerk.operations.async_work import run_sync_cancellation_safe
+from chronikwerk.redaction import scrub_secrets_in_text
 from chronikwerk.web.responses import api_error
 
 router = APIRouter()
@@ -27,7 +27,8 @@ def _service_version() -> str:
         return "0.0.0"
 
 
-def _check_storage(settings: Settings) -> dict[str, object]:
+def check_storage(settings: Settings) -> dict[str, object]:
+    """Report whether the archive storage root accepts a temporary file."""
     root = settings.storage.root
     try:
         with tempfile.NamedTemporaryFile(dir=root, delete=True):
@@ -49,7 +50,7 @@ def _deep_check_healthy(_name: str, result: object) -> bool | None:
 
 async def _deep_checks(settings: Settings) -> tuple[dict[str, object], bool]:
     checks: dict[str, object] = {}
-    checks["storage"] = await run_sync_cancellation_safe(_check_storage, settings)
+    checks["storage"] = await run_sync_cancellation_safe(check_storage, settings)
     healthy_checks = [
         result
         for name, value in checks.items()
@@ -65,12 +66,12 @@ async def healthz(request: Request, deep: bool = False) -> dict[str, object] | J
         "status": "ok",
         "time": datetime.now(UTC).isoformat(),
     }
-    settings = getattr(request.app.state, "settings", None)
-    if settings is None or not settings.observability.healthz_omit_version:
+    settings: Settings = request.app.state.settings
+    if not settings.observability.healthz_omit_version:
         out["service"] = "chronikwerk"
         out["version"] = _service_version()
 
-    if deep and settings is not None:
+    if deep:
         deep_health_lock: asyncio.Lock = request.app.state.deep_health_lock
         if deep_health_lock.locked():
             return api_error(

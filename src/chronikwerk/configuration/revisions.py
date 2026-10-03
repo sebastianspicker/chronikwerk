@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import threading
 from copy import deepcopy
 from dataclasses import asdict, dataclass
@@ -12,12 +11,13 @@ from typing import Any
 
 import structlog
 
+from chronikwerk.configuration.environment import environment_owns as environment_owns
 from chronikwerk.configuration.errors import (
     ManagedConfigError,
     RevisionConflict,
     _PostReplaceError,
 )
-from chronikwerk.configuration.io import _ManagedFileIO
+from chronikwerk.configuration.io import ManagedFileIO
 from chronikwerk.configuration.models import Settings
 from chronikwerk.configuration.revision_chain import (
     build_revision_chain,
@@ -146,11 +146,6 @@ def validate_overlay_paths(overlay: dict[str, Any]) -> None:
     overlay_from_flat(flatten_mapping(overlay))
 
 
-def environment_owns(path: str) -> bool:
-    """Report whether a setting is explicitly controlled by environment variables."""
-    return path.upper().replace(".", "__") in os.environ
-
-
 def get_path(mapping: dict[str, Any], path: str) -> Any:
     """Read a dotted path from nested configuration without mutating it."""
     current: Any = mapping
@@ -214,18 +209,13 @@ def validate_candidate(
     return candidate, overlay_from_flat(normalized_flat)
 
 
-class ManagedConfigStore(_ManagedFileIO):
+class ManagedConfigStore(ManagedFileIO):
     """Atomic current overlay and bounded immutable revision files."""
 
     def __init__(self, state_dir: Path, *, keep_revisions: int = 20) -> None:
-        self.state_dir = Path(os.path.abspath(state_dir))
+        super().__init__(state_dir)
         self.keep_revisions = keep_revisions
-        self.overlay_path = self.state_dir / "managed-config.json"
-        self.revisions_dir = self.state_dir / "revisions"
         self._lock = threading.Lock()
-        self._state_identity: tuple[int, int] | None = None
-        self._revisions_identity: tuple[int, int] | None = None
-        self._initialize_managed_directories()
 
     def load(self) -> dict[str, Any]:
         """Load the active managed configuration as a validated settings object."""

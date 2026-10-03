@@ -57,10 +57,10 @@ dev = [
   "chronikwerk[signing]",
 ]
 [project.urls]
-Repository = "https://github.com/sebastianspicker/chronikwerk"
-"Bug Tracker" = "https://github.com/sebastianspicker/chronikwerk/issues"
-Changelog = "https://github.com/sebastianspicker/chronikwerk/blob/main/CHANGELOG.md"
-Documentation = "https://github.com/sebastianspicker/chronikwerk#documentation"
+Repository = "https://github.com/sebastianspicker/zammad-ticket-archiver"
+"Bug Tracker" = "https://github.com/sebastianspicker/zammad-ticket-archiver/issues"
+Changelog = "https://github.com/sebastianspicker/zammad-ticket-archiver/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/sebastianspicker/zammad-ticket-archiver#documentation"
 
 [project.scripts]
 chronikwerk = "chronikwerk.runtime:main"
@@ -81,6 +81,8 @@ chronikwerk = [
   "web/static/**/*.css",
   "web/static/**/*.js",
   "web/static/**/*.svg",
+  "web/static/**/*.woff2",
+  "web/static/**/*.txt",
 ]
 
 [tool.ruff]
@@ -115,4 +117,4 @@ branch = true
 source = ["chronikwerk"]
 
 [tool.coverage.report]
-fail_under = 57
+fail_under = 75

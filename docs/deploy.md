@@ -1,8 +1,8 @@
 # Deployment
 
 This project ships Docker and Docker Compose files for a single-host deployment. Use
-one external environment file for both Compose interpolation and the container;
-set `CHRONIKWERK_ENV_FILE` in that file to its installed path.
+one external environment file for both Compose interpolation and the container, and set
+`CHRONIKWERK_ENV_FILE` in that file to its installed path.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ set `CHRONIKWERK_ENV_FILE` in that file to its installed path.
 - Optional PKCS#12/PFX signing material when signing is enabled.
 - A persistent admin-state directory and TLS proxy before the admin feature is enabled.
 
-## Suggested Layout
+## Suggested layout
 
 - Repository and compose files: `/opt/chronikwerk`
 - Environment and secrets: `/etc/chronikwerk`
@@ -29,7 +29,7 @@ is available. Do not copy a developer working tree: it may contain ignored crede
 local configuration, archives, reports, or tool state that do not belong on the deployment
 host.
 
-## Configure Environment
+## Configure environment
 
 Copy a template and edit it on the target host:
 
@@ -56,13 +56,16 @@ Keep this line in the installed file and update it if the location changes:
 CHRONIKWERK_ENV_FILE=/etc/chronikwerk/chronikwerk.env
 ```
 
-## Optional Signing Material
+## Optional signing material
 
 Store the real PFX outside the repository:
 
 ```bash
-sudo install -m 0640 -o root -g root /path/to/signing.pfx /etc/chronikwerk/secrets/signing.pfx
+sudo install -m 0640 -o 10001 -g 10001 /path/to/signing.pfx /etc/chronikwerk/secrets/signing.pfx
 ```
+
+The production image runs as UID/GID `10001`; preserve equivalent service-readable ownership if
+your deployment maps that identity differently. Do not make the PFX group- or world-writable.
 
 Then configure:
 
@@ -124,7 +127,7 @@ chronikwerk-admin list-config-revisions
 chronikwerk-admin stage-config-rollback <full-revision-hash>
 ```
 
-## CIFS/SMB Storage
+## CIFS/SMB storage
 
 Mount the share on the host and point `STORAGE__ROOT` at the mountpoint.
 

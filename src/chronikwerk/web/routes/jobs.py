@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
-from chronikwerk.operations.history import read_history
+from chronikwerk.configuration.models import Settings
+from chronikwerk.operations.history import JobHistory
 from chronikwerk.web.responses import verify_bearer_token
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -16,14 +17,13 @@ def job_history(
     limit: int = 100,
     ticket_id: int | None = None,
 ) -> dict[str, object]:
-    """Return optional job history only when its diagnostic feature is enabled."""
-    settings = getattr(request.app.state, "settings", None)
-    if settings is None or not settings.observability.history_enabled:
-        raise HTTPException(status_code=404, detail="not_found")
+    """Return job history; the route is only mounted when the feature is enabled."""
+    settings: Settings = request.app.state.settings
     verify_bearer_token(
         request,
         settings.observability.history_bearer_token,
         missing_detail="history_token_not_configured",
     )
-    entries = read_history(limit=limit, ticket_id=ticket_id)
+    history: JobHistory = request.app.state.history
+    entries = history.read(limit=limit, ticket_id=ticket_id)
     return {"entries": entries}

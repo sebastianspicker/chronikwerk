@@ -1,4 +1,4 @@
-# Configuration Reference
+# Configuration reference
 
 Source of truth:
 
@@ -9,7 +9,7 @@ Source of truth:
 - `src/chronikwerk/configuration/load.py`
 - `src/chronikwerk/configuration/validation.py`
 
-## Load Precedence
+## Load precedence
 
 Highest first:
 
@@ -27,13 +27,15 @@ Nested environment keys use double underscores, for example
 The version 1 portable runtime aliases `ZAMMAD_ORIGIN`, `ZAMMAD_API_TOKEN`,
 `ZAMMAD_TIMEOUT_SECONDS`, `ZAMMAD_ALLOW_PRIVATE_ORIGIN`, and `ZAMMAD_TRUST_ENV`
 are also accepted from the process environment. They have the same precedence as
-nested process keys. If both forms are set, their parsed values must agree.
+nested process keys. If both forms are set, their parsed values must agree. Either
+form marks the corresponding administration field as environment-owned and
+read-only; validation and staging reject changes to that field.
 
 `config/config.example.yaml` is a complete model example. The systemd and
-Compose environment templates are intentionally partial deployment templates;
-their keys must be known model keys, but omitted settings use model defaults.
+Compose environment templates are partial deployment templates; their keys must be
+known model keys, but omitted settings use model defaults.
 
-## Minimum Required Values
+## Minimum required values
 
 Validated service startup requires:
 
@@ -53,7 +55,7 @@ Validated service startup requires:
 
 | Key | Default | Env key | Description |
 | --- | --- | --- | --- |
-| `zammad.base_url` | required | `ZAMMAD__BASE_URL` or `ZAMMAD_ORIGIN` | Zammad HTTPS origin only (no path, query, fragment, or credentials). |
+| `zammad.base_url` | required | `ZAMMAD__BASE_URL` or `ZAMMAD_ORIGIN` | Zammad origin with no path, query, fragment, or credentials. HTTPS is required unless the explicit reviewed internal/test HTTP override is enabled. |
 | `zammad.api_token` | required | `ZAMMAD__API_TOKEN` or `ZAMMAD_API_TOKEN` | Zammad API token. |
 | `zammad.webhook_hmac_secret` | required by validation | `ZAMMAD__WEBHOOK_HMAC_SECRET` | HMAC secret for incoming webhooks; at least 32 characters and not a placeholder. The underlying model permits `null` only so validation can return a precise startup error. |
 | `zammad.timeout_seconds` | `10.0` | `ZAMMAD__TIMEOUT_SECONDS` or `ZAMMAD_TIMEOUT_SECONDS` | Positive outbound API timeout. |
@@ -82,7 +84,7 @@ Validated service startup requires:
 | --- | --- | --- | --- |
 | `storage.root` | required | `STORAGE__ROOT` | Root directory for archive output. |
 | `storage.fsync` | `true` | `STORAGE__FSYNC` | Fsync files/directories after writes. |
-| `storage.filename_pattern` | `Ticket-{ticket_number}_{timestamp_utc}.pdf` | `STORAGE__FILENAME_PATTERN` | Output PDF filename template. |
+| `storage.filename_pattern` | `Ticket-{ticket_number}_{timestamp_utc}.pdf` | `STORAGE__FILENAME_PATTERN` | Output PDF filename template; `{timestamp_utc}` is the UTC date (`2026-02-07`). |
 
 ## PDF
 
@@ -102,7 +104,7 @@ Validated service startup requires:
 | `signing.pfx_password` | `null` | `SIGNING__PFX_PASSWORD` | PFX password. |
 | `signing.pades.reason` | `Ticket Archivierung` | `SIGNING__PADES__REASON` | Signature reason. |
 | `signing.pades.location` | `Datacenter` | `SIGNING__PADES__LOCATION` | Signature location. |
-| `signing.timestamp.enabled` | `false` | `SIGNING__TIMESTAMP__ENABLED` | Enable RFC3161 timestamping. |
+| `signing.timestamp.enabled` | `false` | `SIGNING__TIMESTAMP__ENABLED` | Enable RFC 3161 timestamping. |
 | `signing.timestamp.rfc3161.tsa_url` | `null` | `SIGNING__TIMESTAMP__RFC3161__TSA_URL` | TSA endpoint. |
 | `signing.timestamp.rfc3161.ca_bundle_path` | `null` | `SIGNING__TIMESTAMP__RFC3161__CA_BUNDLE_PATH` | Optional CA bundle for TSA TLS verification. |
 | `signing.timestamp.rfc3161.user` | `null` | `SIGNING__TIMESTAMP__RFC3161__USER` | TSA basic-auth user. |
@@ -163,7 +165,7 @@ restart and environment-owned fields remain read-only.
 | `admin.cookie_secure` | `true` | `ADMIN__COOKIE_SECURE` | Send the session cookie only over HTTPS. |
 | `admin.default_locale` | `de-DE` | `ADMIN__DEFAULT_LOCALE` | Initial admin locale; supports `de-DE` and `en-GB`. |
 
-## Top-Level Runtime Tokens
+## Top-level runtime tokens
 
 | Key | Default | Env key | Description |
 | --- | --- | --- | --- |
@@ -183,7 +185,7 @@ hardening:
     allow_private_networks: true
 ```
 
-## Minimal Environment
+## Minimal environment
 
 ```bash
 ZAMMAD_ORIGIN=https://zammad.example.local
@@ -193,7 +195,7 @@ STORAGE__ROOT=/mnt/archive
 ZAMMAD_ALLOW_PRIVATE_ORIGIN=true
 ```
 
-The examples intentionally fail validation until every `CHANGE-ME` value is
+The examples fail validation until every `CHANGE-ME` value is
 replaced. Generate authentication secrets with at least 32 random characters. The
 private-origin override is present only because the example uses a `.local` Zammad host;
 omit it for a globally routable HTTPS origin.

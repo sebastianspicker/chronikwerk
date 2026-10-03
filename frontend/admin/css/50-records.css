@@ -1,0 +1,290 @@
+/* Records: tables, chronicle timeline, empty states, filters, paging */
+.table-region {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.records {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step-0);
+}
+
+.records th {
+  padding: 0 var(--s-4) var(--s-2) 0;
+  border-bottom: 1px solid var(--ink);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 700;
+  letter-spacing: var(--track-label);
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.records td {
+  padding: var(--s-3) var(--s-4) var(--s-3) 0;
+  border-bottom: var(--hairline);
+  vertical-align: baseline;
+}
+
+.records tbody tr {
+  transition: background-color var(--t-fast) var(--ease);
+}
+
+.records tbody tr:hover {
+  background: var(--paper-sunk);
+}
+
+.records__time {
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.records__ticket a {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.records__message {
+  min-width: 16rem;
+}
+
+.records code {
+  color: var(--ink-2);
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.records .notation {
+  white-space: nowrap;
+}
+
+/* Narrow: every row becomes a ruled entry with its own labels. */
+@media (max-width: 40rem) {
+  .records thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .records,
+  .records tbody,
+  .records tr,
+  .records td {
+    display: block;
+  }
+
+  .records tr {
+    padding: var(--s-3) 0;
+    border-bottom: var(--hairline);
+  }
+
+  .records tbody tr:first-child {
+    border-top: 1px solid var(--ink);
+  }
+
+  .records td {
+    display: grid;
+    grid-template-columns: 7.5rem minmax(0, 1fr);
+    gap: var(--s-3);
+    padding: var(--s-1) 0;
+    border: 0;
+  }
+
+  .records td::before {
+    content: attr(data-label);
+    color: var(--ink-3);
+    font-size: var(--step--1);
+    font-weight: 700;
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+  }
+
+  .records td[data-label=""]::before {
+    content: none;
+  }
+
+  .records__message {
+    min-width: 0;
+  }
+
+  .records__time {
+    white-space: normal;
+  }
+}
+
+/* Chronicle: event time in the margin, a mark on the rule, the entry in the body. */
+.chronicle {
+  grid-column: 1 / -1;
+  padding: 0;
+  list-style: none;
+}
+
+.chronicle__entry {
+  display: grid;
+  grid-template-columns: var(--margin-track) minmax(0, 1fr);
+}
+
+.chronicle__when {
+  padding: calc(var(--s-4) + 0.1rem) var(--s-5) var(--s-4) 0;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  text-align: right;
+}
+
+.chronicle__when time {
+  white-space: normal;
+}
+
+.chronicle__what {
+  position: relative;
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-4) 0 var(--s-5) var(--margin-gap);
+  border-left: var(--hairline);
+}
+
+.chronicle__what::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--s-4) + 0.35rem);
+  left: -0.375rem;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 2px solid var(--paper);
+  background: var(--ink-3);
+  box-sizing: content-box;
+  translate: -2px 0;
+}
+
+.chronicle__entry--ok .chronicle__what::before {
+  background: var(--ok);
+}
+
+.chronicle__entry--fault .chronicle__what::before {
+  background: var(--fault);
+  rotate: 45deg;
+}
+
+.chronicle__entry--live .chronicle__what::before {
+  background: var(--copy-ink);
+  border-radius: 50%;
+}
+
+.chronicle__entry--pending .chronicle__what::before {
+  width: 0.5rem;
+  height: 0.5rem;
+  border: 3px solid var(--copy-ink);
+  background: var(--paper);
+  border-radius: 50%;
+}
+
+.chronicle__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+}
+
+.chronicle__message {
+  font-size: var(--step-1);
+}
+
+.chronicle__ref {
+  color: var(--ink-3);
+  font-size: var(--step--1);
+}
+
+@media (max-width: 52rem) {
+  .chronicle {
+    margin-left: calc(-1 * var(--s-4) - 1px);
+  }
+
+  .chronicle__entry {
+    display: block;
+    position: relative;
+    padding-left: var(--s-4);
+    border-left: var(--hairline);
+  }
+
+  .chronicle__when {
+    padding: var(--s-4) 0 0;
+    text-align: left;
+  }
+
+  .chronicle__what {
+    position: static;
+    padding: var(--s-2) 0 var(--s-4);
+    border-left: 0;
+  }
+
+  .chronicle__what::before {
+    top: calc(var(--s-4) + 0.3rem);
+  }
+}
+
+/* Empty states stay where the data would appear. */
+.empty {
+  display: grid;
+  gap: var(--s-2);
+  justify-items: start;
+  padding: var(--s-4) 0;
+  color: var(--ink-2);
+}
+
+.empty__title {
+  color: var(--ink);
+  font-size: var(--step-1);
+  font-weight: 700;
+}
+
+.empty .button {
+  margin-top: var(--s-2);
+}
+
+/* Filters live in the margin: the reference apparatus of the record. */
+.filters {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.filters__field {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.filters__field label {
+  font-size: var(--step-0);
+}
+
+.filters .button-row .button {
+  flex: 1 1 auto;
+}
+
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--s-5);
+}
+
+@media (max-width: 52rem) {
+  .annal__margin .filters {
+    flex-basis: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    align-items: end;
+  }
+
+  .filters .button-row {
+    grid-column: 1 / -1;
+  }
+
+  .pager {
+    justify-content: stretch;
+  }
+
+  .pager .button {
+    width: 100%;
+  }
+}

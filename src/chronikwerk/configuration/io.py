@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from chronikwerk.configuration.directories import _TrustedDirectoryTraversal
+from chronikwerk.configuration.directories import TrustedDirectories
 from chronikwerk.configuration.errors import (
     ManagedConfigError,
     _MissingManagedFile,
@@ -22,8 +22,14 @@ from chronikwerk.configuration.errors import (
 _MAX_MANAGED_FILE_BYTES = 256 * 1024
 
 
-class _BoundedReadMixin(_TrustedDirectoryTraversal):
-    """Read bounded regular files through trusted directory descriptors."""
+class ManagedFileIO:
+    """Bounded reads, atomic writes, and pruning inside trusted managed-state directories."""
+
+    def __init__(self, state_dir: Path) -> None:
+        self._directories = TrustedDirectories(state_dir)
+        self.state_dir = self._directories.state_dir
+        self.revisions_dir = self._directories.revisions_dir
+        self.overlay_path = self.state_dir / "managed-config.json"
 
     @staticmethod
     def _read_bounded_file(
@@ -65,7 +71,7 @@ class _BoundedReadMixin(_TrustedDirectoryTraversal):
         if os.name != "posix":
             return self._read_current_path()
 
-        directory_fd = self._open_state_directory()
+        directory_fd = self._directories.open_state()
         try:
             return self._read_bounded_file(
                 directory_fd,
@@ -89,7 +95,7 @@ class _BoundedReadMixin(_TrustedDirectoryTraversal):
         if os.name != "posix":
             return self._read_revision_path(path)
 
-        directory_fd = self._open_revisions_directory()
+        directory_fd = self._directories.open_revisions()
         try:
             payload = self._read_bounded_file(directory_fd, path.name, description="Revision file")
         finally:
@@ -108,10 +114,6 @@ class _BoundedReadMixin(_TrustedDirectoryTraversal):
             raise ManagedConfigError("Revision file exceeds 256 KiB")
         return path.read_bytes()
 
-
-class _RevisionPruningMixin(_TrustedDirectoryTraversal):
-    """Remove obsolete revision files while retaining directory durability."""
-
     def _prune_revision_files(self, keep_names: set[str]) -> None:
         if os.name != "posix":
             self._prune_revision_paths(keep_names)
@@ -126,7 +128,7 @@ class _RevisionPruningMixin(_TrustedDirectoryTraversal):
         self._fsync_directory(self.revisions_dir)
 
     def _prune_revision_entries(self, keep_names: set[str]) -> None:
-        directory_fd = self._open_revisions_directory()
+        directory_fd = self._directories.open_revisions()
         try:
             for name in os.listdir(directory_fd):
                 if self._is_prunable_revision_entry(directory_fd, name, keep_names):
@@ -155,7 +157,7 @@ class _RevisionPruningMixin(_TrustedDirectoryTraversal):
             self._fsync_directory(self.revisions_dir)
             return
 
-        directory_fd = self._open_revisions_directory()
+        directory_fd = self._directories.open_revisions()
         try:
             try:
                 os.unlink(name, dir_fd=directory_fd)
@@ -168,9 +170,9 @@ class _RevisionPruningMixin(_TrustedDirectoryTraversal):
     def _fsync_directory(self, path: Path) -> None:
         if os.name == "posix":
             directory_fd = (
-                self._open_state_directory()
+                self._directories.open_state()
                 if path == self.state_dir
-                else self._open_revisions_directory()
+                else self._directories.open_revisions()
             )
         else:
             directory_fd = os.open(path, os.O_RDONLY)
@@ -178,10 +180,6 @@ class _RevisionPruningMixin(_TrustedDirectoryTraversal):
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
-
-
-class _AtomicWriteCleanupMixin(_RevisionPruningMixin):
-    """Atomically replace managed files and preserve cleanup failure details."""
 
     @staticmethod
     def _payload_bytes(value: dict[str, Any]) -> bytes:
@@ -215,9 +213,9 @@ class _AtomicWriteCleanupMixin(_RevisionPruningMixin):
 
     def _trusted_directory_for_write(self, path: Path) -> int:
         if path.parent == self.state_dir:
-            return self._open_state_directory()
+            return self._directories.open_state()
         if path.parent == self.revisions_dir:
-            return self._open_revisions_directory()
+            return self._directories.open_revisions()
         raise ManagedConfigError(f"Managed write target is outside trusted state: {path}")
 
     @staticmethod
@@ -363,7 +361,3 @@ class _AtomicWriteCleanupMixin(_RevisionPruningMixin):
                 primary_error,
                 replaced=replaced,
             )
-
-
-class _ManagedFileIO(_BoundedReadMixin, _AtomicWriteCleanupMixin):
-    """Compatibility facade for managed configuration filesystem operations."""

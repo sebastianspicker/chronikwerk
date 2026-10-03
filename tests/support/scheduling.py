@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+
+from chronikwerk.operations.admission import JobAdmission
+from chronikwerk.operations.history import JobHistory
+from chronikwerk.operations.job import TicketJob
 
 
 @dataclass
@@ -11,17 +14,31 @@ class SchedulingSpy:
     """Record calls accepted by the web layer without coupling to job internals."""
 
     accept: bool = True
-    scheduled: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
+    scheduled: list[TicketJob] = field(default_factory=list)
     retries: list[tuple[int, str | None]] = field(default_factory=list)
+    accepting: bool = True
+    admission: JobAdmission = field(
+        default_factory=lambda: JobAdmission(max_pending=1, max_running=1)
+    )
+    history: JobHistory = field(default_factory=JobHistory)
+    closed: bool = False
 
-    def schedule(self, *, delivery_id: str | None, payload: dict[str, Any]) -> bool:
-        self.scheduled.append((delivery_id, payload))
+    def schedule(self, job: TicketJob) -> bool:
+        """Record one scheduled job and answer with the configured capacity result."""
+        self.scheduled.append(job)
         return self.accept
 
-    def schedule_batch(self, jobs: list[tuple[str | None, dict[str, Any]]]) -> bool:
+    def schedule_batch(self, jobs: list[TicketJob]) -> bool:
+        """Record a scheduled job group and answer with the configured capacity result."""
         self.scheduled.extend(jobs)
         return self.accept
 
     def schedule_retry(self, *, ticket_id: int, request_id: str | None) -> bool:
+        """Record one operator retry and answer with the configured capacity result."""
         self.retries.append((ticket_id, request_id))
         return self.accept
+
+    async def aclose(self) -> None:
+        """Record application shutdown and stop accepting further work."""
+        self.accepting = False
+        self.closed = True

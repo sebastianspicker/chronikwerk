@@ -1,21 +1,27 @@
 # Build the signed-capable production service separately from its minimal runtime image.
-FROM python:3.14.6-slim AS builder
+FROM python:3.14.6-slim@sha256:7bec7ddcddeff7975d6ba9b4be7dd6f6b2f55e7491539145e2978f7f97ce9144 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:${PATH}"
+COPY requirements/ /app/requirements/
+RUN python -m venv /opt/build-venv \
+  && /opt/build-venv/bin/python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+    -r requirements/tools.lock
 
 COPY pyproject.toml README.md LICENSE CHANGELOG.md /app/
 COPY src/ /app/src/
 
-RUN python -m pip install --no-cache-dir ".[signing]"
+RUN /opt/build-venv/bin/python -m build --no-isolation --wheel --outdir /tmp/dist \
+  && python -m venv /opt/venv \
+  && /opt/venv/bin/python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+    -r requirements/signing.lock \
+  && /opt/venv/bin/python -m pip install --no-cache-dir --no-deps /tmp/dist/*.whl
 
 
-FROM python:3.14.6-slim AS runtime
+FROM python:3.14.6-slim@sha256:7bec7ddcddeff7975d6ba9b4be7dd6f6b2f55e7491539145e2978f7f97ce9144 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

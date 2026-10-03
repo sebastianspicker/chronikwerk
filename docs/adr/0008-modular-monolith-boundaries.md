@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-08-27)
+Accepted (2026-08-27). Superseded in part by [ADR 0009](0009-composition-owned-runtime-state.md):
+the shared root modules, snapshot ownership, and the dependency map were revised there.
 
 ## Context
 

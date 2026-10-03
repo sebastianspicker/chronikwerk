@@ -23,11 +23,15 @@ Create the development environment:
 ```bash
 python3.14 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install --only-binary=:all: --require-hashes -r requirements/tools.lock
+python -m pip install --only-binary=:all: --require-hashes -r requirements/dev.lock
+python -m pip install --no-deps --no-build-isolation -e .
 npm ci --ignore-scripts
 ```
 
 CI and the container images currently use Python 3.14.6. CI uses Node.js 24.18.0.
+See [dependency locks](docs/dependency-locks.md) for lock regeneration and image pins.
+Run `npx playwright install chromium` once before `npm run test:browser`.
 
 ## Workflow
 
@@ -49,8 +53,8 @@ Use the Makefile targets rather than duplicating their command lines in new scri
 | Ruff lint | `make PYTHON=.venv/bin/python lint` |
 | Ruff formatting | `make PYTHON=.venv/bin/python format` |
 | Mypy | `make PYTHON=.venv/bin/python typecheck` |
-| Static and unit tests | `make PYTHON=.venv/bin/python test-fast` |
-| All Python tests | `make PYTHON=.venv/bin/python test-all` |
+| Unit tests | `make PYTHON=.venv/bin/python test-fast` |
+| Python tests with coverage | `make PYTHON=.venv/bin/python test` |
 | Complexity limits | `make complexity` |
 | Duplication limits | `make duplication` |
 | Authored source length | `make source-length-check` |

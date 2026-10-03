@@ -60,15 +60,15 @@ class InMemoryTTLSet:
         self._expires_at_by_key[key] = now + self._ttl_seconds
         return True
 
-    async def seen(self, key: str) -> bool:
+    def seen(self, key: str) -> bool:
         """Return whether a duplicate-delivery key is still within its TTL."""
         return self._seen_sync(key)
 
-    async def add(self, key: str) -> bool:
+    def add(self, key: str) -> bool:
         """Record a delivery key with expiration for later duplicate suppression."""
         return self._add_sync(key)
 
-    async def try_claim(self, key: str) -> bool:
+    def try_claim(self, key: str) -> bool:
         """Claim a key once and report whether this caller won the race."""
         if self._seen_sync(key):
             return False

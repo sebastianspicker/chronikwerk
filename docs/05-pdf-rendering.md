@@ -1,4 +1,4 @@
-# 05 - PDF Rendering
+# PDF rendering
 
 The PDF pipeline builds a snapshot, renders bundled HTML templates, and converts
 the result to PDF bytes with WeasyPrint.
@@ -19,12 +19,12 @@ flowchart LR
 
 Code paths:
 
-- `src/chronikwerk/documents/snapshot.py`
+- `src/chronikwerk/archiving/snapshot.py`
 - `src/chronikwerk/documents/templates.py`
 - `src/chronikwerk/documents/pdf.py`
 - `src/chronikwerk/documents/templates/`
 
-## Template Contract
+## Template contract
 
 Bundled template:
 
@@ -49,7 +49,7 @@ Article fields include:
 - `body_text`
 - `attachments[]`
 
-## HTML Safety
+## HTML safety
 
 - Jinja autoescape is enabled.
 - Article bodies marked as HTML (or containing common markup) are processed by
@@ -68,10 +68,18 @@ Relevant settings:
 
 - `PDF__MAX_ARTICLES`
 - `PDF__ARTICLE_LIMIT_MODE`
+
 Attachments are represented as metadata only (`filename`, size, content type,
-and IDs). Attachment binaries are not archived and there is no attachment-byte
-limit setting. Article limits still fail the job or cap and continue according
-to `PDF__MAX_ARTICLES` and `PDF__ARTICLE_LIMIT_MODE`.
+and IDs); binaries are not archived and there is no attachment-byte limit
+setting. Article limits still fail the job or cap and continue according to
+`PDF__MAX_ARTICLES` and `PDF__ARTICLE_LIMIT_MODE`.
+
+The limit is checked against fetched article DTOs before body normalization. In
+`fail` mode, an oversized ticket is rejected immediately. In `cap_and_continue`
+mode, raw articles are sorted by creation time and ID; missing timestamps sort
+last and naive timestamps are interpreted as UTC. Only selected articles are
+sanitized and normalized, in a cancellation-safe worker thread. A zero limit
+retains every article.
 
 When `cap_and_continue` omits articles, the PDF displays total, included, and omitted
 counts prominently and the sidecar records the same coverage. The document never reports

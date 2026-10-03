@@ -15,13 +15,21 @@ ALLOWED_FEATURE_DEPENDENCIES = {
     "configuration": frozenset(),
     "operations": frozenset({"configuration"}),
     "zammad": frozenset({"configuration"}),
-    "documents": frozenset({"configuration", "operations", "zammad"}),
+    "documents": frozenset(),
     "storage": frozenset({"documents"}),
-    "archiving": frozenset({"configuration", "documents", "operations", "storage", "zammad"}),
+    "archiving": frozenset({"documents", "operations", "storage", "zammad"}),
     "web": frozenset({"configuration", "operations"}),
 }
 SHARED_LEAF_MODULES = frozenset(
-    {"chronikwerk.failures", "chronikwerk.outbound", "chronikwerk.timestamps"}
+    {
+        "chronikwerk._version",
+        "chronikwerk.concurrency",
+        "chronikwerk.failures",
+        "chronikwerk.i18n",
+        "chronikwerk.outbound",
+        "chronikwerk.redaction",
+        "chronikwerk.timestamps",
+    }
 )
 PURE_ARCHIVING_FORBIDDEN_PACKAGES = frozenset(
     {"configuration", "documents", "operations", "storage", "web", "zammad"}
@@ -30,7 +38,7 @@ PURE_ARCHIVING_MODULES = frozenset(
     {
         "path",
         "notes",
-        "error_messages",
+        "tags",
         "error_policy",
     }
 )

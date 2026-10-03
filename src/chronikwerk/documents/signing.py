@@ -318,14 +318,3 @@ def sign_pdf_with_provenance(
         ),
         certificate_fingerprint=session.certificate_fingerprint,
     )
-
-
-def sign_pdf(
-    pdf_bytes: bytes,
-    signing: SigningOptions,
-) -> bytes:
-    """Sign a PDF while preserving the public bytes-only adapter contract."""
-    return sign_pdf_with_provenance(
-        pdf_bytes,
-        signing,
-    ).pdf_bytes

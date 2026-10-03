@@ -52,14 +52,12 @@ def build_audit_record(
     record: AuditRecordInput,
     *,
     signing_provenance: SigningProvenance = _UNSIGNED_PROVENANCE,
-    service_name: str = "chronikwerk",
-    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-serialisable audit record for a successfully archived ticket."""
     signing = _signing_evidence(signing_provenance)
 
     service: dict[str, Any] = {
-        "name": service_name,
+        "name": "chronikwerk",
         "version": __version__,
         "python": sys.version.split(" ", 1)[0],
     }
@@ -76,6 +74,4 @@ def build_audit_record(
     }
     if record.articles_total is not None:
         out["article_coverage"] = _article_coverage(record)
-    if attachments:
-        out["attachments"] = attachments
     return out

@@ -1,0 +1,50 @@
+/* Sign-in: the same annal, one entry */
+.login {
+  margin-top: var(--s-8);
+  border-top: 0;
+}
+
+.login .annal__margin {
+  padding-top: var(--s-2);
+}
+
+.login .annal__body {
+  max-width: 36rem;
+  padding-top: 0;
+}
+
+.login h1 {
+  font-size: var(--step-4);
+  letter-spacing: -0.02em;
+}
+
+.login .lede {
+  margin-bottom: var(--s-6);
+}
+
+.login__form {
+  display: grid;
+  gap: var(--s-2);
+  max-width: 26rem;
+}
+
+.login__form .button {
+  justify-self: start;
+  margin-top: var(--s-3);
+  min-width: 10rem;
+}
+
+.login__help {
+  color: var(--ink-3);
+  font-size: var(--step-0);
+}
+
+@media (max-width: 52rem) {
+  .login {
+    margin-top: var(--s-6);
+  }
+
+  .login__form .button {
+    justify-self: stretch;
+  }
+}

@@ -2,63 +2,74 @@
 {% extends "base.html" %}
 {% block title %}{{ _("admin.revisions") }} · {{ _("admin.service_name") }}{% endblock %}
 {% block content %}
-<div class="route-page route-page--audit">
-  <p class="breadcrumb">
-    <a href="/admin">{{ _("admin.overview") }}</a><span aria-hidden="true">/</span>
-    <a href="/admin/configuration">{{ _("admin.configuration") }}</a><span aria-hidden="true">/</span>
-    {{ _("admin.revisions") }}
-  </p>
-  <div class="page-heading">
-    <div>
-      <p class="page-kicker">{{ _("admin.change_record") }}</p>
+<header class="page-head">
+  <div class="page-head__margin">
+    <a class="back-link" href="/admin/configuration"><span aria-hidden="true">←</span> {{ _("admin.configuration") }}</a>
+  </div>
+  <div class="page-head__body">
+    <div class="page-head__title">
       <h1>{{ _("admin.revisions") }}</h1>
-      <p class="page-intro">{{ _("admin.revisions_intro") }}</p>
+      <p class="lede">{{ _("admin.revisions_intro") }}</p>
     </div>
     <a class="button" href="/admin/configuration">{{ _("admin.edit_configuration") }}</a>
   </div>
-  {% if restore_error %}
-  <div class="banner banner--error" role="alert">{{ _("admin.restore_error") }}</div>
-  {% endif %}
-  {% if acknowledgement_required %}
-  <div class="banner banner--warning" role="alert">{{ _("admin.restore_ack_required") }}</div>
-  {% endif %}
-  {% if revisions %}
-  <div class="table-region" role="region" aria-label="{{ _("admin.revisions") }}" tabindex="0">
-    <table>
-      <thead>
-        <tr>
-          <th>{{ _("admin.created_at") }}</th>
-          <th>Revision</th>
-          <th>{{ _("admin.previous_revision") }}</th>
-          <th>{{ _("admin.changed_paths") }}</th>
-          <th><span class="visually-hidden">{{ _("admin.actions") }}</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for revision in revisions %}
-        <tr>
-          <td>{{ revision.created_at }}</td>
-          <td><code>{{ revision.revision }}</code></td>
-          <td><code>{{ revision.previous_revision }}</code></td>
-          <td>{{ revision.changed_paths | join(", ") }}</td>
-          <td>
-            <form method="post" action="/admin/configuration/revisions/{{ revision.revision }}/restore">
-              <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-              <input type="hidden" name="expected_revision" value="{{ current_revision }}">
-              <label class="checkbox">
-                <input type="checkbox" name="security_acknowledged" value="true" required>
-                {{ _("admin.security_ack") }}
-              </label>
-              <button class="button button--danger" type="submit">{{ _("admin.restore") }}</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+</header>
+<section class="annal" aria-labelledby="revision-record-title">
+  <div class="annal__margin">
+    <h2 id="revision-record-title">{{ _("admin.change_record") }}</h2>
   </div>
-  {% else %}
-  <p class="empty-state">{{ _("admin.empty_revisions") }}</p>
-  {% endif %}
-</div>
+  <div class="annal__body">
+    {% if restore_error %}
+    <div class="banner banner--error" role="alert">{{ _("admin.restore_error") }}</div>
+    {% endif %}
+    {% if acknowledgement_required %}
+    <div class="banner banner--warning" role="alert">{{ _("admin.restore_ack_required") }}</div>
+    {% endif %}
+    {% if revisions %}
+    <div class="table-region" role="region" aria-label="{{ _("admin.revisions") }}" tabindex="0">
+      <table class="records records--revisions">
+        <thead>
+          <tr>
+            <th scope="col">{{ _("admin.created_at") }}</th>
+            <th scope="col">{{ _("admin.revisions") }}</th>
+            <th scope="col">{{ _("admin.previous_revision") }}</th>
+            <th scope="col">{{ _("admin.changed_paths") }}</th>
+            <th scope="col"><span class="visually-hidden">{{ _("admin.actions") }}</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for revision in revisions %}
+          <tr>
+            {% set created = revision.created_at or "" %}
+            <td class="records__time" data-label="{{ _("admin.created_at") }}"><time datetime="{{ created }}">{% if created is string and created.endswith("+00:00") %}{{ created[:19] | replace("T", " ") }} UTC{% else %}{{ created or "–" }}{% endif %}</time></td>
+            <td data-label="{{ _("admin.revisions") }}">
+              {% if revision.revision %}<details class="digest-disclosure"><summary><code>{{ revision.revision[:10] }}…{{ revision.revision[-6:] }}</code><span class="visually-hidden"> · {{ _("admin.full_revision") }}</span></summary><code>{{ revision.revision }}</code></details>{% else %}–{% endif %}
+            </td>
+            <td data-label="{{ _("admin.previous_revision") }}">
+              {% if revision.previous_revision %}<details class="digest-disclosure"><summary><code>{{ revision.previous_revision[:10] }}…{{ revision.previous_revision[-6:] }}</code><span class="visually-hidden"> · {{ _("admin.full_revision") }}</span></summary><code>{{ revision.previous_revision }}</code></details>{% else %}–{% endif %}
+            </td>
+            <td data-label="{{ _("admin.changed_paths") }}"><ul class="path-list">{% for path in revision.changed_paths %}<li><code>{{ path }}</code></li>{% endfor %}</ul></td>
+            <td data-label="">
+              <details class="disclosure disclosure--danger"><summary>{{ _("admin.restore") }}</summary>
+              <form class="disclosure__panel" data-pending-form method="post" action="/admin/configuration/revisions/{{ revision.revision }}/restore">
+                <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                <input type="hidden" name="expected_revision" value="{{ current_revision }}">
+                <label class="checkbox">
+                  <input type="checkbox" name="security_acknowledged" value="true" required>
+                  {{ _("admin.security_ack") }}
+                </label>
+                <button class="button button--danger" type="submit" data-pending="{{ _("admin.restoring") }}">{{ _("admin.restore") }}</button>
+              </form>
+              </details>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty"><p class="empty__title">{{ _("admin.empty_revisions") }}</p></div>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}

@@ -142,16 +142,8 @@ def _rate_limited():
 class RateLimitMiddleware:
     """Limit request bursts before expensive application work begins."""
 
-    def __init__(self, app: ASGIApp, *, settings: Settings | None) -> None:
+    def __init__(self, app: ASGIApp, *, settings: Settings) -> None:
         self.app = app
-
-        if settings is None:
-            self._enabled = False
-            self._paths: frozenset[str] = frozenset()
-            self._admin_auth_paths: frozenset[str] = frozenset()
-            self._limiter: _InMemoryTokenBucketLimiter | None = None
-            return
-
         config = settings.hardening.rate_limit
         self._enabled = bool(config.enabled)
         self._admin_auth_paths = _ADMIN_AUTH_PATHS if settings.admin.enabled else frozenset()
@@ -172,13 +164,8 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        limiter = self._limiter
-        if limiter is None:
-            await self.app(scope, receive, send)
-            return
-
         key = _client_key(scope, self._client_key_header)
-        if not await limiter.allow(key):
+        if not await self._limiter.allow(key):
             await _rate_limited()(scope, receive, send)
             return
 

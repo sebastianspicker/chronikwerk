@@ -1,9 +1,9 @@
-# 06 - Signing and Timestamping
+# Signing and timestamping
 
 Signing is optional. When enabled, the service applies a PAdES signature to the
-rendered PDF and can request an RFC3161 timestamp.
+rendered PDF and can request an RFC 3161 timestamp.
 
-## Required Configuration
+## Required configuration
 
 Signing:
 
@@ -27,26 +27,25 @@ SIGNING__TIMESTAMP__RFC3161__USER=tsa-user
 SIGNING__TIMESTAMP__RFC3161__PASSWORD=CHANGE-ME
 ```
 
-## Runtime Behavior
+## Runtime behavior
 
 - If signing is disabled, the unsigned PDF is stored.
 - If signing is enabled but the PFX is missing or invalid, processing fails.
 - If timestamping is enabled but the TSA request fails, processing fails.
-- Signing and timestamp flags are recorded in the audit sidecar. The
-  certificate fingerprint is derived from the exact in-memory signer used for
-  the PDF and is carried into the sidecar; mutable PFX material is not reread
-  for provenance.
-- Cached signers are identified by the loaded PFX bytes and password, so a PFX
-  rotation is detected even when a deployment preserves the file modification
-  time. The cached certificate validity window is checked on every signature;
-  hourly PFX parsing does not allow signing past certificate expiry.
+- The audit sidecar records the signing and timestamp flags. The certificate
+  fingerprint comes from the exact in-memory signer used for the PDF, so mutable
+  PFX material is never reread for provenance.
+- Cached signers are keyed by the loaded PFX bytes and password, so a rotation is
+  detected even when a deployment preserves the file's modification time. The
+  cached certificate's validity window is checked on every signature, so hourly
+  PFX parsing cannot sign past certificate expiry.
 
-## Secret Handling
+## Secret handling
 
 Keep PFX files and passwords outside the repository. Use deployment secret
 storage, protected environment files, or read-only mounted files. Provision the PFX as a
 bounded regular file owned by the service account. Do not use a symlink or a group- or
-world-writable key file; the current candidate does not enforce those checks itself.
+world-writable key file; this candidate does not enforce those checks itself.
 
 ## Verification
 

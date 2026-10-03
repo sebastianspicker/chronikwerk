@@ -5,8 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, NoReturn
+from typing import Any
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
@@ -15,27 +14,22 @@ from chronikwerk.configuration.zammad import ZammadConnection
 from chronikwerk.zammad import transport
 from chronikwerk.zammad.dto import Article, TagList, Ticket
 from chronikwerk.zammad.errors import ClientError
-
-
-@dataclass(frozen=True, slots=True)
-class _JsonRequest:
-    """One JSON request delegated to the Zammad transport."""
-
-    method: Literal["GET", "POST"]
-    path: str
-    params: dict[str, str] | None = None
-    json: Any | None = None
-    max_retries: int | None = None
+from chronikwerk.zammad.transport import ZammadRequest
 
 
 class AsyncZammadClient:
-    """Async HTTP client for the Zammad REST API with retry and error mapping."""
+    """
+    Async HTTP client for the Zammad REST API with retry and error mapping.
+
+    ``runtime`` is the injection point for transport runtime options (retry policy, sleep,
+    HTTP client, private-network allowance); production composition leaves it unset.
+    """
 
     def __init__(
         self,
         *,
         connection: ZammadConnection,
-        _runtime: transport._ZammadRuntimeOptions | None = None,
+        runtime: transport.ZammadRuntimeOptions | None = None,
     ) -> None:
         url = httpx.URL(connection.origin)
         if not url.scheme or not url.host:
@@ -45,9 +39,9 @@ class AsyncZammadClient:
         base_path = url.path.rstrip("/") + "/"
         self._base_url = url.copy_with(path=base_path)
 
-        runtime = _runtime or transport._ZammadRuntimeOptions()
-        self._transport = transport._ZammadTransport(
-            transport._ZammadTransportOptions(
+        runtime = runtime or transport.ZammadRuntimeOptions()
+        self._transport = transport.ZammadTransport(
+            transport.ZammadTransportOptions(
                 base_url=self._base_url,
                 policy_url=connection.origin,
                 api_token=connection.api_token.get_secret_value(),
@@ -56,26 +50,10 @@ class AsyncZammadClient:
                 trust_env=connection.trust_environment,
                 allow_insecure_http=connection.allow_insecure_http,
                 allow_private_networks=connection.allow_private_origin,
-                max_response_body_bytes=transport._MAX_RESPONSE_BODY_BYTES,
+                max_response_body_bytes=transport.MAX_RESPONSE_BODY_BYTES,
             ),
             runtime,
         )
-
-    @property
-    def _dns_timeout_seconds(self) -> float:
-        return self._transport.dns_timeout_seconds
-
-    @property
-    def _allow_insecure_http(self) -> bool:
-        return self._transport.allow_insecure_http
-
-    @property
-    def _allow_private_networks(self) -> bool:
-        return self._transport.allow_private_networks
-
-    @property
-    def _http(self) -> httpx.AsyncClient:
-        return self._transport.http_client
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if it was created by this instance."""
@@ -94,13 +72,13 @@ class AsyncZammadClient:
 
     async def get_ticket(self, ticket_id: int) -> Ticket:
         """Fetch a single ticket by ID."""
-        resp = await self._request_json(_JsonRequest("GET", f"api/v1/tickets/{ticket_id}"))
+        resp = await self._request_json(ZammadRequest("GET", f"api/v1/tickets/{ticket_id}"))
         return Ticket.model_validate(resp)
 
     async def list_tags(self, ticket_id: int) -> TagList:
         """Fetch all tags for a ticket."""
         resp = await self._request_json(
-            _JsonRequest(
+            ZammadRequest(
                 "GET",
                 "api/v1/tags",
                 params={"object": "Ticket", "o_id": str(ticket_id)},
@@ -124,7 +102,7 @@ class AsyncZammadClient:
     async def add_tag(self, ticket_id: int, tag: str) -> None:
         """Add a tag to a ticket (idempotent)."""
         await self._request_json(
-            _JsonRequest(
+            ZammadRequest(
                 "POST",
                 "api/v1/tags/add",
                 json={"object": "Ticket", "o_id": ticket_id, "item": tag},
@@ -135,7 +113,7 @@ class AsyncZammadClient:
         """Remove a tag from a ticket (idempotent)."""
         # Using POST keeps this client compatible with the documented `/tags/remove` endpoint.
         await self._request_json(
-            _JsonRequest(
+            ZammadRequest(
                 "POST",
                 "api/v1/tags/remove",
                 json={"object": "Ticket", "o_id": ticket_id, "item": tag},
@@ -147,7 +125,7 @@ class AsyncZammadClient:
     ) -> Article:
         """Create an internal (non-customer-visible) article on a ticket."""
         resp = await self._request_json(
-            _JsonRequest(
+            ZammadRequest(
                 "POST",
                 "api/v1/ticket_articles",
                 json={
@@ -165,12 +143,12 @@ class AsyncZammadClient:
     async def list_articles(self, ticket_id: int) -> list[Article]:
         """List all articles belonging to a ticket."""
         resp = await self._request_json(
-            _JsonRequest("GET", f"api/v1/ticket_articles/by_ticket/{ticket_id}")
+            ZammadRequest("GET", f"api/v1/ticket_articles/by_ticket/{ticket_id}")
         )
         items = TypeAdapter(list[dict[str, Any]]).validate_python(resp)
         return [Article.model_validate(item) for item in items]
 
-    async def _request_json(self, request: _JsonRequest) -> Any:
+    async def _request_json(self, request: ZammadRequest) -> Any:
         return await self._transport.request_json(
             request.method,
             request.path,
@@ -178,6 +156,3 @@ class AsyncZammadClient:
             json=request.json,
             max_retries=request.max_retries,
         )
-
-    def _raise_for_status(self, response: httpx.Response) -> NoReturn:
-        self._transport.raise_for_status(response)

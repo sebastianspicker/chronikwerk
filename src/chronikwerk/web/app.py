@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -13,21 +13,15 @@ from starlette.responses import Response
 from chronikwerk._version import __version__
 from chronikwerk.configuration.models import Settings
 from chronikwerk.configuration.revisions import ManagedConfigStore
-from chronikwerk.operations.admission import JobAdmission
+from chronikwerk.operations.history import JobHistory
 from chronikwerk.operations.scheduling import TicketScheduler
-from chronikwerk.operations.shutdown import (
-    clear_shutting_down,
-    set_shutting_down,
-    wait_for_tasks,
-)
-from chronikwerk.operations.ticket_stores import aclose_stores
 from chronikwerk.web.admin.auth import AdminSessionStore
 from chronikwerk.web.admin.security import AdminSecurityHeadersMiddleware
 from chronikwerk.web.middleware.body_size_limit import BodySizeLimitMiddleware
 from chronikwerk.web.middleware.hmac_verify import HmacVerifyMiddleware
 from chronikwerk.web.middleware.rate_limit import RateLimitMiddleware
 from chronikwerk.web.middleware.request_id import (
-    _REQUEST_ID_HEADER,
+    REQUEST_ID_HEADER,
     RequestIdMiddleware,
 )
 from chronikwerk.web.responses import api_error
@@ -39,19 +33,18 @@ from chronikwerk.web.routes.metrics import router as metrics_router
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Track graceful shutdown for in-process jobs."""
-    clear_shutting_down()
+    """Drain scheduled jobs on shutdown, then close injected resources."""
     try:
         yield
     finally:
-        set_shutting_down()
-        admission = getattr(application.state, "admission", None)
-        if admission is not None:
-            await admission.close()
-        settings = getattr(application.state, "settings", None)
-        timeout = settings.admission.shutdown_timeout_seconds if settings is not None else 1.0
-        await wait_for_tasks(timeout=timeout)
-        await aclose_stores()
+        scheduler: TicketScheduler | None = application.state.scheduler
+        cleanup: Callable[[], Awaitable[None]] | None = application.state.cleanup
+        try:
+            if scheduler is not None:
+                await scheduler.aclose()
+        finally:
+            if cleanup is not None:
+                await cleanup()
 
 
 async def _global_exception_handler(request: Request, _exc: Exception) -> Response:
@@ -63,28 +56,21 @@ async def _global_exception_handler(request: Request, _exc: Exception) -> Respon
         request_id=request_id,
     )
     if request_id:
-        response.headers[_REQUEST_ID_HEADER] = request_id
+        response.headers[REQUEST_ID_HEADER] = request_id
     return response
 
 
 def _wire_app(
     application: FastAPI,
     *,
-    settings: Settings | None,
-    admission: JobAdmission | None,
+    settings: Settings,
     scheduler: TicketScheduler | None,
+    history: JobHistory,
 ) -> None:
     application.state.settings = settings
+    application.state.history = history
     application.state.process_started_at = datetime.now(UTC)
     application.state.deep_health_lock = asyncio.Lock()
-    application.state.admission = admission or (
-        JobAdmission(
-            max_pending=settings.admission.max_pending,
-            max_running=settings.admission.max_running,
-        )
-        if settings is not None
-        else None
-    )
     application.state.scheduler = scheduler
     application.add_middleware(HmacVerifyMiddleware, settings=settings)
     application.add_middleware(BodySizeLimitMiddleware, settings=settings)
@@ -93,11 +79,11 @@ def _wire_app(
     application.add_exception_handler(Exception, _global_exception_handler)
     application.include_router(healthz_router)
     application.include_router(ingest_router)
-    if settings is not None and settings.observability.history_enabled:
+    if settings.observability.history_enabled:
         application.include_router(jobs_router)
-    if settings is not None and settings.observability.metrics_enabled:
+    if settings.observability.metrics_enabled:
         application.include_router(metrics_router)
-    if settings is not None and settings.admin.enabled:
+    if settings.admin.enabled:
         from chronikwerk.web.admin.routes import router as admin_router
 
         store = ManagedConfigStore(settings.admin.state_dir)
@@ -112,12 +98,28 @@ def _wire_app(
 
 
 def create_app(
-    settings: Settings | None = None,
+    settings: Settings,
     *,
-    admission: JobAdmission | None = None,
     scheduler: TicketScheduler | None = None,
+    history: JobHistory | None = None,
+    cleanup: Callable[[], Awaitable[None]] | None = None,
 ) -> FastAPI:
-    """Create the FastAPI application with middleware, routes, and lifespan."""
+    """Create the FastAPI application with middleware, routes, and lifespan.
+
+    With a scheduler, operator views read the history that scheduler records into.
+    Without one the application is read-only: ingest and retry answer
+    ``503 job_capacity_exhausted`` and ``history`` (or a fresh one) is displayed.
+    """
+    if scheduler is not None:
+        if history is not None and history is not scheduler.history:
+            raise ValueError("history must be the scheduler's history")
+        history = scheduler.history
     application = FastAPI(title="chronikwerk", version=__version__, lifespan=lifespan)
-    _wire_app(application, settings=settings, admission=admission, scheduler=scheduler)
+    application.state.cleanup = cleanup
+    _wire_app(
+        application,
+        settings=settings,
+        scheduler=scheduler,
+        history=history if history is not None else JobHistory(),
+    )
     return application

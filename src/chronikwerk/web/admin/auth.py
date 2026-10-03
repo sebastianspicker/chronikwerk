@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import secrets
 import time
@@ -12,6 +11,7 @@ from fastapi import Request
 from pydantic import SecretStr
 
 from chronikwerk.i18n import normalize_locale
+from chronikwerk.web.responses import secret_matches
 
 SESSION_COOKIE = "zpa_admin_session"
 
@@ -95,10 +95,9 @@ class AdminSessionStore:
 
 def access_token_matches(provided: str, expected: SecretStr | None) -> bool:
     """Compare an administrator access token in constant time."""
-    expected_value = expected.get_secret_value() if expected is not None else ""
-    expected_hash = hashlib.sha256(expected_value.encode("utf-8")).digest()
-    provided_hash = hashlib.sha256(provided.encode("utf-8")).digest()
-    return bool(expected_value) and hmac.compare_digest(expected_hash, provided_hash)
+    if expected is None or not expected.get_secret_value():
+        return False
+    return secret_matches(provided, expected)
 
 
 def session_from_request(request: Request, *, touch: bool = True) -> AdminSession | None:
