@@ -8,7 +8,7 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from chronikwerk.configuration.models import Settings
-from chronikwerk.web.constants import INGEST_PROTECTED_PATHS
+from chronikwerk.web.constants import INGEST_PROTECTED_PATHS, route_path
 from chronikwerk.web.responses import api_error
 
 _ADMIN_AUTH_PATHS = frozenset({"/admin/login", "/admin/api/v1/session"})
@@ -35,12 +35,12 @@ def _body_timeout():
 
 
 def _is_limited_path(scope: Scope, max_bytes: int) -> bool:
-    return scope["type"] == "http" and max_bytes > 0 and scope.get("path") in INGEST_PROTECTED_PATHS
+    return scope["type"] == "http" and max_bytes > 0 and route_path(scope) in INGEST_PROTECTED_PATHS
 
 
 def _is_admin_request(scope: Scope, *, admin_enabled: bool) -> bool:
     """Return whether an enabled admin mutation needs the admin body budget."""
-    path = str(scope.get("path") or "")
+    path = route_path(scope)
     return (
         scope["type"] == "http"
         and admin_enabled
@@ -52,7 +52,7 @@ def _is_admin_request(scope: Scope, *, admin_enabled: bool) -> bool:
 def _request_body_limit(scope: Scope, ingest_max_bytes: int, *, admin_enabled: bool) -> int:
     if scope["type"] != "http":
         return 0
-    path = str(scope.get("path") or "")
+    path = route_path(scope)
     if _is_admin_request(scope, admin_enabled=admin_enabled):
         return _ADMIN_AUTH_MAX_BYTES if path in _ADMIN_AUTH_PATHS else _ADMIN_BODY_MAX_BYTES
     if _is_limited_path(scope, ingest_max_bytes):

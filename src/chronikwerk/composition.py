@@ -85,7 +85,9 @@ def _archive_runtime_options(settings: Settings) -> ArchiveRuntimeOptions:
                     tsa_url=str(timestamp.tsa_url) if timestamp.tsa_url is not None else None,
                     timeout_seconds=timestamp.timeout_seconds,
                     ca_bundle_path=timestamp.ca_bundle_path,
-                    user=timestamp.user,
+                    user=(
+                        timestamp.user.get_secret_value() if timestamp.user is not None else None
+                    ),
                     password=(
                         timestamp.password.get_secret_value()
                         if timestamp.password is not None

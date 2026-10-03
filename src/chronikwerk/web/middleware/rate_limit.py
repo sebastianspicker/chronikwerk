@@ -10,7 +10,7 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from chronikwerk.configuration.models import Settings
-from chronikwerk.web.constants import INGEST_PROTECTED_PATHS
+from chronikwerk.web.constants import INGEST_PROTECTED_PATHS, route_path
 from chronikwerk.web.responses import api_error
 
 _METRICS_PATH = "/metrics"
@@ -175,7 +175,7 @@ class RateLimitMiddleware:
         """Return whether this request belongs to a protected admission path."""
         if not self._enabled:
             return False
-        path = scope.get("path")
+        path = route_path(scope)
         if path not in self._paths:
             return False
         return path not in self._admin_auth_paths or scope.get("method") == "POST"

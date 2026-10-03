@@ -51,6 +51,14 @@ class CompletedTicketCancellation(asyncio.CancelledError):
     """Cancellation received after the archive and terminal tags were durable."""
 
 
+class EligibilityNotEstablishedError(Exception):
+    """Preserve a pre-processing failure without authorizing ticket mutation."""
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+
+
 @dataclass(frozen=True)
 class ArchiveAttempt:
     """One archive invocation with its immutable, narrow runtime dependencies."""
@@ -162,12 +170,19 @@ async def run_ticket_pipeline(
 
     Returns the result and whether total-time metrics should be observed.
     """
-    fetched = await _fetch_ticket_state(request.client, ticket_id=request.attempt.ticket_id)
-    if not request.force_reprocess and not should_process(
-        fetched.tags.root,
-        trigger_tag=request.attempt.runtime.workflow.trigger_tag,
-        require_trigger_tag=request.attempt.runtime.workflow.require_trigger_tag,
-    ):
+    try:
+        fetched = await _fetch_ticket_state(request.client, ticket_id=request.attempt.ticket_id)
+        eligible = request.force_reprocess or should_process(
+            fetched.tags.root,
+            trigger_tag=request.attempt.runtime.workflow.trigger_tag,
+            require_trigger_tag=request.attempt.runtime.workflow.require_trigger_tag,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        raise EligibilityNotEstablishedError(exc) from exc
+
+    if not eligible:
         return (
             await skip_not_triggered(request.attempt, tags=fetched.tags.root),
             False,

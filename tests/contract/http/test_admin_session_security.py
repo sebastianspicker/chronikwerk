@@ -19,7 +19,7 @@ _EXPECTED_CSP = (
 )
 
 
-def _client(tmp_path, *, enabled: bool = True) -> TestClient:
+def _client(tmp_path, *, enabled: bool = True, root_path: str = "") -> TestClient:
     """Create an HTTPS test client with administration enabled or disabled."""
     (tmp_path / "archive").mkdir()
     settings = make_settings(
@@ -32,7 +32,11 @@ def _client(tmp_path, *, enabled: bool = True) -> TestClient:
             }
         },
     )
-    return TestClient(create_app(settings), base_url="https://testserver")
+    return TestClient(
+        create_app(settings),
+        base_url="https://testserver",
+        root_path=root_path,
+    )
 
 
 def _login(client: TestClient, **form: str):
@@ -150,6 +154,15 @@ def test_admin_responses_carry_security_headers(tmp_path) -> None:
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "no-referrer"
     assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_root_path_admin_responses_carry_security_headers(tmp_path) -> None:
+    client = _client(tmp_path, root_path="/archive")
+
+    response = client.get("/archive/admin/login")
+
+    assert response.headers["content-security-policy"] == _EXPECTED_CSP
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_security_headers_are_not_added_outside_admin(tmp_path) -> None:

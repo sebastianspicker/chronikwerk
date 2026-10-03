@@ -15,6 +15,7 @@ from chronikwerk.operations.guards import TicketGuards
 from chronikwerk.operations.history import JobHistory
 from chronikwerk.operations.job import TicketJob
 from chronikwerk.zammad.dto import Ticket
+from chronikwerk.zammad.errors import ServerError
 from tests.support.fake_zammad import FakeZammad
 
 _OPTIONS = cast(
@@ -46,6 +47,15 @@ class _FailingZammad(FakeZammad):
         """Record the fetch and fail like a rejected request."""
         self.calls.append(("get_ticket",))
         raise ValueError("synthetic permanent failure")
+
+
+class _FailingTagFetchZammad(FakeZammad):
+    """Fake client whose tag fetch fails transiently."""
+
+    async def list_tags(self, _ticket_id: int):
+        """Record the fetch and fail like an unavailable upstream."""
+        self.calls.append(("list_tags",))
+        raise ServerError("synthetic transient failure")
 
 
 def _job(delivery_id: str | None = None) -> TicketJob:
@@ -144,8 +154,25 @@ def test_ticket_is_released_after_a_failed_attempt() -> None:
     (outcome,) = _run(fake, guards, history, _job())
 
     assert outcome.status == "failed_permanent"
+    assert fake.calls == [("get_ticket",)]
+    assert fake.tags == {"pdf:sign"}
+    assert fake.notes == []
     assert history.read(1)[0]["status"] == "failed_permanent"
     assert guards.try_acquire_ticket(42)
+
+
+def test_tag_fetch_failure_does_not_mutate_a_completed_ticket() -> None:
+    """A transient eligibility read failure stays local until processing starts."""
+    fake = _FailingTagFetchZammad(tags=["pdf:signed"])
+    history = JobHistory()
+
+    (outcome,) = _run(fake, TicketGuards(delivery_id_ttl_seconds=60), history, _job())
+
+    assert outcome.status == "failed_transient"
+    assert fake.calls == [("get_ticket",), ("list_tags",)]
+    assert fake.tags == {"pdf:signed"}
+    assert fake.notes == []
+    assert history.read(1)[0]["status"] == "failed_transient"
 
 
 def test_built_processor_reuses_caller_owned_client_without_closing() -> None:

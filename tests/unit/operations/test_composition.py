@@ -74,3 +74,20 @@ def test_independent_runtimes_do_not_share_history_or_guards(monkeypatch, tmp_pa
     assert second_guards.try_acquire_ticket(7)
     assert second_guards.try_claim_delivery("delivery-7")
     assert first.state.scheduler is not second.state.scheduler
+
+
+def test_tsa_username_is_unwrapped_only_at_the_composition_boundary(tmp_path) -> None:
+    settings = make_settings(
+        str(tmp_path),
+        overrides={
+            "signing": {"timestamp": {"rfc3161": {"user": "tsa-user", "password": "tsa-password"}}}
+        },
+    )
+
+    options = composition._archive_runtime_options(settings)  # pylint: disable=protected-access
+
+    configured_user = settings.signing.timestamp.rfc3161.user
+    assert configured_user is not None
+    assert configured_user.get_secret_value() == "tsa-user"
+    assert options.documents.signing.timestamp.user == "tsa-user"
+    assert options.documents.signing.timestamp.password == "tsa-password"

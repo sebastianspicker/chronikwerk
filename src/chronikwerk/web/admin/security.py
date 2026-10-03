@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from chronikwerk.web.constants import route_path
+
 _HEADERS = (
     (b"cache-control", b"no-store"),
     (
@@ -25,7 +27,7 @@ class AdminSecurityHeadersMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not str(scope.get("path", "")).startswith("/admin"):
+        if scope["type"] != "http" or not route_path(scope).startswith("/admin"):
             await self.app(scope, receive, send)
             return
 

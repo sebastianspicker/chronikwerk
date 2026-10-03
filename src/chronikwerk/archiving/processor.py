@@ -13,6 +13,7 @@ from chronikwerk.archiving.workflow import (
     ArchiveAttempt,
     ArchiveOutcome,
     ArchivePipelineRequest,
+    EligibilityNotEstablishedError,
     cleanup_cancelled_pipeline,
     record_history,
     run_ticket_pipeline,
@@ -162,6 +163,15 @@ async def _run_pipeline_with_error_boundary(
         return await run_ticket_pipeline(request)
     except asyncio.CancelledError:
         raise
+    except EligibilityNotEstablishedError as exc:
+        return (
+            await _handle_pipeline_failure(
+                request,
+                exc.cause,
+                project_to_ticket=False,
+            ),
+            True,
+        )
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return (
             await _handle_pipeline_failure(request, exc),
@@ -172,6 +182,8 @@ async def _run_pipeline_with_error_boundary(
 async def _handle_pipeline_failure(
     request: ArchivePipelineRequest,
     exc: Exception,
+    *,
+    project_to_ticket: bool = True,
 ) -> ArchiveOutcome:
     try:
         return await handle_ticket_pipeline_exception(
@@ -179,7 +191,9 @@ async def _handle_pipeline_failure(
             attempt=request.attempt,
             trigger_tag=request.attempt.runtime.workflow.trigger_tag,
             exc=exc,
+            project_to_ticket=project_to_ticket,
         )
     except asyncio.CancelledError:
-        await cleanup_cancelled_pipeline(request)
+        if project_to_ticket:
+            await cleanup_cancelled_pipeline(request)
         raise

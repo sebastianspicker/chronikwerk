@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from chronikwerk.web.app import create_app
@@ -26,3 +27,16 @@ def test_blank_webhook_secret_fails_closed_as_misconfigured(tmp_path) -> None:
 
     assert response.status_code == 503
     assert response.json()["code"] == "webhook_auth_not_configured"
+
+
+@pytest.mark.parametrize("path", ["/archive/ingest", "/archive/ingest/batch"])
+def test_root_path_requests_still_require_a_signature(tmp_path, path: str) -> None:
+    """A server-provided ASGI root path cannot bypass webhook authentication."""
+    client = TestClient(
+        create_app(make_settings(str(tmp_path), secret="test-secret")),
+        root_path="/archive",
+    )
+
+    response = client.post(path, content=b'{"ticket_id":1}')
+
+    assert response.status_code == 403

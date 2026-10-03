@@ -80,6 +80,8 @@ def test_dump_config_redacts_secrets(
 ) -> None:
     config, _store = _config(isolated_config_env)
     monkeypatch.setenv("CONFIG_PATH", str(config))
+    monkeypatch.setenv("SIGNING__TIMESTAMP__RFC3161__USER", "synthetic-tsa-user")
+    monkeypatch.setenv("SIGNING__TIMESTAMP__RFC3161__PASSWORD", "synthetic-tsa-password")
 
     code = _run(monkeypatch, "dump-config")
 
@@ -87,10 +89,13 @@ def test_dump_config_redacts_secrets(
     assert code == 0
     assert "test-token" not in output
     assert _SECRET not in output
+    assert "synthetic-tsa-user" not in output
+    assert "synthetic-tsa-password" not in output
     dumped = json.loads(output)
     assert dumped["zammad"]["base_url"] == "https://zammad.example.local/"
     assert dumped["zammad"]["api_token"] != "test-token"
     assert dumped["zammad"]["webhook_hmac_secret"] != _SECRET
+    assert dumped["signing"]["timestamp"]["rfc3161"]["user"] != "synthetic-tsa-user"
 
 
 def test_dump_config_without_any_configuration_fails(

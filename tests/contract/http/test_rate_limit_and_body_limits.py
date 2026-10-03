@@ -131,6 +131,18 @@ def test_oversized_unsigned_request_is_413_not_403(tmp_path) -> None:
     assert response.status_code == 413
 
 
+def test_root_path_request_still_has_the_ingest_body_limit(tmp_path) -> None:
+    settings = make_body_limit_settings(str(tmp_path), 10, secret=_SECRET)
+    client = TestClient(
+        create_app(settings, scheduler=SchedulingSpy()),
+        root_path="/archive",
+    )
+
+    response = client.post("/archive/ingest", content=_BODY)
+
+    assert_json_error(response, status_code=413, code="request_too_large")
+
+
 def test_body_at_the_limit_is_accepted(tmp_path) -> None:
     settings = make_body_limit_settings(str(tmp_path), len(_BODY), secret=_SECRET)
     client = TestClient(create_app(settings, scheduler=SchedulingSpy()))
@@ -149,3 +161,21 @@ def test_oversized_chunked_body_is_rejected_with_413(tmp_path) -> None:
 
     assert result.status == 413
     assert result.json() == {"detail": "request_too_large", "code": "request_too_large"}
+
+
+def test_root_path_request_still_has_the_ingest_rate_limit(tmp_path) -> None:
+    settings = make_rate_limit_settings(str(tmp_path), secret=_SECRET)
+    client = TestClient(
+        create_app(settings, scheduler=SchedulingSpy()),
+        root_path="/archive",
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "X-Hub-Signature": sign_body(_BODY, _SECRET),
+    }
+
+    statuses = [
+        client.post("/archive/ingest", content=_BODY, headers=headers).status_code for _ in range(3)
+    ]
+
+    assert statuses == [202, 202, 429]

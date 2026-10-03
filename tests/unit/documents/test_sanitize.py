@@ -51,6 +51,30 @@ def test_event_style_and_unlisted_attributes_are_removed(markup: str, expected: 
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1", "1"), ("02", "2"), ("32", "32")],
+)
+def test_bounded_table_spans_are_canonicalized(value: str, expected: str) -> None:
+    """Ordinary table spans survive as bounded canonical decimal values."""
+    markup = f'<table><tr><th rowspan="{value}">h</th><td colspan="{value}">c</td></tr></table>'
+
+    assert sanitize_html_fragment(markup) == (
+        f'<table><tr><th rowspan="{expected}">h</th><td colspan="{expected}">c</td></tr></table>'
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["0", "33", "9" * 200, "+2", "-2", " 2", "2 ", "2x", "\u0662"],
+)
+def test_unsafe_table_spans_are_removed(value: str) -> None:
+    """Malformed, non-positive, and oversized spans never reach the renderer."""
+    markup = f'<table><tr><td colspan="{value}" rowspan="{value}">c</td></tr></table>'
+
+    assert sanitize_html_fragment(markup) == "<table><tr><td>c</td></tr></table>"
+
+
+@pytest.mark.parametrize(
     "href",
     [
         "javascript:alert(1)",

@@ -23,7 +23,7 @@ class SigningTimestampRfc3161Settings(_BaseSection):
     tsa_url: AnyHttpUrl | None = None
     timeout_seconds: float = Field(default=10.0, gt=0)
     ca_bundle_path: Path | None = None
-    user: str | None = None
+    user: SecretStr | None = None
     password: SecretStr | None = None
 
 

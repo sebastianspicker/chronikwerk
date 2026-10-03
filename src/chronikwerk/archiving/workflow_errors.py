@@ -43,8 +43,9 @@ async def handle_ticket_pipeline_exception(
     attempt: workflow.ArchiveAttempt,
     trigger_tag: str,
     exc: Exception,
+    project_to_ticket: bool = True,
 ) -> workflow.ArchiveOutcome:
-    """Classify an exception, post an error note, and update terminal tags."""
+    """Classify a failure and optionally project its state back to the ticket."""
     failed_total.inc()
     classified = classify(exc)
     classification_label = _classification_label(classified)
@@ -61,18 +62,19 @@ async def handle_ticket_pipeline_exception(
     )
     _log_pipeline_error(attempt, classification_label=classification_label, code=code, hint=hint)
 
-    await _post_error_note(
-        client=client,
-        attempt=attempt,
-        note=note,
-    )
-    await _apply_error_and_cleanup_processing_tag(
-        client=client,
-        attempt=attempt,
-        classification_label=classification_label,
-        classified=classified,
-        trigger_tag=trigger_tag,
-    )
+    if project_to_ticket:
+        await _post_error_note(
+            client=client,
+            attempt=attempt,
+            note=note,
+        )
+        await _apply_error_and_cleanup_processing_tag(
+            client=client,
+            attempt=attempt,
+            classification_label=classification_label,
+            classified=classified,
+            trigger_tag=trigger_tag,
+        )
 
     status = _failure_status(classified)
     workflow.record_history(

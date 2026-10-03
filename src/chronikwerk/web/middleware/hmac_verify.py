@@ -17,6 +17,7 @@ from chronikwerk.web.constants import (
     DELIVERY_ID_HEADER,
     INGEST_PROTECTED_PATHS,
     normalized_delivery_id,
+    route_path,
 )
 from chronikwerk.web.responses import api_error
 
@@ -239,7 +240,7 @@ class HmacVerifyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if scope.get("method") != "POST" or scope.get("path") not in INGEST_PROTECTED_PATHS:
+        if scope.get("method") != "POST" or route_path(scope) not in INGEST_PROTECTED_PATHS:
             await self.app(scope, receive, send)
             return
 

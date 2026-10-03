@@ -67,6 +67,7 @@ _ALLOWED_ATTRS: Final[dict[str, frozenset[str]]] = {
     "th": frozenset({"colspan", "rowspan"}),
 }
 _ALLOWED_HREF_SCHEMES: Final[frozenset[str]] = frozenset({"", "http", "https", "mailto"})
+_MAX_TABLE_SPAN: Final[int] = 32
 
 
 def _sanitize_href(raw: str) -> str | None:
@@ -80,6 +81,20 @@ def _sanitize_href(raw: str) -> str | None:
     if scheme not in _ALLOWED_HREF_SCHEMES:
         return None
     return href
+
+
+def _sanitize_table_span(raw: str) -> str | None:
+    """Return a canonical, bounded table span or reject the attribute."""
+    if not raw:
+        return None
+    value = 0
+    for char in raw:
+        if char < "0" or char > "9":
+            return None
+        value = value * 10 + ord(char) - ord("0")
+        if value > _MAX_TABLE_SPAN:
+            return None
+    return str(value) if value > 0 else None
 
 
 @dataclass
@@ -122,6 +137,10 @@ class _AllowlistHTMLSanitizer(HTMLParser):
             normalized, value = candidate
             if tag == "a" and normalized == "href":
                 value = _sanitize_href(value)
+                if value is None:
+                    continue
+            if tag in {"td", "th"} and normalized in {"colspan", "rowspan"}:
+                value = _sanitize_table_span(value)
                 if value is None:
                     continue
             cleaned.append((normalized, value))
